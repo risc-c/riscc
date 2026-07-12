@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C/16 microarchitecture</title>
+  <desc id="desc">Datapath and state-sequence diagram for the RISC-C slash 16 core. It shows memory, IR, MDR above the register file, PC, and the shared 17-bit ALU/result path.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#26364f"/>
+    </marker>
+    <style>
+      .page { fill: #fbfcfe; }
+      .panel { fill: #ffffff; stroke: #d5dde8; stroke-width: 1.5; rx: 14; }
+      .storage { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 2; rx: 10; }
+      .compute { fill: #edf8ef; stroke: #2f7d49; stroke-width: 2; rx: 10; }
+      .mem { fill: #f0edff; stroke: #6954a3; stroke-width: 2; rx: 10; }
+      .state { fill: #ffffff; stroke: #a26318; stroke-width: 1.6; rx: 8; }
+      .arrow { fill: none; stroke: #26364f; stroke-width: 2.1; stroke-linecap: round; marker-end: url(#arrow); }
+      .thin { fill: none; stroke: #667084; stroke-width: 1.5; stroke-linecap: round; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #9a621d; stroke-width: 1.6; stroke-dasharray: 5 4; stroke-linecap: round; marker-end: url(#arrow); }
+      .title { font-family: sans-serif; font-size: 24px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: sans-serif; font-size: 14px; fill: #4a5568; }
+      .label { font-family: monospace; font-size: 16px; font-weight: 700; fill: #172033; }
+      .text { font-family: monospace; font-size: 13px; fill: #2d3748; }
+      .small { font-family: sans-serif; font-size: 12px; fill: #4a5568; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1000" height="560"/>
+  <text class="title" x="34" y="42">RISC-C/16 datapath</text>
+  <text class="subtitle" x="34" y="66">A full-width datapath: PC, RF, MDR, load data, links, shifts, and MUL all converge on the ALU/result path.</text>
+
+  <rect class="panel" x="28" y="88" width="944" height="314"/>
+  <text class="small" x="48" y="116">data path</text>
+
+  <rect class="mem" x="70" y="176" width="150" height="116"/>
+  <text class="label" x="98" y="206">memory</text>
+  <text class="text" x="92" y="228">mem_addr</text>
+  <text class="text" x="92" y="248">mem_rdata</text>
+  <text class="text" x="92" y="268">mem_wdata</text>
+  <text class="text" x="92" y="286">mem_we/wmask</text>
+
+  <rect class="storage" x="310" y="130" width="154" height="72"/>
+  <text class="label" x="372" y="160">IR</text>
+  <text class="text" x="334" y="184">decode in ST_PC</text>
+
+  <rect class="storage" x="310" y="230" width="174" height="82"/>
+  <text class="label" x="378" y="260">MDR</text>
+  <text class="text" x="334" y="284">rb / byte address</text>
+  <text class="text" x="334" y="302">load-data staging</text>
+
+  <rect class="storage" x="310" y="328" width="174" height="58"/>
+  <text class="label" x="334" y="354">register file</text>
+  <text class="text" x="336" y="376">r0..r7, S0..S7</text>
+
+  <rect class="storage" x="610" y="130" width="166" height="84"/>
+  <text class="label" x="674" y="160">PC</text>
+  <text class="text" x="636" y="184">15-bit word addr</text>
+  <text class="text" x="636" y="204">fetch / branch / link</text>
+
+  <rect class="compute" x="610" y="250" width="196" height="116"/>
+  <text class="label" x="638" y="280">ALU/result path</text>
+  <text class="text" x="634" y="306">sum[16:0] -> alu_y</text>
+  <text class="text" x="634" y="328">add / logic / shift</text>
+  <text class="text" x="634" y="350">SLT / link / IRQ entry</text>
+
+
+  <path class="arrow" d="M220,198 H310"/>
+  <text class="small" x="234" y="188">rdata fetch</text>
+
+  <path class="arrow" d="M220,260 H310"/>
+  <text class="small" x="234" y="250">rdata load</text>
+
+  <path class="arrow" d="M310,286 H250 V276 H220"/>
+  <text class="small" x="230" y="308">addr from MDR</text>
+
+  <path class="thin" d="M650,130 V112 H145 V176"/>
+  <text class="small" x="276" y="108">fetch addr = PC</text>
+
+  <path class="arrow" d="M397,328 V312"/>
+  <text class="small" x="408" y="324">rb</text>
+
+  <path class="arrow" d="M484,270 H610"/>
+  <text class="small" x="526" y="260">MDR operand</text>
+
+  <path class="arrow" d="M484,356 H610"/>
+  <text class="small" x="526" y="350">RF operand</text>
+
+  <path class="thin" d="M397,386 V396 H60 V270 H70"/>
+  <text class="small" x="104" y="392">store wdata from RF</text>
+
+  <path class="arrow" d="M693,214 V250"/>
+  <text class="small" x="704" y="232">PC to ALU</text>
+
+  <path class="arrow" d="M650,250 V214"/>
+  <text class="small" x="560" y="238">ALU to PC</text>
+
+  <path class="arrow" d="M610,336 H484"/>
+  <text class="small" x="526" y="330">writeback</text>
+
+  <path class="arrow" d="M610,308 H484"/>
+  <text class="small" x="526" y="300">MDR update</text>
+
+  <rect class="panel" x="28" y="424" width="944" height="104"/>
+  <text class="small" x="48" y="440">state choices: solid = common fall-through, dashed = conditional dispatch</text>
+  <rect class="state" x="54" y="468" width="76" height="36"/>
+  <text class="text" x="75" y="491">ST_IF</text>
+  <rect class="state" x="148" y="468" width="78" height="36"/>
+  <text class="text" x="169" y="491">ST_PC</text>
+  <rect class="state" x="244" y="468" width="78" height="36"/>
+  <text class="text" x="266" y="491">ST_LB</text>
+  <rect class="state" x="340" y="468" width="78" height="36"/>
+  <text class="text" x="362" y="491">ST_EX</text>
+  <rect class="state" x="436" y="468" width="88" height="36"/>
+  <text class="text" x="456" y="491">ST_MEM</text>
+  <rect class="state" x="542" y="468" width="88" height="36"/>
+  <text class="text" x="562" y="491">ST_MLD</text>
+  <rect class="state" x="648" y="468" width="88" height="36"/>
+  <text class="text" x="668" y="491">ST_LNK</text>
+  <rect class="state" x="754" y="468" width="88" height="36"/>
+  <text class="text" x="774" y="491">ST_JLD</text>
+  <rect class="state" x="860" y="468" width="88" height="36"/>
+  <text class="text" x="880" y="491">ST_SLT</text>
+  <path class="thin" d="M130,486 L148,486"/>
+  <path class="thin" d="M226,486 L244,486"/>
+  <path class="thin" d="M322,486 L340,486"/>
+  <path class="thin" d="M418,486 L436,486"/>
+  <path class="thin" d="M524,486 L542,486"/>
+  <path class="thin" d="M630,486 L648,486"/>
+  <path class="thin" d="M736,486 L754,486"/>
+  <path class="thin" d="M842,486 L860,486"/>
+  <path class="dash" d="M164,468 C220,456 330,456 360,468"/>
+  <path class="dash" d="M187,468 C282,450 590,450 674,468"/>
+  <path class="dash" d="M210,468 C328,444 650,444 800,468"/>
+  <path class="dash" d="M388,468 C500,458 792,458 904,468"/>
+  <text class="small" x="54" y="518">Schematic labels omit side states: MDR_WRITEBACK follows load capture/MUL completion; IRQ and ST_OPL/ST_OPX reuse the same datapath.</text>
+
+</svg>

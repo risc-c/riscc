@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="780" viewBox="0 0 1000 780" role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C/fast in-order pipeline</title>
+  <desc id="desc">RISC-C fast has a two-stage in-order pipeline. A fetch request is issued while the current instruction executes. The synchronous instruction-memory response is captured into the execute register on the next edge. The diagram also shows register-file reads, execute writeback, memory arbitration, and the side states that hold the front end.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#26364f"/></marker>
+    <style>
+      .page { fill:#fbfcfe; } .panel { fill:#fff; stroke:#d5dde8; stroke-width:1.5; rx:14; }
+      .stage { fill:#eaf4ff; stroke:#2f6fa3; stroke-width:2; rx:10; }
+      .compute { fill:#edf8ef; stroke:#2f7d49; stroke-width:2; rx:10; }
+      .mem { fill:#f0edff; stroke:#6954a3; stroke-width:2; rx:10; }
+      .state { fill:#fff; stroke:#a26318; stroke-width:1.6; rx:8; }
+      .arrow { fill:none; stroke:#26364f; stroke-width:2.1; stroke-linecap:round; marker-end:url(#arrow); }
+      .thin { fill:none; stroke:#667084; stroke-width:1.5; stroke-linecap:round; marker-end:url(#arrow); }
+      .dash { fill:none; stroke:#a26318; stroke-width:1.6; stroke-dasharray:5 4; stroke-linecap:round; marker-end:url(#arrow); }
+      .title { font-family:sans-serif; font-size:24px; font-weight:700; fill:#172033; }
+      .subtitle { font-family:sans-serif; font-size:14px; fill:#4a5568; }
+      .label { font-family:monospace; font-size:16px; font-weight:700; fill:#172033; }
+      .text { font-family:monospace; font-size:13px; fill:#2d3748; }
+      .small { font-family:sans-serif; font-size:12px; fill:#4a5568; }
+      .tick { stroke:#b6c0cf; stroke-width:1; } .active { fill:#dceeff; stroke:#2f6fa3; stroke-width:1.4; rx:5; }
+      .activex { fill:#dcf2e1; stroke:#2f7d49; stroke-width:1.4; rx:5; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1000" height="780"/>
+  <text class="title" x="34" y="42">RISC-C/fast in-order pipeline</text>
+  <text class="subtitle" x="34" y="66">In RUN, one instruction executes while the next instruction fetch is in flight.</text>
+  <text class="subtitle" x="34" y="83">Results retire in program order; there is no speculation or out-of-order execution.</text>
+
+  <rect class="panel" x="28" y="104" width="944" height="286"/>
+  <text class="small" x="48" y="128">pipelined datapath — registers are shown with blue outlines</text>
+
+  <rect class="stage" x="62" y="158" width="188" height="106"/>
+  <text class="label" x="90" y="189">F: fetch request</text>
+  <text class="text" x="84" y="215">fetch_pc_q</text>
+  <text class="text" x="84" y="236">pending PC tag</text>
+  <text class="small" x="84" y="254">stage 1 register</text>
+
+  <rect class="mem" x="338" y="154" width="186" height="114"/>
+  <text class="label" x="366" y="188">unified memory</text>
+  <text class="text" x="366" y="215">synchronous read</text>
+  <text class="text" x="366" y="236">instruction / load data</text>
+  <text class="small" x="366" y="255">store takes this port in X</text>
+
+  <rect class="stage" x="638" y="140" width="260" height="142"/>
+  <text class="label" x="678" y="171">X: execute register</text>
+  <text class="text" x="660" y="198">x_valid_q, x_pc_q</text>
+  <text class="text" x="660" y="219">x_instr_q</text>
+  <line x1="658" y1="230" x2="878" y2="230" class="tick"/>
+  <text class="text" x="660" y="254">decode · ALU · branch</text>
+  <text class="text" x="660" y="274">commit / writeback</text>
+
+  <rect class="compute" x="638" y="314" width="260" height="52"/>
+  <text class="label" x="768" y="337" text-anchor="middle">register file</text>
+  <text class="text" x="768" y="357" text-anchor="middle">2R / 1W</text>
+
+  <path class="arrow" d="M250,210 H338"/>
+  <text class="small" x="268" y="198">fetch address</text>
+  <path class="arrow" d="M524,210 H638"/>
+  <text class="small" x="540" y="198">response + tag</text>
+  <path class="arrow" d="M720,314 V282"/>
+  <path class="arrow" d="M816,314 V282"/>
+  <text class="small" x="778" y="303">source operands</text>
+  <path class="arrow" d="M638,258 C590,258 584,340 638,340"/>
+  <text class="small" x="548" y="300">writeback</text>
+  <path class="arrow" d="M638,244 H570 V288 H430 V268"/>
+  <text class="small" x="455" y="284">load/store port</text>
+
+  <text class="small" x="64" y="382">The side sequencer reuses F/X and adds one compact value/metadata set, not another pipeline stage.</text>
+
+  <rect class="panel" x="28" y="414" width="944" height="158"/>
+  <text class="small" x="48" y="438">steady-state timing — one instruction advances per cycle</text>
+  <text class="text" x="70" y="476">cycle</text>
+  <text class="text" x="70" y="512">fetch F</text>
+  <text class="text" x="70" y="548">execute X</text>
+  <line x1="170" y1="454" x2="908" y2="454" class="tick"/>
+  <line x1="170" y1="464" x2="170" y2="558" class="tick"/>
+  <line x1="354" y1="464" x2="354" y2="558" class="tick"/>
+  <line x1="538" y1="464" x2="538" y2="558" class="tick"/>
+  <line x1="722" y1="464" x2="722" y2="558" class="tick"/>
+  <line x1="908" y1="464" x2="908" y2="558" class="tick"/>
+  <text class="text" x="250" y="476">t</text><text class="text" x="430" y="476">t+1</text><text class="text" x="614" y="476">t+2</text><text class="text" x="798" y="476">t+3</text>
+  <rect class="active" x="184" y="492" width="156" height="28"/><text class="text" x="211" y="512">request I1</text>
+  <rect class="active" x="368" y="492" width="156" height="28"/><text class="text" x="395" y="512">request I2</text>
+  <rect class="active" x="552" y="492" width="156" height="28"/><text class="text" x="579" y="512">request I3</text>
+  <rect class="activex" x="368" y="530" width="156" height="28"/><text class="text" x="405" y="550">execute I1</text>
+  <rect class="activex" x="552" y="530" width="156" height="28"/><text class="text" x="589" y="550">execute I2</text>
+  <rect class="activex" x="736" y="530" width="156" height="28"/><text class="text" x="773" y="550">execute I3</text>
+
+  <rect class="panel" x="28" y="594" width="944" height="160"/>
+  <rect class="state" x="425" y="638" width="150" height="38"/>
+  <rect class="state" x="70" y="700" width="150" height="38"/>
+  <rect class="state" x="395" y="700" width="150" height="38"/>
+  <rect class="state" x="750" y="700" width="150" height="38"/>
+  <text class="text" x="481" y="662">RUN</text>
+  <text class="text" x="121" y="724">LOAD</text>
+  <text class="text" x="444" y="724">SHIFT</text>
+  <text class="text" x="804" y="724">MUL</text>
+  <path class="dash" d="M425,657 C350,657 260,673 145,700"/>
+  <path class="thin" d="M145,700 C260,675 350,665 425,671"/>
+  <path class="dash" d="M500,676 V700"/>
+  <path class="thin" d="M440,700 V676"/>
+  <path class="dash" d="M575,657 C650,657 740,673 825,700"/>
+  <path class="thin" d="M825,700 C740,675 650,665 575,671"/>
+  <path class="dash" d="M575,648 C625,620 625,688 575,666"/>
+  <path class="dash" d="M545,710 C580,680 580,740 545,728"/>
+  <path class="dash" d="M900,710 C940,680 940,740 900,728"/>
+  <text class="small" x="270" y="666">load</text>
+  <text class="small" x="506" y="692">shift</text>
+  <text class="small" x="653" y="666">soft MUL</text>
+  <text class="small" x="590" y="638">ordinary</text>
+</svg>

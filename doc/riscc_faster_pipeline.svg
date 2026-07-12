@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="870" viewBox="0 0 1000 870"
+     role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C/faster pipeline, synchronous register file, and Execute states</title>
+  <desc id="desc">RISC-C/faster has IF, Decode and synchronous register file, and Execute and commit stages. Decode drives a replicated two-read MLAB register file. At the D to X edge the register file captures source addresses and its registered outputs become the Execute operands alongside registered controls. Every completed instruction writes back through the RF's one write port; ST_LOAD formats the synchronous memory response before using that port. A steady-state timing view shows independent instructions advancing one per clock. Execute owns LOAD, SHIFT, MUL, and JAL16 side states.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#26364f"/>
+    </marker>
+    <marker id="control-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9a621d"/>
+    </marker>
+    <marker id="memory-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6954a3"/>
+    </marker>
+    <style>
+      .page { fill: #fbfcfe; }
+      .panel { fill: #ffffff; stroke: #d5dde8; stroke-width: 1.5; }
+      .stage { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 2; }
+      .group { fill: #f7fbff; stroke: #b6d0e5; stroke-width: 1.5; }
+      .rf { fill: #edf8ef; stroke: #2f7d49; stroke-width: 2; }
+      .memory { fill: #f0edff; stroke: #6954a3; stroke-width: 2; }
+      .run { fill: #fff3df; stroke: #a26318; stroke-width: 2; }
+      .side { fill: #fffaf1; stroke: #a26318; stroke-width: 1.5; }
+      .active-if { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 1.4; }
+      .active-d { fill: #edf8ef; stroke: #2f7d49; stroke-width: 1.4; }
+      .active-x { fill: #fff3df; stroke: #a26318; stroke-width: 1.4; }
+      .title { font-family: sans-serif; font-size: 27px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: sans-serif; font-size: 15px; fill: #4a5568; }
+      .panel-title { font-family: sans-serif; font-size: 18px; font-weight: 700; fill: #172033; }
+      .stage-title { font-family: sans-serif; font-size: 18px; font-weight: 700; fill: #183b5b; }
+      .rf-title { font-family: sans-serif; font-size: 17px; font-weight: 700; fill: #245d37; }
+      .state-title { font-family: sans-serif; font-size: 17px; font-weight: 700; fill: #70420d; }
+      .body { font-family: sans-serif; font-size: 14px; fill: #2d3748; }
+      .small { font-family: sans-serif; font-size: 14px; fill: #4a5568; }
+      .flow { fill: none; stroke: #26364f; stroke-width: 2; marker-end: url(#arrow); }
+      .control { fill: none; stroke: #9a621d; stroke-width: 1.8; stroke-dasharray: 6 5; marker-end: url(#control-arrow); }
+      .writeback { fill: none; stroke: #a26318; stroke-width: 1.8; marker-end: url(#control-arrow); }
+      .memory-flow { fill: none; stroke: #6954a3; stroke-width: 2; marker-end: url(#memory-arrow); }
+      .dispatch { fill: none; stroke: #a26318; stroke-width: 1.7; marker-end: url(#control-arrow); }
+      .bus { fill: none; stroke: #a26318; stroke-width: 1.7; }
+      .grid { stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1000" height="870"/>
+
+  <text class="title" x="40" y="42">RISC-C/faster microarchitecture</text>
+  <text class="subtitle" x="40" y="69">Three stages: IF, Decode + synchronous RF, and Execute + commit</text>
+
+  <rect class="panel" x="30" y="94" width="940" height="310" rx="12"/>
+  <text class="panel-title" x="52" y="124">Three-stage in-order pipeline</text>
+  <text class="subtitle" x="948" y="124" text-anchor="end">no bypass · no fourth writeback stage</text>
+
+  <rect class="stage" x="53" y="170" width="165" height="105" rx="9"/>
+  <text class="stage-title" x="135.5" y="197" text-anchor="middle">IF</text>
+  <text class="body" x="135.5" y="225" text-anchor="middle">fetch PC + tag</text>
+  <text class="body" x="135.5" y="252" text-anchor="middle">hold · reissue</text>
+
+  <rect class="group" x="250" y="142" width="480" height="148" rx="10"/>
+  <text class="stage-title" x="271" y="164">D/RF — one pipeline stage</text>
+
+  <rect class="stage" x="270" y="177" width="170" height="91" rx="8"/>
+  <text class="stage-title" x="355" y="204" text-anchor="middle">Decode</text>
+  <text class="body" x="355" y="231" text-anchor="middle">instruction + PC</text>
+  <text class="body" x="355" y="254" text-anchor="middle">sources · dst · control</text>
+
+  <rect class="rf" x="465" y="168" width="245" height="108" rx="8"/>
+  <text class="rf-title" x="587.5" y="195" text-anchor="middle">Synchronous 2R / 1W RF</text>
+  <text class="body" x="587.5" y="221" text-anchor="middle">2 × 16×16 MLAB copies</text>
+  <text class="body" x="587.5" y="245" text-anchor="middle">sample addr on d_issue</text>
+  <text class="body" x="587.5" y="266" text-anchor="middle">rdataA/B → X · 1W commit</text>
+
+  <rect class="stage" x="770" y="170" width="178" height="105" rx="9"/>
+  <text class="stage-title" x="859" y="197" text-anchor="middle">X: Execute + commit</text>
+  <text class="body" x="859" y="225" text-anchor="middle">ALU · branch · memory</text>
+  <text class="body" x="859" y="248" text-anchor="middle">commit → RF writeback</text>
+  <text class="body" x="859" y="267" text-anchor="middle">load response: ST_LOAD</text>
+
+  <path class="flow" d="M 440 222 H 465"/>
+  <text class="small" x="452" y="211" text-anchor="middle">addr</text>
+  <path class="flow" d="M 710 222 H 770"/>
+  <text class="small" x="740" y="211" text-anchor="middle">rdata</text>
+  <path class="writeback" d="M 770 254 H 710"/>
+  <text class="small" x="740" y="273" text-anchor="middle">writeback</text>
+  <path class="control" d="M 770 275 V 294 H 440 V 268"/>
+  <text class="small" x="605" y="309" text-anchor="middle">RAW hold: Decode waits, then rereads RF</text>
+
+  <rect class="memory" x="315" y="321" width="370" height="62" rx="9"/>
+  <text class="stage-title" x="500" y="347" text-anchor="middle">Unified synchronous memory</text>
+  <text class="body" x="500" y="371" text-anchor="middle">fetch · data · JAL16 — data/JAL16 has priority</text>
+
+  <path class="flow" d="M 135.5 275 V 303 H 390 V 321"/>
+  <text class="small" x="255" y="296" text-anchor="middle">fetch</text>
+  <path class="flow" d="M 405 321 V 268"/>
+  <text class="small" x="315" y="306">response + tag</text>
+  <path class="flow" d="M 859 275 V 303 H 610 V 321"/>
+  <path class="memory-flow" d="M 685 352 H 935 V 275"/>
+  <text class="small" x="810" y="344" text-anchor="middle">load response → ST_LOAD</text>
+
+  <rect class="panel" x="30" y="425" width="940" height="215" rx="12"/>
+  <text class="panel-title" x="52" y="455">Steady-state timing</text>
+  <text class="subtitle" x="948" y="455" text-anchor="end">independent instructions issue one per clock</text>
+
+  <text class="body" x="75" y="493">cycle</text>
+  <text class="body" x="75" y="525">IF</text>
+  <text class="body" x="75" y="564">D / RF</text>
+  <text class="body" x="75" y="603">X</text>
+  <line class="grid" x1="190" y1="477" x2="910" y2="477"/>
+  <line class="grid" x1="190" y1="484" x2="190" y2="590"/>
+  <line class="grid" x1="370" y1="484" x2="370" y2="590"/>
+  <line class="grid" x1="550" y1="484" x2="550" y2="590"/>
+  <line class="grid" x1="730" y1="484" x2="730" y2="590"/>
+  <line class="grid" x1="910" y1="484" x2="910" y2="590"/>
+  <text class="body" x="270" y="493" text-anchor="middle">t → t+1</text>
+  <text class="body" x="450" y="493" text-anchor="middle">t+1 → t+2</text>
+  <text class="body" x="630" y="493" text-anchor="middle">t+2 → t+3</text>
+  <text class="body" x="810" y="493" text-anchor="middle">t+3 → t+4</text>
+
+  <rect class="active-if" x="205" y="509" width="150" height="28" rx="5"/>
+  <text class="body" x="280" y="529" text-anchor="middle">fetch I1</text>
+  <rect class="active-if" x="385" y="509" width="150" height="28" rx="5"/>
+  <text class="body" x="460" y="529" text-anchor="middle">fetch I2</text>
+  <rect class="active-if" x="565" y="509" width="150" height="28" rx="5"/>
+  <text class="body" x="640" y="529" text-anchor="middle">fetch I3</text>
+  <rect class="active-if" x="745" y="509" width="150" height="28" rx="5"/>
+  <text class="body" x="820" y="529" text-anchor="middle">fetch I4</text>
+
+  <rect class="active-d" x="385" y="548" width="150" height="28" rx="5"/>
+  <text class="body" x="460" y="568" text-anchor="middle">D I1 · RF addr</text>
+  <rect class="active-d" x="565" y="548" width="150" height="28" rx="5"/>
+  <text class="body" x="640" y="568" text-anchor="middle">D I2 · RF addr</text>
+  <rect class="active-d" x="745" y="548" width="150" height="28" rx="5"/>
+  <text class="body" x="820" y="568" text-anchor="middle">D I3 · RF addr</text>
+
+  <rect class="active-x" x="565" y="587" width="150" height="28" rx="5"/>
+  <text class="body" x="640" y="607" text-anchor="middle">X I1</text>
+  <rect class="active-x" x="745" y="587" width="150" height="28" rx="5"/>
+  <text class="body" x="820" y="607" text-anchor="middle">X I2</text>
+  <text class="small" x="500" y="625" text-anchor="middle">At the D/RF edge, RF captures addresses; registered rdata is stable in the next X interval.</text>
+
+  <rect class="panel" x="30" y="660" width="940" height="190" rx="12"/>
+  <text class="panel-title" x="52" y="688">X ownership states</text>
+  <text class="subtitle" x="948" y="688" text-anchor="end">each side state returns to RUN · IRQ only in RUN</text>
+
+  <rect class="run" x="420" y="700" width="160" height="46" rx="8"/>
+  <text class="state-title" x="500" y="722" text-anchor="middle">RUN</text>
+  <text class="small" x="500" y="740" text-anchor="middle">commit or dispatch</text>
+
+  <path class="bus" d="M 500 746 V 760 H 140 M 500 760 H 830"/>
+  <path class="dispatch" d="M 140 760 V 770"/>
+  <path class="dispatch" d="M 370 760 V 770"/>
+  <path class="dispatch" d="M 600 760 V 770"/>
+  <path class="dispatch" d="M 830 760 V 770"/>
+
+  <rect class="side" x="45" y="770" width="190" height="54" rx="8"/>
+  <text class="state-title" x="140" y="792" text-anchor="middle">LOAD</text>
+  <text class="small" x="140" y="815" text-anchor="middle">response → RF write</text>
+  <rect class="side" x="275" y="770" width="190" height="54" rx="8"/>
+  <text class="state-title" x="370" y="792" text-anchor="middle">SHIFT</text>
+  <text class="small" x="370" y="815" text-anchor="middle">repeat → commit</text>
+  <rect class="side" x="505" y="770" width="190" height="54" rx="8"/>
+  <text class="state-title" x="600" y="792" text-anchor="middle">MUL</text>
+  <text class="small" x="600" y="815" text-anchor="middle">DSP capture · soft 15 steps</text>
+  <rect class="side" x="735" y="770" width="190" height="54" rx="8"/>
+  <text class="state-title" x="830" y="792" text-anchor="middle">JAL16</text>
+  <text class="small" x="830" y="815" text-anchor="middle">target + link → redirect</text>
+</svg>

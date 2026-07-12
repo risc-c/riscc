@@ -1,0 +1,130 @@
+# Terasic Atum A3 Nano, Agilex 3 A3CZ135BB18AE7S. Make copies this settings
+# file into build/atum_a3_nano/quartus before invoking Quartus, so all paths
+# below are relative to that staged project and tool artifacts stay in build/.
+# Pin locations and I/O standards are derived from Terasic's Quartus 25.1
+# UART and HDMI reference projects.
+
+set_global_assignment -name FAMILY "Agilex 3"
+set_global_assignment -name DEVICE A3CZ135BB18AE7S
+set_global_assignment -name DEVICE_FILTER_PACKAGE VPBGA
+set_global_assignment -name TOP_LEVEL_ENTITY top
+set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name NUM_PARALLEL_PROCESSORS $::env(RISCC_BUILD_JOBS)
+set_global_assignment -name STRATIXV_CONFIGURATION_SCHEME "ACTIVE SERIAL X4"
+set_global_assignment -name ACTIVE_SERIAL_CLOCK AS_FREQ_100MHZ
+set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
+set_global_assignment -name USE_CONF_DONE SDM_IO16
+set_global_assignment -name USE_INIT_DONE SDM_IO13
+
+# Faster uses its registered DSP multiplier by default.
+
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/top.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_sys_pll.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_reset_release.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_a3_nano_soc.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_uart_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_fb_hdmi.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_tfp410_init.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_faster.v
+set_global_assignment -name SDC_FILE ../../../boards/atum_a3_nano/atum_a3_nano.sdc
+
+# CLOCK0_50 drives the Terasic HDMI PLL; CLOCK1_50 feeds the RISC-C system
+# PLL, which generates the 100 MHz SoC clock.
+set_instance_assignment -name IO_STANDARD "1.2-V" -to CLOCK0_50
+set_location_assignment PIN_K43 -to CLOCK0_50
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to CLOCK1_50
+set_location_assignment PIN_A8 -to CLOCK1_50
+
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to KEY[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to KEY[1]
+set_location_assignment PIN_E2 -to KEY[0]
+set_location_assignment PIN_K3 -to KEY[1]
+
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to FPGA_UART_TX
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to FPGA_UART_RX
+set_location_assignment PIN_T6 -to FPGA_UART_TX
+set_location_assignment PIN_L1 -to FPGA_UART_RX
+
+# LEDs on the Atum A3 Nano are active low.
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to LED[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to LED[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to LED[2]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to LED[3]
+set_location_assignment PIN_AG2 -to LED[0]
+set_location_assignment PIN_AM6 -to LED[1]
+set_location_assignment PIN_AF1 -to LED[2]
+set_location_assignment PIN_AF2 -to LED[3]
+
+# TFP410 HDMI transmitter: 24-bit parallel video, control, pixel clock, and
+# its board I2C enable/configuration interface.
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_I2C_SCL
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_I2C_SDA
+set_location_assignment PIN_M2 -to HDMI_I2C_SCL
+set_location_assignment PIN_N2 -to HDMI_I2C_SDA
+
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_HS
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_VS
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[0]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[1]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[2]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[3]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[4]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[5]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[6]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[7]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[8]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[9]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[10]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[11]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[12]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[13]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[14]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[15]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[16]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[17]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[18]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[19]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[20]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[21]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[22]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_D[23]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_DE
+set_instance_assignment -name IO_STANDARD "DIFFERENTIAL 1.2-V SSTL" -to HDMI_TX_CLK_p
+# Quartus 26.1 creates the complementary output automatically, but unlike
+# 25.1 it requires an explicit standard on that generated pin before the
+# assembler will emit a programming file.
+set_instance_assignment -name IO_STANDARD "DIFFERENTIAL 1.2-V SSTL" -to "HDMI_TX_CLK_p(n)"
+set_location_assignment PIN_R52 -to HDMI_TX_HS
+set_location_assignment PIN_N52 -to HDMI_TX_VS
+set_location_assignment PIN_G52 -to HDMI_TX_D[0]
+set_location_assignment PIN_J52 -to HDMI_TX_D[1]
+set_location_assignment PIN_G51 -to HDMI_TX_D[2]
+set_location_assignment PIN_J51 -to HDMI_TX_D[3]
+set_location_assignment PIN_M51 -to HDMI_TX_D[4]
+set_location_assignment PIN_H43 -to HDMI_TX_D[5]
+set_location_assignment PIN_A34 -to HDMI_TX_D[6]
+set_location_assignment PIN_A29 -to HDMI_TX_D[7]
+set_location_assignment PIN_B29 -to HDMI_TX_D[8]
+set_location_assignment PIN_B27 -to HDMI_TX_D[9]
+set_location_assignment PIN_A26 -to HDMI_TX_D[10]
+set_location_assignment PIN_B26 -to HDMI_TX_D[11]
+set_location_assignment PIN_A31 -to HDMI_TX_D[12]
+set_location_assignment PIN_H35 -to HDMI_TX_D[13]
+set_location_assignment PIN_A37 -to HDMI_TX_D[14]
+set_location_assignment PIN_F35 -to HDMI_TX_D[15]
+set_location_assignment PIN_F40 -to HDMI_TX_D[16]
+set_location_assignment PIN_F32 -to HDMI_TX_D[17]
+set_location_assignment PIN_V52 -to HDMI_TX_D[18]
+set_location_assignment PIN_K35 -to HDMI_TX_D[19]
+set_location_assignment PIN_V51 -to HDMI_TX_D[20]
+set_location_assignment PIN_K32 -to HDMI_TX_D[21]
+set_location_assignment PIN_K40 -to HDMI_TX_D[22]
+set_location_assignment PIN_A24 -to HDMI_TX_D[23]
+set_location_assignment PIN_R51 -to HDMI_TX_DE
+set_location_assignment PIN_L51 -to HDMI_TX_CLK_p
+
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_ISEL
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_PD_n
+set_location_assignment PIN_J2 -to HDMI_ISEL
+set_location_assignment PIN_J1 -to HDMI_PD_n

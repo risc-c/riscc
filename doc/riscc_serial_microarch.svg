@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C serial core microarchitecture</title>
+  <desc id="desc">Datapath and state-sequence diagram for the serial RISC-C cores. It shows the address stream driving memory, memory feeding the instruction and data streams, the data stream over the register file, and the serial ALU and PC path.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#26364f"/>
+    </marker>
+    <style>
+      .page { fill: #fbfcfe; }
+      .panel { fill: #ffffff; stroke: #d5dde8; stroke-width: 1.5; rx: 14; }
+      .storage { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 2; rx: 10; }
+      .compute { fill: #edf8ef; stroke: #2f7d49; stroke-width: 2; rx: 10; }
+      .mem { fill: #f0edff; stroke: #6954a3; stroke-width: 2; rx: 10; }
+      .state { fill: #ffffff; stroke: #a26318; stroke-width: 1.6; rx: 8; }
+      .arrow { fill: none; stroke: #26364f; stroke-width: 2.1; stroke-linecap: round; marker-end: url(#arrow); }
+      .thin { fill: none; stroke: #667084; stroke-width: 1.5; stroke-linecap: round; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #9a621d; stroke-width: 1.6; stroke-dasharray: 5 4; stroke-linecap: round; marker-end: url(#arrow); }
+      .title { font-family: sans-serif; font-size: 24px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: sans-serif; font-size: 14px; fill: #4a5568; }
+      .label { font-family: monospace; font-size: 16px; font-weight: 700; fill: #172033; }
+      .text { font-family: monospace; font-size: 13px; fill: #2d3748; }
+      .small { font-family: sans-serif; font-size: 12px; fill: #4a5568; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1000" height="560"/>
+  <text class="title" x="34" y="42">Serial datapath: RISC-C/1, /2, /4, /8</text>
+  <text class="subtitle" x="34" y="66">One shared structure.  W bits stream LSB-first through the address/data streams, one-port RF, and serial ALU.</text>
+
+  <rect class="panel" x="28" y="88" width="944" height="314"/>
+  <text class="small" x="48" y="116">data path</text>
+
+  <rect class="storage" x="70" y="130" width="150" height="72"/>
+  <text class="label" x="82" y="160">address stream</text>
+  <text class="text" x="92" y="184">byte address</text>
+
+  <rect class="mem" x="70" y="250" width="150" height="104"/>
+  <text class="label" x="98" y="280">memory</text>
+  <text class="text" x="92" y="306">one word port</text>
+  <text class="text" x="92" y="328">fetch/load/store</text>
+
+  <rect class="storage" x="310" y="130" width="154" height="72"/>
+  <text class="label" x="330" y="160">instruction_q</text>
+  <text class="text" x="328" y="184">fetch capture</text>
+
+  <rect class="storage" x="310" y="232" width="174" height="80"/>
+  <text class="label" x="344" y="262">data stream</text>
+  <text class="text" x="334" y="286">rb / load / store</text>
+  <text class="text" x="334" y="304">shift recycle stream</text>
+
+  <rect class="storage" x="310" y="326" width="174" height="58"/>
+  <text class="label" x="334" y="352">register file</text>
+  <text class="text" x="336" y="374">r0..r7, S0..S7</text>
+
+  <rect class="compute" x="620" y="250" width="184" height="110"/>
+  <text class="label" x="656" y="280">serial ALU</text>
+  <text class="text" x="646" y="306">add / logic / SLT</text>
+  <text class="text" x="646" y="328">carry / compare state</text>
+  <text class="text" x="646" y="348">rf_wdata result</text>
+
+  <rect class="compute" x="620" y="130" width="184" height="86"/>
+  <text class="label" x="678" y="160">PC path</text>
+  <text class="text" x="646" y="186">pc_q, pc_carry_q</text>
+  <text class="text" x="646" y="206">pc+1 / branch / link</text>
+
+
+  <path class="arrow" d="M145,202 L145,250"/>
+  <text class="small" x="154" y="230">mem_addr</text>
+
+  <path class="arrow" d="M220,264 H260 V166 H310"/>
+  <text class="small" x="232" y="206">fetch</text>
+
+  <path class="arrow" d="M220,292 H310"/>
+  <text class="small" x="232" y="294">load</text>
+
+  <path class="arrow" d="M310,304 H260 V336 H220"/>
+  <text class="small" x="232" y="340">store</text>
+
+  <path class="arrow" d="M397,326 L397,312"/>
+  <text class="small" x="408" y="322">rb pass</text>
+
+  <path class="arrow" d="M484,272 H620"/>
+  <text class="small" x="526" y="274">B stream</text>
+
+  <path class="arrow" d="M484,356 H620"/>
+  <text class="small" x="526" y="360">A stream</text>
+
+  <path class="arrow" d="M620,374 H484"/>
+  <text class="small" x="526" y="390">writeback</text>
+
+  <path class="arrow" d="M712,250 L712,216"/>
+  <text class="small" x="724" y="238">new pc</text>
+
+  <path class="arrow" d="M620,154 V116 H240 V148 H220"/>
+  <text class="small" x="386" y="108">next fetch address</text>
+
+  <rect class="panel" x="28" y="424" width="944" height="104"/>
+  <text class="small" x="48" y="440">state choices: solid = fall-through, dashed = conditional skip/repeat</text>
+  <rect class="state" x="54" y="468" width="78" height="36"/>
+  <text class="text" x="57" y="491">FETCH_WAIT</text>
+  <rect class="state" x="152" y="468" width="78" height="36"/>
+  <text class="text" x="163" y="491">CAPTURE</text>
+  <rect class="state" x="250" y="468" width="78" height="36"/>
+  <text class="text" x="266" y="491">DECODE</text>
+  <rect class="state" x="348" y="468" width="98" height="36"/>
+  <text class="text" x="373" y="491">INIT2</text>
+  <rect class="state" x="466" y="468" width="90" height="36"/>
+  <text class="text" x="495" y="491">INIT</text>
+  <rect class="state" x="576" y="468" width="74" height="36"/>
+  <text class="text" x="580" y="491">MEM_WAIT</text>
+  <rect class="state" x="670" y="468" width="74" height="36"/>
+  <text class="text" x="674" y="491">MEM_XFER</text>
+  <rect class="state" x="764" y="468" width="94" height="36"/>
+  <text class="text" x="783" y="491">EXECUTE</text>
+  <path class="thin" d="M132,486 L152,486"/>
+  <path class="thin" d="M230,486 L250,486"/>
+  <path class="thin" d="M328,486 L348,486"/>
+  <path class="thin" d="M446,486 L466,486"/>
+  <path class="thin" d="M556,486 L576,486"/>
+  <path class="thin" d="M650,486 L670,486"/>
+  <path class="thin" d="M744,486 L764,486"/>
+  <path class="dash" d="M272,468 C330,438 724,438 784,468"/>
+  <path class="dash" d="M306,468 C344,456 470,456 510,468"/>
+  <path class="dash" d="M372,468 C440,432 760,432 812,468"/>
+  <path class="dash" d="M530,468 C590,448 780,448 840,468"/>
+  <path class="dash" d="M488,468 C462,458 420,458 397,468"/>
+  <path class="dash" d="M846,468 C878,450 886,486 858,486"/>
+  <text class="small" x="884" y="506">then fetch</text>
+  <text class="small" x="54" y="518">DECODE can jump straight to EXECUTE; INIT2/INIT and MEM_WAIT/MEM_XFER are used only when needed. EXECUTE can repeat for shifts/MUL.</text>
+
+</svg>
