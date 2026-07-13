@@ -66,12 +66,13 @@ R_FUNC = {
     "SYS": 0x1F,
 }
 
-# Register-indirect group sub-ops (rb field).  bbb[2]=0 is the mandatory
-# plane; bbb[0]=1 ops write S[ddd], bbb[0]=0 ops read S[aaa].
+# RET/RETI share bbb=000 and CLI/STI share bbb=110.  ccc occupies ddd and is
+# 000 for the IE-preserving/clearing form and 111 for the IE-setting form.
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
 SYS_SUB = {"RET": 0, "JAL": 1, "MFS": 2, "MTS": 3,
-           "RETI": 4, "JAL16": 5, "CLI": 6, "STI": 7}
+           "JAL16": 5, "IE": 6}
+CONTROL_CCC = {"RET": 0, "RETI": 7, "CLI": 0, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
 
@@ -473,7 +474,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
                 return encode_word(enc_r(0, REGS[tok],
                                          R_FUNC["SYS"], SYS_SUB["JAL"]))
             sa = sreg(operands[0])
-        return encode_word(enc_r(0, sa, R_FUNC["SYS"], SYS_SUB[sub]))
+        return encode_word(enc_r(CONTROL_CCC[sub], sa, R_FUNC["SYS"],
+                                 SYS_SUB["RET"]))
 
     if op in ("LDI16", "LI"):
         n_ops(2, "LDI16 rd, imm16")
@@ -569,7 +571,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
 
     if op in ("CLI", "STI"):
         n_ops(0, op)
-        return encode_word(enc_r(0, 0, R_FUNC["SYS"], SYS_SUB[op]))
+        return encode_word(enc_r(CONTROL_CCC[op], 0, R_FUNC["SYS"],
+                                 SYS_SUB["IE"]))
 
     if op == "MFS":
         n_ops(2, "MFS rd, Sn")

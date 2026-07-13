@@ -87,6 +87,8 @@ module riscc_faster #(
     wire d_link_jump = d_system & ~d_bbb[1] & d_bbb[0];
     wire d_jal = d_link_jump & ~d_bbb[2];
     wire d_jal16 = d_link_jump & d_bbb[2];
+    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Register the direct
+    // IE-control plane; Execute adds RETI using the retained ccc field.
     wire d_return = d_system & ~d_bbb[1] & ~d_bbb[0];
     wire d_move = d_system & ~d_bbb[2] & d_bbb[1];
     wire d_ie_control = d_system & d_bbb[2] & d_bbb[1];
@@ -200,6 +202,7 @@ module riscc_faster #(
     wire x_link_jump = x_jal | x_jal16;
     wire x_move = x_move_q;
     wire x_ie_control = x_ie_control_q;
+    wire x_ie_write = x_ie_control | (x_return & x_ddd[2]);
 
     wire [15:0] rf_a;
     wire [15:0] rf_b;
@@ -507,10 +510,8 @@ module riscc_faster #(
         // Architectural IE changes only at completed instruction boundaries.
         if (take_irq)
             interrupt_enable_q <= 1'b0;
-        else if (run_commit & x_ie_control)
-            interrupt_enable_q <= x_bbb[0];
-        else if (run_commit & x_return & x_bbb[2])
-            interrupt_enable_q <= 1'b1;
+        else if (normal_x & x_ie_write)
+            interrupt_enable_q <= x_ddd[2];
 
         // Fetch request/response tags.  A data/JAL16 request invalidates the
         // following mem_rdata as an instruction response.  If a blocked

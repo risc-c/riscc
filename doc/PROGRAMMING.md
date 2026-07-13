@@ -306,10 +306,16 @@ smoke suite in the ISS, Tiny16/full RTL, Fast RTL, Icepi Zero UART simulation,
 and Atum UART simulation. `make compiler-smoke` uses the Icepi Zero RTL run
 as its default target.
 
-The suite covers globals, constants, BSS, TLS, calls, recursion, aggregates,
-function pointers, and 16/32/64-bit arithmetic across `-O0`, `-O2`, and
-`-Os`; it also exercises C-wrapper and assembly-owned IRQ vectors. The
-split-image check verifies that `.tdata` appears in the data image and `.tbss`
-does not. It also pipes one byte into a C `getchar()` call in the ISS, verifies
-the `putchar()` echo and `puts()` newline, and verifies that returning from
-`main` halts normally.
+The smoke program covers globals, constants, BSS, TLS, calls, recursion,
+aggregates, function pointers, and 16/32/64-bit integer arithmetic.  The
+`compiler-features-iss` matrix adds focused C11 language, control-flow,
+promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
+callee-save, and complete integer-runtime-helper checks.  It also executes
+`memcpy`, `memmove`, and `memset`, including overlap and zero-length cases.
+Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
+
+The remaining compiler suite exercises C-wrapper and assembly-owned IRQ
+vectors. The split-image check verifies that `.tdata` appears in the data image
+and `.tbss` does not. It also pipes one byte into a C `getchar()` call in the
+ISS, verifies the `putchar()` echo and `puts()` newline, and verifies that
+returning from `main` halts normally.

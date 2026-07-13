@@ -13,7 +13,7 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.14.0`.
+Version: `v0.15.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
@@ -49,8 +49,8 @@ counter updates retain their low 15 bits.
 `r0`, and `CMPI` always writes its result to `r0`.
 
 The S-register bank is accessed by `JAL`, `RET`, `MFS`, and `MTS`. The `sys`
-profile additionally provides `JAL16` and `RETI`. `S0` has two architectural
-roles:
+profile additionally provides `JAL16`, `RETI`, `CLI`, and `STI`. `S0` has two
+architectural roles:
 
 - In `JAL` and `JAL16`, destination `S0` suppresses the link write.
 - In the `sys` profile, `S0` is `EPC`, the interrupt return program
@@ -353,22 +353,39 @@ The control and S-register group has the following format:
 11 ddd aaa 11111 bbb
 ```
 
+For `bbb = 000` and `bbb = 110`, `ddd` is a control selector, written as
+`ccc` below. Only the following control-selector values are defined:
+
+| `bbb` | `ccc` | instruction | profile | operation |
+|---|---|---|---|---|
+| `000` | `000` | `RET Sa` | all | `pc = S[a][14:0]` |
+| `000` | `111` | `RETI Sa` | sys | `IE = 1`; `pc = S[a][14:0]` |
+| `110` | `000` | `CLI` | sys | `IE = 0` |
+| `110` | `111` | `STI` | sys | `IE = 1` |
+
+All other `ccc` values in those two `bbb` rows are reserved and undefined.
+The defined selectors duplicate the new `IE` value in all three `ccc` bits.
+`aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
+
+The remaining `bbb` values have the following definitions:
+
 | `bbb` | instruction | profile | operation |
 |---|---|---|---|
-| `000` | `RET Sa` | all | `pc = S[a][14:0]` |
 | `001` | `JAL Sd, ra` | all | if `d != 0`, `S[d] = pc_next`; `pc = R[a][14:0]` |
 | `010` | `MFS rd, Sa` | all | `R[d] = S[a]` |
 | `011` | `MTS Sd, ra` | all | `S[d] = R[a]` |
-| `100` | `RETI Sa` | sys | `IE = 1`; `pc = S[a][14:0]` |
+| `100` | reserved |  | undefined |
 | `101` | `JAL16 Sd` | sys | specified below |
-| `110` | `CLI` | sys | `IE = 0` |
-| `111` | `STI` | sys | `IE = 1` |
-
-Within this group, `ddd` must be zero for `RET` and `RETI`; both `ddd` and
-`aaa` must be zero for `CLI` and `STI`. `JAL16` likewise requires `aaa = 0`.
+| `111` | reserved |  | undefined |
 
 `RET` transfers control through the low 15 bits of its S-register operand. It
 does not change `IE`.
+
+`RETI` transfers control through its S-register operand and sets `IE` to one.
+
+`CLI` clears `IE`.
+
+`STI` sets `IE` to one.
 
 `JAL` transfers control through the low 15 bits of `ra` and, unless `Sd` is
 `S0`, writes the word address of the following instruction to `Sd`. Thus,
@@ -377,12 +394,6 @@ does not change `IE`.
 `MFS` copies the selected S-register to `rd`.
 
 `MTS` copies `ra` to the selected S-register.
-
-`RETI` transfers control through its S-register operand and sets `IE` to one.
-
-`CLI` clears `IE`.
-
-`STI` sets `IE` to one.
 
 `JAL16` consumes two instruction words:
 

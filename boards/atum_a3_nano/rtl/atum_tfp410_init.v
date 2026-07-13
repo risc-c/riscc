@@ -25,8 +25,8 @@ module atum_tfp410_init #(
     localparam [3:0] ST_STOP_RELEASE = 4'd9;
     localparam [3:0] ST_DONE = 4'd10;
 
-    reg [20:0] powerup_count;
-    reg [8:0] i2c_count;
+    reg [22:0] powerup_count;
+    reg [10:0] i2c_count;
     reg [3:0] state;
     reg [1:0] byte_index;
     reg [2:0] bit_index;
@@ -49,8 +49,8 @@ module atum_tfp410_init #(
 
     always @(posedge clk) begin
         if (rst) begin
-            powerup_count <= 21'd0;
-            i2c_count <= 9'd0;
+            powerup_count <= 23'd0;
+            i2c_count <= 11'd0;
             state <= ST_WAIT;
             byte_index <= 2'd0;
             bit_index <= 3'd7;
@@ -65,7 +65,7 @@ module atum_tfp410_init #(
                 powerup_count <= powerup_count + 1'b1;
             end
         end else if (i2c_count == I2C_HALF_CYCLES - 1) begin
-            i2c_count <= 9'd0;
+            i2c_count <= 11'd0;
             case (state)
             ST_START: begin
                 // START: SDA falls while SCL is released high.

@@ -102,6 +102,7 @@ make -j16 test-compiler
 | `make -j16 test-all` | Deterministic Verilator RTL regression for every core family. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then runs compiler, TLS, IRQ, ISS, and board-RTL smoke tests. |
+| `make -j16 compiler-features-iss` | Runs the supported C11, ABI, runtime-helper, and libc feature matrix at `-O0`, `-O2`, and `-Os` on the ISS. |
 | `make -j16 all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports. It does not include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
 | `make -j16 tables` | Regenerates area, Fmax, and benchmark measurement tables; substantially slower. |

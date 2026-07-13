@@ -79,7 +79,7 @@ module top (
 
     atum_a3_nano_soc #(
         .MEM_HEX("mem/demo.memh"),
-        .UART_CLK_DIV(868)
+        .UART_CLK_DIV(1953)
     ) soc (
         .clk(sys_clk), .rst(soc_rst), .uart_rx(FPGA_UART_RX),
         .button(KEY), .uart_tx(FPGA_UART_TX), .led(led_raw), .fb_we(fb_we),
@@ -96,7 +96,7 @@ module top (
     );
 
     atum_tfp410_init #(
-        .POWERUP_CYCLES(2000000), .I2C_HALF_CYCLES(500)
+        .POWERUP_CYCLES(4500000), .I2C_HALF_CYCLES(1125)
     ) tfp410_init (
         .clk(sys_clk), .rst(soc_rst), .scl(HDMI_I2C_SCL),
         .sda(HDMI_I2C_SDA), .ready(tfp410_ready)

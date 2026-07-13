@@ -129,7 +129,22 @@ module riscc_fast #(
 `else
     wire x_signed_byte = x_indexed_memory & x_f5[2];
 `endif
+    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined controls
+    // duplicate the new IE value in every ddd bit, allowing each characterized
+    // FPGA mapping to use the better-packed copy.
+`ifdef RISCC_FAST_AGILEX
+    wire x_control_ie_value = x_ddd[0];
+`elsif RISCC_FAST_DSP
+`ifdef RISCC_ECP5
+    wire x_control_ie_value = x_ddd[0];
+`else
+    wire x_control_ie_value = x_ddd[1];
+`endif
+`else
+    wire x_control_ie_value = x_ddd[1];
+`endif
     wire x_return = x_system & ~x_bbb[1] & ~x_bbb[0];
+    wire x_return_sets_ie = x_return & x_control_ie_value;
     wire x_link_jump = x_system & ~x_bbb[1] & x_bbb[0];
     wire x_jal = x_link_jump & ~x_bbb[2];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
@@ -345,8 +360,8 @@ module riscc_fast #(
         x_reg_alu |
 `endif
         x_move | (x_link_jump & (|x_ddd));
-    // All defined S-bank writes have bbb[0]=1. STI also matches, but never
-    // asserts x_result_we, so broadening this bank select is unobservable.
+    // All defined S-bank writes have bbb[0]=1; control-group forms have no
+    // result write, so this broad bank select remains unobservable there.
     wire x_result_system = x_system & x_bbb[0];
     wire x_cmpi = x_imm_alu & (x_aaa == 3'b011);
 
@@ -500,20 +515,16 @@ module riscc_fast #(
             trace_ie_live_q <= 1'b0;
         end else if (run_commit) begin
             trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
-            if (x_ie_control)
-                trace_ie_live_q <= x_bbb[0];
-            else if (x_return && x_bbb[2])
-                trace_ie_live_q <= 1'b1;
+            if (x_ie_control | x_return_sets_ie)
+                trace_ie_live_q <= x_control_ie_value;
         end else if (side_commit) begin
             trace_pc_live_q <= side_pc_q + 15'd1;
         end
 `endif
 
         // Architectural interrupt-enable updates commit with their op.
-        if (run_commit && x_ie_control)
-            interrupt_enable_q <= x_bbb[0];
-        else if (run_commit && x_return && x_bbb[2])
-            interrupt_enable_q <= 1'b1;
+        if (run_commit && (x_ie_control | x_return_sets_ie))
+            interrupt_enable_q <= x_control_ie_value;
 
         // Side datapath updates. The data register holds either the iterative
         // shift value or the soft-MUL accumulator.

@@ -24,9 +24,6 @@
   regenerate affected numbers and update `doc/HARDWARE.md`. Compare them with
   the previous revision; do not build or benchmark `HEAD` merely for
   comparison.
-- You can use max 16 parallel jobs for builds when the invoked tool supports
-  them: project Make targets use `make -j16 ...`. Apply the equivalent to external and tool builds too; for LLVM, use
-  `make -j16 llvm-riscc`; the same `-j` count is forwarded to CMake.
 - Reuse `build/llvm-riscc`; do not discard or rebuild it merely because a task
   has no LLVM source changes.  Its CMake C and C++ compiler launchers use the
   project's writable ccache selection.  Preserve that configuration and invoke

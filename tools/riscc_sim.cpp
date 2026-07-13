@@ -546,11 +546,17 @@ struct Sim {
                     emit_trace(pc_before, ir);
                     return;
                 }
-                if (rb >= 4 && !opts.has_sys())
-                    throw std::runtime_error("sys-profile op in min");
                 if (rb == 0) {
-                    pc_next = s[ra] & 0x7fff;
-                    instr_cycles = cycle.ret;
+                    if (rd == 0) { // RET Sa
+                        pc_next = s[ra] & 0x7fff;
+                        instr_cycles = cycle.ret;
+                    } else if (rd == 7 && opts.has_sys()) { // RETI Sa
+                        ie = true;
+                        pc_next = s[ra] & 0x7fff;
+                        instr_cycles = cycle.ret;
+                    } else {
+                        throw std::runtime_error("return control selector reserved");
+                    }
                 } else if (rb == 1) {
                     uint16_t target = r[ra] & 0x7fff;
                     if (rd != 0)
@@ -563,19 +569,28 @@ struct Sim {
                 } else if (rb == 3) {
                     s[rd] = r[ra];
                     instr_cycles = cycle.direct;
-                } else if (rb == 4) {
-                    ie = true;
-                    pc_next = s[ra] & 0x7fff;
-                    instr_cycles = cycle.ret;
                 } else if (rb == 5) {
+                    if (!opts.has_sys())
+                        throw std::runtime_error("sys-profile op in min");
                     uint16_t target = mem[pc_next & 0x7fff];
                     if (rd != 0)
                         s[rd] = static_cast<uint16_t>(pc + 2);
                     pc_next = target & 0x7fff;
                     instr_cycles = cycle.jump16;
-                } else {
-                    ie = rb & 1;
+                } else if (rb == 6) {
+                    if (!opts.has_sys())
+                        throw std::runtime_error("sys-profile op in min");
+                    if (ra != 0)
+                        throw std::runtime_error("CLI/STI ra field reserved");
+                    if (rd == 0)
+                        ie = false; // CLI
+                    else if (rd == 7)
+                        ie = true;  // STI
+                    else
+                        throw std::runtime_error("IE control selector reserved");
                     instr_cycles = cycle.direct;
+                } else {
+                    throw std::runtime_error("system sub-op reserved");
                 }
             } else {
                 throw std::runtime_error("register-format reserved");

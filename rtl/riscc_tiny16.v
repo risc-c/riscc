@@ -213,16 +213,24 @@ module riscc_tiny16 #(
 `endif
 `endif
 
-    // Logical register-indirect group 11_111, mandatory ops in the
-    // bbb[2]=0 plane:
-    //   000 RET Sa   001 JAL Sd, ra   010 MFS rd, Sa   011 MTS Sd, ra
-    //   100 RETI Sa  101 JAL16 Sd     110 CLI          111 STI
-    // bbb[0]=1 ops write S[ddd]; bbb[0]=0 ops read S[aaa]; RETI = RET+bbb[2].
+    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
+    // selectors are 000/111, so any ccc bit is the new IE value.
     wire system_group = register_class && (&register_group);
+`ifdef RISCC_SYS
+`ifdef RISCC_FULL
+    // Full packs best when RETI joins CLI/STI at the decode boundary.
+    wire control_ie_value = rd[2];
+    wire return_sets_ie = return_op && rd[2];
+`elsif RISCC_ECP5
+    wire control_ie_value = rd[2];
+`else
+    wire control_ie_value = rd[0];
+`endif
+`endif
 `ifndef RISCC_SYS
     wire interrupt_enable_op = 1'b0;
 `else
-    wire interrupt_enable_op = system_group && rb[2] && rb[1];          // CLI/STI: IE <- rb[0]
+    wire interrupt_enable_op = system_group && rb[2] && rb[1];
 `endif
     wire return_op = system_group && ~rb[1] && ~rb[0];
     wire mfs_op = system_group && ~rb[2] && rb[1] && ~rb[0];
@@ -628,15 +636,24 @@ module riscc_tiny16 #(
 
 `ifdef RISCC_SYS
             // These independent assignments intentionally establish priority.
-            if (in_decode && interrupt_enable_op) begin
-                interrupt_enable_q <= rb[0];
+            if (in_decode && (interrupt_enable_op
+`ifdef RISCC_FULL
+                              | return_sets_ie
+`endif
+                              )) begin
+                interrupt_enable_q <= control_ie_value;
             end
             if (in_irq_entry) begin
                 interrupt_enable_q <= 1'b0;
             end
-            if (in_jump_commit && return_op && rb[2]) begin
-                interrupt_enable_q <= 1'b1;  // RETI; RET leaves IE unchanged
+`ifndef RISCC_FULL
+            // A RET writes back the old value; RETI ORs in its set selector.
+            // This feedback form costs one fewer LUT than a separate RETI
+            // enable in the area-first sys core.
+            if (in_jump_commit && return_op) begin
+                interrupt_enable_q <= interrupt_enable_q | control_ie_value;
             end
+`endif
 `endif
         end
     end

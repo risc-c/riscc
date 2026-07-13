@@ -11,6 +11,7 @@ set_global_assignment -name TOP_LEVEL_ENTITY top
 set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 set_global_assignment -name NUM_PARALLEL_PROCESSORS $::env(RISCC_BUILD_JOBS)
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
 set_global_assignment -name STRATIXV_CONFIGURATION_SCHEME "ACTIVE SERIAL X4"
 set_global_assignment -name ACTIVE_SERIAL_CLOCK AS_FREQ_100MHZ
 set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
@@ -30,7 +31,7 @@ set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_faster.v
 set_global_assignment -name SDC_FILE ../../../boards/atum_a3_nano/atum_a3_nano.sdc
 
 # CLOCK0_50 drives the Terasic HDMI PLL; CLOCK1_50 feeds the RISC-C system
-# PLL, which generates the 100 MHz SoC clock.
+# PLL, which generates the 225 MHz SoC clock.
 set_instance_assignment -name IO_STANDARD "1.2-V" -to CLOCK0_50
 set_location_assignment PIN_K43 -to CLOCK0_50
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to CLOCK1_50

@@ -35,6 +35,7 @@ module atum_uart_mmio #(
     reg       rx_ready;
     reg       rx_overflow;
     reg [1:0] irq_en;
+    reg       irq_q;
     reg [9:0] tx_shift;
     reg [3:0] tx_bits;
     reg [DIV_BITS-1:0] tx_div;
@@ -48,7 +49,7 @@ module atum_uart_mmio #(
     wire tx_write = cpu_we && (cpu_addr == UART_TX_W);
     wire rx_read = !cpu_we && (cpu_addr == UART_RX_W);
 
-    assign irq = (irq_en[0] && rx_ready) || (irq_en[1] && tx_ready);
+    assign irq = irq_q;
     assign cpu_rdata =
         (cpu_addr == UART_RX_W) ? {8'h00, rx_data} :
         (cpu_addr == UART_STATUS_W) ? {13'h0000, rx_overflow, rx_ready, tx_ready} :
@@ -68,9 +69,15 @@ module atum_uart_mmio #(
             rx_ready <= 1'b0;
             rx_overflow <= 1'b0;
             irq_en <= 2'b00;
+            irq_q <= 1'b0;
             dbg_tx_count <= 32'd0;
             dbg_rx_count <= 32'd0;
         end else begin
+            // Keep the level-sensitive peripheral interrupt behind a
+            // register so it cannot form a combinational path through the
+            // CPU's interrupt decision and back into the MMIO interface.
+            irq_q <= (irq_en[0] && rx_ready) ||
+                     (irq_en[1] && tx_ready);
             rx_sync <= {rx_sync[0], uart_rx};
             if (ctrl_write)
                 irq_en <= cpu_wdata[1:0];

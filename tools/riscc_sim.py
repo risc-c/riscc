@@ -372,7 +372,7 @@ class Sim:
                 if bbb != 0:
                     raise Undefined("STB sub-op reserved")
                 self.stb(self.r[aaa], self.r[ddd])
-            elif f5 == 0x1F:                            # register-indirect group
+            elif f5 == 0x1F:                            # S/control group
                 if self.nano:
                     if bbb != 1:
                         raise Undefined("non-JAL sys op in nano")
@@ -383,10 +383,14 @@ class Sim:
                     self.pc = pc_next
                     self.emit_trace(pc_before, ir)
                     return
-                if bbb >= 4 and not self.sys_tier:
-                    raise Undefined("sys-profile op in min")
-                if bbb == 0:                            # RET Sa (IE untouched)
-                    pc_next = self.s[aaa] & 0x7FFF
+                if bbb == 0:                            # RET/RETI Sa
+                    if ddd == 0:
+                        pc_next = self.s[aaa] & 0x7FFF
+                    elif ddd == 7 and self.sys_tier:
+                        self.ie = 1
+                        pc_next = self.s[aaa] & 0x7FFF
+                    else:
+                        raise Undefined("return control selector reserved")
                 elif bbb == 1:                          # JAL Sd, ra
                     target = self.r[aaa] & 0x7FFF
                     if ddd != 0:
@@ -396,16 +400,26 @@ class Sim:
                     self.r[ddd] = self.s[aaa]
                 elif bbb == 3:                          # MTS Sd, ra
                     self.s[ddd] = self.r[aaa]
-                elif bbb == 4:                          # RETI Sa (sets IE)
-                    self.ie = 1
-                    pc_next = self.s[aaa] & 0x7FFF
                 elif bbb == 5:                          # JAL16 Sd (two words)
+                    if not self.sys_tier:
+                        raise Undefined("sys-profile op in min")
                     target = self.mem[pc_next & 0x7FFF]
                     if ddd != 0:
                         self.s[ddd] = (self.pc + 2) & 0xFFFF
                     pc_next = target & 0x7FFF
-                else:                                   # CLI / STI
-                    self.ie = bbb & 1
+                elif bbb == 6:                          # CLI / STI
+                    if not self.sys_tier:
+                        raise Undefined("sys-profile op in min")
+                    if aaa != 0:
+                        raise Undefined("CLI/STI aaa field reserved")
+                    if ddd == 0:
+                        self.ie = 0
+                    elif ddd == 7:
+                        self.ie = 1
+                    else:
+                        raise Undefined("IE control selector reserved")
+                else:
+                    raise Undefined("system sub-op reserved")
             else:
                 raise Undefined("register-format reserved")
         self.pc = pc_next

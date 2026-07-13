@@ -96,23 +96,24 @@ points. Cycle counts follow them as a reference for implementation work.
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 121 | 134 | 162 | 219 | 252 |
-| `sys` | 148 | 165 | 198 | 260 | 279 |
-| `full` | 169 | 189 | 228 | 296 | 332 |
+| `sys` | 147 | 165 | 198 | 260 | 278 |
+| `full` | 169 | 189 | 228 | 296 | 329 |
 | nano | 93 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 480 / 440 |
+| Fast soft / DSP | — | — | — | — | 479 / 439 |
 
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 164 | 179 | 201 | 255 | 278 |
-| `sys` | 192 | 205 | 235 | 293 | 306 |
-| `full` | 213 | 232 | 267 | 331 | 364 |
+| `sys` | 191 | 204 | 235 | 293 | 305 |
+| `full` | 212 | 232 | 263 | 328 | 361 |
 | nano | 114 | — | — | — | — |
+| Fast soft / DSP | — | — | — | — | 498 / 450 |
 
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 125 | 139 | 165 | 233 | 274 |
-| `sys` | 153 | 165 | 200 | 273 | 303 |
-| `full` | 171 | 189 | 229 | 309 | 358 |
+| `sys` | 149 | 165 | 200 | 273 | 302 |
+| `full` | 171 | 189 | 228 | 309 | 355 |
 | nano | 93 | — | — | — | — |
 
 | Agilex 3 ALMs (RF included) | /1 | /2 | /4 | /8 | /16 |
@@ -121,15 +122,15 @@ points. Cycle counts follow them as a reference for implementation work.
 | `sys` | 116.8 | 121.5 | 133.9 | 151.9 | 151.4 |
 | `full` | 131.9 | 144.6 | 151.4 | 170.4 | 218.6 |
 | nano | 90.2 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 308 / 310 |
-| Faster DSP / soft | — | — | — | — | 299.3 / 326.4 |
+| Fast soft / DSP | — | — | — | — | 277.2 / 235.3 |
+| Faster DSP / soft | — | — | — | — | 310.4 / 328.7 |
 
 | Fmax (MHz) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 33.67 | 29.67 | 27.15 | 24.99 | 25.28 | 31.56 | 24.47 | 21.98 | — | — |
-| iCE40 HX8K | 101.53 | 85.90 | 82.82 | 77.30 | 74.02 | 92.26 | 64.15 | — | — | — |
-| ECP5 LFE5U-25F | 101.90 | 106.61 | 85.40 | 81.11 | 84.98 | 104.07 | 68.14 | 67.00 | — | — |
-| Agilex 3 | 277.16 | 266.81 | 242.95 | 222.87 | 211.51 | 306.37 | 185.29 | 152.93 | 222.97 | 207.99 |
+| iCE40 UP5K | 33.07 | 30.99 | 28.14 | 25.23 | 24.55 | 31.56 | 24.88 | 21.24 | — | — |
+| iCE40 HX8K | 100.83 | 91.75 | 82.82 | 76.39 | 66.97 | 92.26 | 62.37 | — | — | — |
+| ECP5 LFE5U-25F | 108.37 | 109.23 | 85.70 | 81.07 | 85.16 | 104.07 | 72.96 | 68.00 | — | — |
+| Agilex 3 | 277.16 | 266.81 | 242.95 | 222.87 | 211.51 | 306.37 | 192.57 | 153.63 | 251.76 | 250.31 |
 
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
 profile; Fast and Faster use `full`.
@@ -138,8 +139,11 @@ The iCE40/ECP5 figures are reproducible open-FPGA results. Agilex results are
 Quartus Pro 26.1 post-fit characterizations for `A3CZ135BB18AE7S`; Fmax is a
 restricted-Fmax estimate, not closure at every listed clock. Run
 `make -j16 tables` to regenerate the open-FPGA area/Fmax matrices, benchmarks,
-and the published Agilex report. Faster has validation and benchmark targets
-but no standalone open-FPGA area/Fmax target.
+and the published Agilex report. The Fast Agilex characterization defines
+`RISCC_FAST_AGILEX` to select the equivalent control-selector copy that packs
+best on that family. The Fast and Faster points use a 4 ns target with Quartus
+High Performance Effort. Faster has validation and benchmark targets but no
+standalone open-FPGA area/Fmax target.
 
 The common benchmark retires 3,165 instructions on mainline, Fast, and Faster,
 and 8,418 on Nano because Nano uses software multiply. The Tiny rates combine
@@ -148,18 +152,18 @@ Fast and Faster use their matching full-profile clocks.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 0.94 | 1.53 | 2.40 | 3.46 | 6.00 | 1.02 | 13.59 | 14.88 | — | — |
-| iCE40 HX8K | 2.85 | 4.43 | 7.33 | 10.70 | 17.56 | 2.97 | 35.63 | — | — | — |
-| ECP5 | 2.86 | 5.50 | 7.56 | 11.23 | 20.16 | 3.35 | 37.85 | 45.37 | — | — |
-| Agilex 3 | 7.77 | 13.75 | 21.50 | 30.86 | 50.18 | 9.88 | 102.92 | 103.56 | 106.07 | 87.20 |
+| iCE40 UP5K | 0.93 | 1.60 | 2.49 | 3.49 | 5.82 | 1.02 | 13.82 | 14.38 | — | — |
+| iCE40 HX8K | 2.83 | 4.73 | 7.33 | 10.58 | 15.89 | 2.97 | 34.64 | — | — | — |
+| ECP5 | 3.04 | 5.63 | 7.58 | 11.23 | 20.20 | 3.35 | 40.53 | 46.05 | — | — |
+| Agilex 3 | 7.77 | 13.75 | 21.50 | 30.86 | 50.18 | 9.88 | 106.96 | 104.03 | 119.77 | 104.95 |
 
 | Benchmark MIPS/kLUT4 (kLE on Agilex) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 5.6 | 8.1 | 10.5 | 11.7 | 18.1 | 10.9 | 28.3 | 33.8 | — | — |
-| iCE40 HX8K | 16.9 | 23.4 | 32.1 | 36.2 | 52.9 | 32.0 | 74.2 | — | — | — |
-| ECP5 block RF | 16.7 | 29.1 | 33.0 | 36.3 | 56.3 | 36.1 | 75.5 | 100.8 | — | — |
-| ECP5 LUTRAM RF | 13.4 | 23.7 | 28.3 | 33.9 | 55.4 | 29.4 | 75.5 | 100.8 | — | — |
-| Agilex 3 (kLE) | 20.0 | 32.2 | 48.1 | 61.4 | 77.8 | 109.5 | 113.3 | 113.2 | 120.1 | 90.6 |
+| iCE40 UP5K | 5.5 | 8.5 | 10.9 | 11.8 | 17.7 | 10.9 | 28.9 | 32.8 | — | — |
+| iCE40 HX8K | 16.7 | 25.0 | 32.1 | 35.7 | 48.3 | 32.0 | 72.3 | — | — | — |
+| ECP5 block RF | 17.8 | 29.8 | 33.3 | 36.3 | 56.9 | 36.1 | 81.4 | 102.3 | — | — |
+| ECP5 LUTRAM RF | 14.3 | 24.3 | 28.8 | 34.2 | 56.0 | 29.4 | 81.4 | 102.3 | — | — |
+| Agilex 3 (kLE) | 20.0 | 32.2 | 48.1 | 61.4 | 77.8 | 109.5 | 130.8 | 149.9 | 130.8 | 108.2 |
 
 ### Cycle counts
 
@@ -261,7 +265,7 @@ video output.
 ### Terasic Atum A3 Nano
 
 [`boards/atum_a3_nano`](../boards/atum_a3_nano) is the Quartus Pro Agilex 3
-demo. It runs a 100 MHz Faster SoC, UART, on-chip program RAM, and a 160x120
+demo. It runs a 225 MHz Faster SoC, UART, on-chip program RAM, and a 160x120
 4-bit framebuffer expanded to 1920x1080p60 through the TFP410. Firmware
 assembly, ISS use, and RTL simulation need no external board checkout:
 
@@ -322,9 +326,14 @@ For persistent QSPI programming, generate a `.jic` and follow Terasic's
 That intentionally replaces the flash image and is outside this project's
 normal development flow.
 
-The Quartus Pro 26.1 post-fit demo uses 533 ALMs, 21 M20K blocks, one DSP
-block, and two IOPLLs. Both the 100 MHz system and 148.5 MHz pixel-clock
-constraints meet setup timing (2.880 ns and 3.902 ns slack respectively).
+The UART keeps its level-sensitive interrupt behind a peripheral register,
+breaking the UART-to-CPU-to-MMIO combinational path at the cost of one system
+clock of interrupt latency. The 32 KiB unified program/data RAM remains on the
+existing shared interface, with no cache, wait state, or extra memory pipeline
+stage. The Quartus Pro 26.1 post-fit demo uses 607 ALMs, 21 M20K blocks, one
+DSP block, and two IOPLLs. Both the 225 MHz system and 148.5 MHz pixel-clock
+constraints meet setup timing (0.025 ns and 3.530 ns slack respectively); the
+system hold slack is 0.015 ns and its restricted Fmax is 226.3 MHz.
 
 ![Video capture of RISC-C running on Atum A3 Nano](riscc_on_atum-a3.jpg)
 

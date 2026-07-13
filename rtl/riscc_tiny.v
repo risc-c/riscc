@@ -51,17 +51,18 @@ module riscc_tiny #(
     localparam [2:0] ST_INIT2         = (W == 1) ? 3'd4 : 3'd7;
 `elsif RISCC_FULL
 `ifdef RISCC_ECP5
-    // ECP5 keeps the original wide encodings, where they pack best.
-    localparam [2:0] ST_FETCH_WAIT    = (W <= 2) ? 3'd0 : 3'd3;
+    // ECP5 full-profile state codes are tuned independently for W=1, W=2,
+    // and the wide pair; this reduces both block-RF and LUTRAM mappings.
+    localparam [2:0] ST_FETCH_WAIT    = 3'd0;
     localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd3 : 3'd0;
+                                               (W == 2) ? 3'd1 : 3'd3;
     localparam [2:0] ST_DECODE        = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd2 : 3'd1;
-    localparam [2:0] ST_MEM_WAIT      = (W <= 2) ? 3'd1 : 3'd2;
-    localparam [2:0] ST_EXECUTE       = (W <= 2) ? 3'd5 : 3'd6;
-    localparam [2:0] ST_MEM_XFER      = (W <= 2) ? 3'd7 : 3'd5;
+                                               (W == 2) ? 3'd3 : 3'd1;
+    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 : 3'd2;
+    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd5 : 3'd6;
+    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd7 : 3'd5;
     localparam [2:0] ST_INIT          = 3'd4;
-    localparam [2:0] ST_INIT2         = (W <= 2) ? 3'd6 : 3'd7;
+    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 : 3'd7;
 `else
     localparam [2:0] ST_FETCH_WAIT    = (W == 2) ? 3'd0 :
                                                (W == 4) ? 3'd3 : 3'd0;
@@ -242,9 +243,30 @@ module riscc_tiny #(
                           (~f5[2] | f5[1]);
 `endif
 
-    // Register-indirect group; the bbb[2]=0 plane is mandatory:
-    //   000 RET Sa   001 JAL Sd, ra   010 MFS rd, Sa   011 MTS Sd, ra
-    //   100 RETI Sa  101 JAL16 Sd     110 CLI          111 STI
+    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
+    // selectors are 000/111, so any ccc bit is the new IE value.
+`ifdef RISCC_SYS
+`ifdef RISCC_ECP5
+    // The architectural selectors are 000/111, so these are equivalent
+    // constant bit choices.  Keep the copy that routes best for each width.
+`ifdef RISCC_FULL
+    localparam integer CONTROL_IE_BIT = (W == 1) ? 2 :
+                                          (W <= 4) ? 1 : 0;
+`else
+    localparam integer CONTROL_IE_BIT = (W <= 2) ? 1 :
+                                          (W == 4) ? 2 : 0;
+`endif
+`else
+`ifdef RISCC_FULL
+    localparam integer CONTROL_IE_BIT = (W == 1) ? 0 :
+                                 ((W == 2) || (W == 8)) ? 1 : 2;
+`else
+    localparam integer CONTROL_IE_BIT = ((W == 2) || (W == 8)) ? 1 : 2;
+`endif
+`endif
+    wire control_ie_value = ddd[CONTROL_IE_BIT];
+    wire return_sets_ie = return_op & control_ie_value;
+`endif
     wire return_op = system_op & ~bbb[1] & ~bbb[0];
     wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
@@ -723,6 +745,9 @@ module riscc_tiny #(
     // System profile state
     // ------------------------------------------------------------------
 `ifdef RISCC_SYS
+`ifdef RISCC_ECP5
+    // A direct execute-boundary block maps smaller on ECP5 than the same
+    // logic nested under a constant generate branch.
     always @(posedge clk) begin
         if (in_decode)
             trap_q <= take_irq;
@@ -730,16 +755,55 @@ module riscc_tiny #(
             if (trap_q) begin
                 if (last_slice)
                     ie_q <= 1'b0;
-            end else if (ie_control_op)
-                ie_q <= bbb[0];
-            else if (return_op & bbb[2] & last_slice)
-                ie_q <= 1'b1;       // RETI
+            end else if ((ie_control_op |
+                          return_sets_ie) & last_slice)
+                ie_q <= control_ie_value;
         end
         if (rst) begin
             ie_q   <= 1'b0;
             trap_q <= 1'b0;
         end
     end
+`else
+    localparam DECODE_IE_UPDATE = (W == 2) || (W == 4);
+    // Updating controls at decode packs best for W=2/4.  IE is not sampled
+    // again until the next decode boundary, so this is architecturally
+    // equivalent to the execute-boundary form used for W=1/8 and ECP5.
+    generate
+        if (DECODE_IE_UPDATE) begin : g_decode_ie_update
+            always @(posedge clk) begin
+                if (in_decode) begin
+                    trap_q <= take_irq;
+                    if (ie_control_op | return_sets_ie)
+                        ie_q <= control_ie_value;
+                end
+                if (in_execute & trap_q & last_slice)
+                    ie_q <= 1'b0;
+                if (rst) begin
+                    ie_q   <= 1'b0;
+                    trap_q <= 1'b0;
+                end
+            end
+        end else begin : g_execute_ie_update
+            always @(posedge clk) begin
+                if (in_decode)
+                    trap_q <= take_irq;
+                if (in_execute) begin
+                    if (trap_q) begin
+                        if (last_slice)
+                            ie_q <= 1'b0;
+                    end else if ((ie_control_op |
+                                  return_sets_ie) & last_slice)
+                        ie_q <= control_ie_value;
+                end
+                if (rst) begin
+                    ie_q   <= 1'b0;
+                    trap_q <= 1'b0;
+                end
+            end
+        end
+    endgenerate
+`endif
 `endif
 
     // ------------------------------------------------------------------

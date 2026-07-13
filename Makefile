@@ -719,7 +719,7 @@ atum-a3-demo-bin: FORCE
 	$(MAKE) -B $(ATUM_BIN) $(ATUM_MEMH)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --full --fb-window --fb-scale 4 --mhz 100 --max-insns 0
+	$(RISCC_SIM) $< --uart --full --fb-window --fb-scale 4 --mhz 225 --max-insns 0
 
 $(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp Makefile
 	@mkdir -p $(@D)
@@ -770,16 +770,16 @@ AGILEX_AREA_min := $(AGILEX_AREA_MIN)
 AGILEX_AREA_sys := $(AGILEX_AREA_SYS)
 AGILEX_AREA_full := $(AGILEX_AREA_FULL)
 AGILEX_AREA_NANO := 90.2
-AGILEX_AREA_FAST_SOFT := 308
-AGILEX_AREA_FAST_DSP := 310
-AGILEX_AREA_FASTER_DSP := 299.3
-AGILEX_AREA_FASTER_SOFT := 326.4
+AGILEX_AREA_FAST_SOFT := 277.2
+AGILEX_AREA_FAST_DSP := 235.3
+AGILEX_AREA_FASTER_DSP := 310.4
+AGILEX_AREA_FASTER_SOFT := 328.7
 AGILEX_FMAX_SYS := 277.16 266.81 242.95 222.87 211.51
 AGILEX_FMAX_NANO := 306.37
-AGILEX_FMAX_FAST_SOFT := 185.29
-AGILEX_FMAX_FAST_DSP := 152.93
-AGILEX_FMAX_FASTER_DSP := 222.97
-AGILEX_FMAX_FASTER_SOFT := 207.99
+AGILEX_FMAX_FAST_SOFT := 192.57
+AGILEX_FMAX_FAST_DSP := 153.63
+AGILEX_FMAX_FASTER_DSP := 251.76
+AGILEX_FMAX_FASTER_SOFT := 250.31
 
 agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
 agilex_tiny_area = $(word $(call agilex_area_index,$(1)),$(AGILEX_AREA_$(2)))
@@ -1269,12 +1269,18 @@ RISCC_COMPILER_IRQ_CUSTOM_OBJECT := $(RISCC_COMPILER_BUILD)/irq_custom_vector.o
 RISCC_COMPILER_IRQ_CUSTOM_ELF := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.elf
 RISCC_COMPILER_IRQ_CUSTOM_BIN := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.bin
 RISCC_COMPILER_IRQ_CUSTOM_MAP := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.map
+RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer \
+	feature_builtins feature_memory feature_abi feature_abi_callee
+RISCC_COMPILER_FEATURE_ASM_OBJECT := \
+	$(RISCC_COMPILER_BUILD)/features/feature_abi_asm.o
 
 .PHONY: llvm-riscc-configure llvm-riscc riscc-firmware \
 	compiler-smoke compiler-smoke-unified compiler-smoke-iss \
 	compiler-smoke-split compiler-smoke-tiny16 compiler-smoke-fast compiler-smoke-icepi \
 	compiler-smoke-atum compiler-smoke-opt-o0 compiler-smoke-opt-o2 \
 	compiler-smoke-opt-os compiler-smoke-opt-matrix \
+	compiler-features-o0-iss compiler-features-o2-iss \
+	compiler-features-os-iss compiler-features-iss \
 	compiler-stdio-iss \
 	compiler-irq-iss compiler-irq-tiny16 compiler-irq-fast \
 	compiler-irq-custom-iss compiler-irq-custom-tiny16 compiler-irq-custom-fast \
@@ -1603,6 +1609,53 @@ compiler-smoke-opt-os: $(RISCC_COMPILER_BUILD)/matrix/os/smoke.bin $(RISCC_SIM)
 compiler-smoke-opt-matrix: compiler-smoke-opt-o0 compiler-smoke-opt-o2 \
 	compiler-smoke-opt-os
 
+# Execute a broader, multi-file C11 and ABI feature suite at every supported
+# optimization level.  The assembly helper is an independent oracle for the
+# callee-saved GPR contract; all feature decisions and checks remain in C.
+$(RISCC_COMPILER_FEATURE_ASM_OBJECT): test/compiler/feature_abi_asm.S \
+		$(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+define riscc_compiler_feature_rules
+RISCC_COMPILER_FEATURE_OBJECTS_$(1) := $$(addprefix \
+	$$(RISCC_COMPILER_BUILD)/features/$(1)/, \
+	$$(addsuffix .o,$$(RISCC_COMPILER_FEATURE_MODULES)))
+
+$$(RISCC_COMPILER_FEATURE_OBJECTS_$(1)): \
+		$$(RISCC_COMPILER_BUILD)/features/$(1)/%.o: test/compiler/%.c \
+		test/compiler/riscc_compiler_features.h $$(RISCC_CLANG)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_CFLAGS_NO_OPT) \
+	  $$(call riscc_opt_flag,$(1)) -std=c11 -Itest/compiler \
+	  -Ifirmware/include -c $$< -o $$@
+
+$$(RISCC_COMPILER_BUILD)/features/$(1)/features.elf: \
+		$$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+		$$(RISCC_COMPILER_FEATURE_OBJECTS_$(1)) \
+		$$(RISCC_COMPILER_FEATURE_ASM_OBJECT) $$(RISCC_FIRMWARE_LIBRARIES) \
+		firmware/unified.ld $$(RISCC_CLANG) $$(RISCC_LLD)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_LDFLAGS) \
+	  -fuse-ld=lld -nostdlib -Wl,-T,$$(abspath firmware/unified.ld) \
+	  $$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+	  $$(RISCC_COMPILER_FEATURE_OBJECTS_$(1)) \
+	  $$(RISCC_COMPILER_FEATURE_ASM_OBJECT) $$(RISCC_FIRMWARE_LIBRARIES) -o $$@
+
+$$(RISCC_COMPILER_BUILD)/features/$(1)/features.bin: \
+		$$(RISCC_COMPILER_BUILD)/features/$(1)/features.elf $$(RISCC_OBJCOPY)
+	$$(RISCC_OBJCOPY) -O binary $$< $$@
+
+compiler-features-$(1)-iss: \
+		$$(RISCC_COMPILER_BUILD)/features/$(1)/features.bin $$(RISCC_SIM)
+	$$(RISCC_SIM) $$< --full --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+endef
+
+$(foreach opt,o0 o2 os,$(eval $(call riscc_compiler_feature_rules,$(opt))))
+
+compiler-features-iss: compiler-features-o0-iss compiler-features-o2-iss \
+	compiler-features-os-iss
+
 check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 		tools/riscc_asm.py $(RISCC_MC) $(RISCC_OBJCOPY)
 	$(PYTHON) $< --llvm-mc $(LLVM_RISCC_BIN)/llvm-mc \
@@ -1610,6 +1663,7 @@ check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 
 test-compiler: compiler-smoke-iss compiler-smoke-split \
 	compiler-smoke-tiny16 compiler-smoke-fast compiler-smoke-icepi compiler-smoke-atum \
-	compiler-smoke-opt-matrix compiler-stdio-iss compiler-irq-iss compiler-irq-tiny16 \
+	compiler-smoke-opt-matrix compiler-features-iss \
+	compiler-stdio-iss compiler-irq-iss compiler-irq-tiny16 \
 	compiler-irq-fast compiler-irq-custom-iss compiler-irq-custom-tiny16 \
 	compiler-irq-custom-fast compiler-irq-linkage check-llvm-mc-encodings
