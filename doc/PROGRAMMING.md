@@ -166,6 +166,20 @@ semantics. It has no VLA/dynamic allocation, soft float, PIC, atomics, exception
 unwinding, jump tables, tail calls, compiler interrupt attributes, or C++
 runtime.
 
+### Inline assembly
+
+GNU-style inline assembly supports the target `r` constraint for an
+allocatable general register and the generic `i` and `m` constraints for an
+integer constant and a memory operand. Standard output, read/write, matching,
+and early-clobber modifiers work normally. RISC-C defines no target-specific
+immediate constraint letters and has no condition-code clobber.
+
+The compiler does not infer effects from the assembly text. List every fixed
+register written by the instructions, including implicit `r0` writes, and use
+the `memory` clobber when the assembly accesses unlisted memory or acts as a
+compiler barrier. Use `volatile` when the assembly must not be removed. Do not
+modify `r7` or ABI-reserved S registers from ordinary C inline assembly.
+
 ### Application Makefiles
 
 An application should include [`firmware/riscc.mk`](../firmware/riscc.mk)
