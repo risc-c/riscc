@@ -29,6 +29,15 @@ struct feature_large {
     u16 word[5];
 };
 
+struct feature_vararg_pair {
+    u16 first;
+    u16 second;
+};
+
+struct feature_vararg_bytes3 {
+    u8 byte[3];
+};
+
 typedef u16 (*feature_binary_fn)(u16, u16);
 typedef u16 (*feature_test_fn)(void);
 
@@ -37,6 +46,7 @@ u16 feature_test_integer(void);
 u16 feature_test_builtins(void);
 u16 feature_test_memory(void);
 u16 feature_test_abi(void);
+u16 feature_test_varargs(void);
 
 u16 feature_abi_narrow(s8, u8, s16, u16, s8);
 u16 feature_abi_stack_mix(u16, u16, u16, u32, u16);
@@ -55,6 +65,11 @@ u16 feature_abi_add(u16, u16);
 u16 feature_abi_apply(feature_binary_fn, u16, u16);
 u16 feature_abi_pressure(u16);
 u16 feature_check_callee_saved(void);
+
+u16 feature_varargs_sum(u16, u16, ...);
+u16 feature_varargs_promote(u16, ...);
+u16 feature_varargs_copy(u16, ...);
+u16 feature_varargs_mix(u16, u16, u16, u16, u16, ...);
 
 extern feature_binary_fn feature_global_binary;
 

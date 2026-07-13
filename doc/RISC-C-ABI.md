@@ -11,7 +11,7 @@ configuration is `-mcpu=full`. An ABI-v1 object may be linked for either a
 unified physical memory or distinct instruction and data memories; that choice
 does not change the object ABI.
 
-ABI v1 is little-endian. It defines ordinary, non-variadic C calls, static
+ABI v1 is little-endian. It defines C calls, including variadic calls, static
 local-exec TLS, and static ELF links. It does not define a hosted environment,
 dynamic linking, PIC, exceptions, unwinding, atomics, or a C++ runtime.
 
@@ -78,9 +78,24 @@ first. A larger aggregate result uses a hidden pointer in `r1`; explicit
 arguments then begin in `r2`. The result pointer is caller-owned and need not
 be returned separately.
 
-Variadic calls and definitions are not supported by ABI v1. Tail calls,
-dynamic `alloca`, and compiler-generated interrupt-function calling
-conventions are also outside ABI v1.
+For a variadic function, its named parameters use the convention above.
+Every unnamed argument is stack-passed, regardless of unused argument
+registers. Named stack arguments come first; the first unnamed argument is at
+the next two-byte slot. Each unnamed argument occupies an even-byte sequence
+of 16-bit slots, low word first, and is rounded up to a two-byte size. There
+is no register save area or register-argument home area.
+
+`va_list` is a 16-bit data pointer to the next unnamed argument. `va_start`
+initializes that pointer to the first unnamed argument after the named
+parameters. `va_arg` reads its requested type at the current pointer, then
+advances by its two-byte-rounded size; all ABI type alignments are at most two
+bytes. `va_copy` creates an independent copy of the current pointer.
+`va_end` has no runtime effect but must be called for every initialized or
+copied list. C default argument promotions apply before an unnamed argument is
+passed, and the usual C restrictions on the type requested by `va_arg` apply.
+
+Tail calls, dynamic `alloca`, and compiler-generated interrupt-function
+calling conventions are outside ABI v1.
 
 ## 5. Thread-local storage
 

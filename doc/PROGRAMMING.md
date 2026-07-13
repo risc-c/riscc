@@ -158,8 +158,11 @@ The C target is freestanding `riscc-none-elf -mcpu=full`. The initial compiler
 supports integer C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS objects,
 stack frames, aggregate calls and returns, function pointers, and 16-, 32-,
 and 64-bit integer operations. It has no hosted environment or full libc;
-the supplied headers are the minimal `<stdio.h>` and `<riscc/interrupt.h>`.
-It has no varargs, VLA/dynamic allocation, soft float, PIC, atomics, exceptions,
+the supplied headers include minimal `<stdio.h>`, `<stdarg.h>`, and
+`<riscc/interrupt.h>`. Variadic functions keep named arguments on the ordinary
+ABI convention and place unnamed arguments on the stack; see the normative
+[C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for `va_list`
+semantics. It has no VLA/dynamic allocation, soft float, PIC, atomics, exceptions,
 unwinding, jump tables, tail calls, compiler interrupt attributes, or C++
 runtime.
 

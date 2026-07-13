@@ -10,6 +10,7 @@ static const feature_test_fn feature_tests[] = {
     feature_test_builtins,
     feature_test_memory,
     feature_test_abi,
+    feature_test_varargs,
 };
 
 static void fail(u16 module, u16 detail)
