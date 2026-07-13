@@ -43,6 +43,10 @@ RTL_TEST_DIR := rtl/test
 TRACE_RTL := $(RTL_TEST_DIR)/riscc_trace_ports.vh $(RTL_TEST_DIR)/riscc_trace_state.vh
 RISCC_RF_RTL := rtl/riscc_rf.vh
 RISCC_SIM := build/tools/riscc_sim
+PERIPHERAL_TB := build/tb/peripherals/tb
+PERIPHERAL_RTL := boards/shared/rtl/riscc_timer_mmio.v \
+  boards/shared/rtl/riscc_irq_ctrl.v \
+  $(RTL_TEST_DIR)/riscc_peripherals_top.v
 
 OBJCACHE ?= $(CCACHE)
 VERILATOR_MAKEFLAGS ?= $(strip OPT_FAST=$(VERILATOR_OPT_FAST) OPT_GLOBAL=$(VERILATOR_OPT_GLOBAL) $(if $(OBJCACHE),OBJCACHE=$(OBJCACHE)))
@@ -152,7 +156,7 @@ ECP5_NANO_RF_SITES := 12
 # and fmax-<width>-<profile> for Tiny,
 # plus the fixed Nano, Fast, and Faster targets.  The aggregate area/Fmax
 # targets below are the supported way to regenerate published matrices.
-.PHONY: all test-all clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
+.PHONY: all test-all test-peripherals clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
         icepi-zero-demo-bin icepi-zero-demo-iss icepi-zero-demo-iss-test icepi-zero-demo-rtlsim \
         icepi-zero-demo-json icepi-zero-demo-bit icepi-zero-video-test-bit \
         atum-a3-demo-bin atum-a3-demo-iss atum-a3-demo-rtlsim atum-a3-demo \
@@ -179,7 +183,17 @@ version:
 check-version:
 	@test "$$(sed -n 's/^Version: `\([^`]*\)`\.$$/\1/p' doc/RISC-C.md)" = "$(RISCC_VERSION)"
 
-test-all: test-matrix test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp test-faster test-faster-soft
+test-all: test-peripherals test-matrix test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp test-faster test-faster-soft
+
+$(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
+	@mkdir -p $(@D)
+	$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc_peripherals_top --prefix Vriscc_peripherals_top \
+	  -GTICK_DIV=4 -Mdir $(@D) -CFLAGS "$(TB_CXXFLAGS)" -o tb \
+	  $(abspath $(PERIPHERAL_RTL)) $(abspath test/peripheral_tb.cpp)
+
+test-peripherals: $(PERIPHERAL_TB)
+	$<
 
 # ---- Assembler / ISS --------------------------------------------------
 
@@ -568,7 +582,9 @@ test-matrix-parallel:
 ICEPI_DIR := boards/icepi_zero
 ICEPI_BUILD := build/icepi_zero
 ICEPI_BIN := $(ICEPI_BUILD)/demo.bin
-ICEPI_ASM ?= $(ICEPI_DIR)/sw/demo.asm
+ICEPI_PROGRAM ?= $(ICEPI_DIR)/sw/demo.cpp
+ICEPI_CPP_OBJECT := $(ICEPI_BUILD)/demo.o
+ICEPI_ELF := $(ICEPI_BUILD)/demo.elf
 ICEPI_MEMH := $(ICEPI_BUILD)/demo.memh
 ICEPI_JSON := $(ICEPI_BUILD)/demo.json
 ICEPI_CONFIG := $(ICEPI_BUILD)/demo.config
@@ -578,16 +594,26 @@ ICEPI_VIDEO_TEST_CONFIG := $(ICEPI_BUILD)/video_test.config
 ICEPI_VIDEO_TEST_BIT := $(ICEPI_BUILD)/video_test.bit
 ICEPI_RTLSIM := $(ICEPI_BUILD)/rtlsim/Vicepi_zero_soc_sim
 ICEPI_CPU_DEFS := -DRISCC_FAST_DSP
+# Keep the dense ABC9 mapper for the shipped demo.  Yosys 0.33's final
+# name-dressing pass aborts on the exact 1 kHz divider, so the normal recipe
+# runs the equivalent mapping/finalization sequence without that pass.
+# The color-bar image continues to use its separately tuned stable mapper.
+ICEPI_VIDEO_TEST_SYNTH_OPTS ?= -abc2
 ICEPI_SPEED ?= 6
-ICEPI_NEXTPNR_OPTS ?= --seed 31 --tmg-ripup
+ICEPI_NEXTPNR_OPTS ?= --seed 4 --placer sa --tmg-ripup
 ICEPI_DVI_RTL := \
   $(ICEPI_DIR)/rtl/icepi_fb_dvi.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
-  $(ICEPI_DIR)/vendor/dvi/tmds_encoder.v \
-  $(ICEPI_DIR)/vendor/dvi/pll.v
+  $(ICEPI_DIR)/rtl/icepi_tmds_encoder.v \
+  $(ICEPI_DIR)/rtl/icepi_dvi_pll.v
+RISCC_DEMO_PERIPH_RTL := \
+  boards/shared/rtl/riscc_framebuffer_mmio.v \
+  boards/shared/rtl/riscc_uart_mmio.v \
+  boards/shared/rtl/riscc_timer_mmio.v \
+  boards/shared/rtl/riscc_irq_ctrl.v
 ICEPI_SOC_RTL := \
+  $(RISCC_DEMO_PERIPH_RTL) \
   $(ICEPI_DIR)/rtl/fb_ram.v \
-  $(ICEPI_DIR)/rtl/uart_mmio.v \
   $(ICEPI_DIR)/rtl/icepi_zero_soc.v
 ICEPI_SYNTH_RTL := \
   $(ICEPI_DIR)/rtl/top.v \
@@ -599,18 +625,13 @@ ICEPI_SIM_RTL := \
   $(ICEPI_SOC_RTL) \
   $(ICEPI_DIR)/rtl/icepi_fb_dvi.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
-  $(ICEPI_DIR)/vendor/dvi/tmds_encoder.v \
+  $(ICEPI_DIR)/rtl/icepi_tmds_encoder.v \
   rtl/riscc_fast.v
-
-$(ICEPI_BIN): $(ICEPI_ASM) tools/riscc_asm.py
-	@mkdir -p $(@D)
-	$(PYTHON) tools/riscc_asm.py $< -o $@
 
 $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py
 	$(PYTHON) tools/bin_to_memh.py $< -o $@
 
-icepi-zero-demo-bin: FORCE
-	$(MAKE) -B $(ICEPI_BIN) $(ICEPI_MEMH)
+icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
 	$(RISCC_SIM) $< --uart --full --fb-window --mhz 50 --max-insns 0
@@ -626,7 +647,7 @@ $(ICEPI_RTLSIM): $(ICEPI_MEMH) $(ICEPI_SIM_RTL) $(ICEPI_DIR)/sim/icepi_zero_soc_
 	@mkdir -p $(@D)
 	$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module icepi_zero_soc_sim --prefix Vicepi_zero_soc_sim \
-	  -Mdir $(@D) $(ICEPI_CPU_DEFS) -I$(abspath rtl) -I$(abspath $(ICEPI_DIR)/vendor/dvi) \
+	  -Mdir $(@D) $(ICEPI_CPU_DEFS) -GTIMER_TICK_DIV=4 -I$(abspath rtl) \
 	  -CFLAGS "$(TB_CXXFLAGS)" -o Vicepi_zero_soc_sim \
 	  $(abspath $(ICEPI_SIM_RTL)) $(abspath $(ICEPI_DIR)/sim/icepi_zero_soc_tb.cpp)
 
@@ -635,7 +656,7 @@ icepi-zero-demo-rtlsim: $(ICEPI_RTLSIM)
 
 $(ICEPI_JSON): $(ICEPI_MEMH) $(ICEPI_SYNTH_RTL) $(RISCC_RF_RTL) Makefile
 	@mkdir -p $(@D)
-	@$(YOSYS) -p 'read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFS) $(ICEPI_SYNTH_RTL); synth_ecp5 -top top -json $@' \
+	@$(YOSYS) -p 'read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFS) $(ICEPI_SYNTH_RTL); synth_ecp5 -abc9 -top top -run begin:map_luts; abc9 -lut 4:7; techmap -map +/ecp5/latches_map.v; clean; techmap -map +/ecp5/cells_map.v; opt_lut_ins -tech lattice; clean; autoname; hierarchy -check; stat; check -noinit; blackbox =A:whitebox; write_json $@' \
 	  >$(ICEPI_BUILD)/demo-yosys.log 2>&1 || { tail -80 $(ICEPI_BUILD)/demo-yosys.log; exit 1; }
 	@awk '/Number of cells:/{cells=$$4} $$1=="LUT4"{lut=$$2} $$1=="DP16KD"{ebr=$$2} $$1=="MULT18X18D"{dsp=$$2} END{printf "Icepi synth: %d cells, %d LUT4, %d EBR, %d DSP\n",cells,lut,ebr,dsp}' \
 	  $(ICEPI_BUILD)/demo-yosys.log
@@ -656,7 +677,7 @@ icepi-zero-demo-bit: $(ICEPI_BIT)
 
 $(ICEPI_VIDEO_TEST_JSON): $(ICEPI_MEMH) $(ICEPI_SYNTH_RTL) $(RISCC_RF_RTL) Makefile
 	@mkdir -p $(@D)
-	@$(YOSYS) -p 'read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFS) -DICEPI_VIDEO_TEST $(ICEPI_SYNTH_RTL); synth_ecp5 -top top -json $@' \
+	@$(YOSYS) -p 'read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFS) -DICEPI_VIDEO_TEST $(ICEPI_SYNTH_RTL); synth_ecp5 $(ICEPI_VIDEO_TEST_SYNTH_OPTS) -top top -json $@' \
 	  >$(ICEPI_BUILD)/video-test-yosys.log 2>&1 || { tail -80 $(ICEPI_BUILD)/video-test-yosys.log; exit 1; }
 	@echo 'Icepi video-test synthesis PASS'
 
@@ -678,7 +699,9 @@ icepi-zero-video-test-bit: $(ICEPI_VIDEO_TEST_BIT)
 ATUM_DIR := boards/atum_a3_nano
 ATUM_BUILD := build/atum_a3_nano
 ATUM_BIN := $(ATUM_BUILD)/demo.bin
-ATUM_ASM ?= $(ICEPI_DIR)/sw/demo.asm
+ATUM_PROGRAM ?= $(ICEPI_PROGRAM)
+ATUM_CPP_OBJECT := $(ATUM_BUILD)/demo.o
+ATUM_ELF := $(ATUM_BUILD)/demo.elf
 ATUM_MEMH := $(ATUM_BUILD)/mem/demo.memh
 ATUM_RTLSIM := $(ATUM_BUILD)/rtlsim/Vatum_a3_nano_soc_sim
 ATUM_QUARTUS_BUILD := $(ATUM_BUILD)/quartus
@@ -687,8 +710,8 @@ ATUM_QUARTUS_QSF := $(ATUM_QUARTUS_BUILD)/atum_a3_nano.qsf
 ATUM_QUARTUS_MEM := $(ATUM_QUARTUS_BUILD)/mem
 ATUM_SOF := $(ATUM_QUARTUS_BUILD)/output_files/atum_a3_nano.sof
 ATUM_SOC_RTL := \
-  $(ATUM_DIR)/rtl/atum_a3_nano_soc.v \
-  $(ATUM_DIR)/rtl/atum_uart_mmio.v
+  $(RISCC_DEMO_PERIPH_RTL) \
+  $(ATUM_DIR)/rtl/atum_a3_nano_soc.v
 ATUM_SIM_RTL := \
   $(ATUM_DIR)/rtl/atum_a3_nano_soc_sim.v \
   $(ATUM_SOC_RTL) \
@@ -707,16 +730,11 @@ ATUM_PROJECT_FILES := \
   $(ATUM_DIR)/atum_a3_nano.sdc \
   $(ATUM_HW_RTL)
 
-$(ATUM_BIN): $(ATUM_ASM) tools/riscc_asm.py
-	@mkdir -p $(@D)
-	$(PYTHON) tools/riscc_asm.py -D RISCC_ATUM_A3 $< -o $@
-
 $(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py
 	@mkdir -p $(@D)
 	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 16384
 
-atum-a3-demo-bin: FORCE
-	$(MAKE) -B $(ATUM_BIN) $(ATUM_MEMH)
+atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
 	$(RISCC_SIM) $< --uart --full --fb-window --fb-scale 4 --mhz 225 --max-insns 0
@@ -725,7 +743,7 @@ $(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb
 	@mkdir -p $(@D)
 	$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module atum_a3_nano_soc_sim --prefix Vatum_a3_nano_soc_sim \
-	  -Mdir $(@D) -I$(abspath rtl) \
+	  -Mdir $(@D) -GTIMER_TICK_DIV=4 -I$(abspath rtl) \
 	  -CFLAGS "$(TB_CXXFLAGS)" -o Vatum_a3_nano_soc_sim \
 	  $(abspath $(ATUM_SIM_RTL)) $(abspath $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp)
 
@@ -1217,11 +1235,15 @@ LLVM_RISCC_CACHE := $(LLVM_RISCC_BUILD)/CMakeCache.txt
 RISCC_FIRMWARE_BUILD ?= build/firmware
 RISCC_COMPILER_BUILD ?= build/compiler
 RISCC_COMPILER_MAX_INSNS ?= 1000000
+RISCC_LIBC_TERMINATE_MAX_INSNS ?= 256
 RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=full
 RISCC_ASFLAGS ?= -ffreestanding
 RISCC_CFLAGS ?= -Os -ffreestanding -fno-builtin -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections
+# Keep the archive implementation itself size-biased; application objects use
+# their chosen optimization level unchanged.
+RISCC_LIBC_CFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) -Oz
 # Keep static support libraries genuinely pay-for-what-you-use: archive
 # extraction avoids unused objects and this drops unused function/data sections
 # within an extracted object.
@@ -1235,12 +1257,29 @@ RISCC_FIRMWARE_IRQ_CONTROL := $(RISCC_FIRMWARE_BUILD)/irq_control.o
 RISCC_FIRMWARE_IRQ_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libirq.a
 RISCC_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer.o
 RISCC_BUILTINS_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libbuiltins.a
+RISCC_BSP_DIR ?= firmware/bsp/demo
+RISCC_BSP_MODULES ?= console clock time
+RISCC_BSP_OBJECTS := $(addprefix $(RISCC_FIRMWARE_BUILD)/bsp/,$(addsuffix .o,$(RISCC_BSP_MODULES)))
+RISCC_BSP_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libbsp.a
 RISCC_LIBC_OBJECTS := $(RISCC_FIRMWARE_BUILD)/libc/memory.o \
-	$(RISCC_FIRMWARE_BUILD)/libc/stdio.o
+	$(RISCC_FIRMWARE_BUILD)/libc/string.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/ctype.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/errno.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/convert.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/search.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/rand.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/heap.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/alloc.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/stdio.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/printf.o \
+	$(RISCC_FIRMWARE_BUILD)/libc/terminate.o
+RISCC_LIBC_OBJECTS += $(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o
+RISCC_LIBC_HEADERS := $(wildcard firmware/include/*.h firmware/include/riscc/*.h)
 RISCC_LIBC_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libc.a
-RISCC_FIRMWARE_LIBRARIES := $(RISCC_FIRMWARE_IRQ_LIBRARY) \
-	$(RISCC_BUILTINS_LIBRARY) \
-	$(RISCC_LIBC_LIBRARY)
+RISCC_FIRMWARE_LIBRARIES := $(RISCC_LIBC_LIBRARY) \
+	$(RISCC_BSP_LIBRARY) \
+	$(RISCC_FIRMWARE_IRQ_LIBRARY) \
+	$(RISCC_BUILTINS_LIBRARY)
 
 RISCC_COMPILER_OBJECTS := $(RISCC_COMPILER_BUILD)/smoke.o \
 	$(RISCC_COMPILER_BUILD)/helper.o
@@ -1274,6 +1313,11 @@ RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer 
 	feature_varargs feature_varargs_callee
 RISCC_COMPILER_FEATURE_ASM_OBJECT := \
 	$(RISCC_COMPILER_BUILD)/features/feature_abi_asm.o
+RISCC_LIBC_TESTS := memory_string stdio bsp_stdio snprintf alloc integer clock time timer all
+RISCC_LIBC_TERMINATE_TESTS := terminate_abort terminate_exit terminate__exit \
+	terminate_assert
+RISCC_LIBC_ALL_TESTS := $(RISCC_LIBC_TESTS) $(RISCC_LIBC_TERMINATE_TESTS)
+RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 
 .PHONY: llvm-riscc-configure llvm-riscc riscc-firmware \
 	compiler-smoke compiler-smoke-unified compiler-smoke-iss \
@@ -1282,6 +1326,8 @@ RISCC_COMPILER_FEATURE_ASM_OBJECT := \
 	compiler-smoke-opt-os compiler-smoke-opt-matrix \
 	compiler-features-o0-iss compiler-features-o2-iss \
 	compiler-features-os-iss compiler-features-iss \
+	compiler-libc-o0-iss compiler-libc-o2-iss compiler-libc-os-iss \
+	compiler-libc-iss compiler-libc-size \
 	compiler-stdio-iss \
 	compiler-irq-iss compiler-irq-tiny16 compiler-irq-fast \
 	compiler-irq-custom-iss compiler-irq-custom-tiny16 compiler-irq-custom-fast \
@@ -1340,9 +1386,17 @@ $(RISCC_BUILTINS_OBJECT): firmware/builtins/integer.c $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -c $< -o $@
 
-$(RISCC_FIRMWARE_BUILD)/libc/%.o: firmware/libc/%.c firmware/include/stdio.h $(RISCC_CLANG)
+$(RISCC_FIRMWARE_BUILD)/libc/%.o: firmware/libc/%.c $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -Ifirmware/include -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o: firmware/libc/heap.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/bsp/%.o: $(RISCC_BSP_DIR)/%.c $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
 
 $(RISCC_BUILTINS_LIBRARY): $(RISCC_BUILTINS_OBJECT) $(RISCC_AR)
 	@mkdir -p $(@D)
@@ -1352,6 +1406,10 @@ $(RISCC_LIBC_LIBRARY): $(RISCC_LIBC_OBJECTS) $(RISCC_AR)
 	@mkdir -p $(@D)
 	$(RISCC_AR) rcs $@ $(RISCC_LIBC_OBJECTS)
 
+$(RISCC_BSP_LIBRARY): $(RISCC_BSP_OBJECTS) $(RISCC_AR)
+	@mkdir -p $(@D)
+	$(RISCC_AR) rcs $@ $(RISCC_BSP_OBJECTS)
+
 $(RISCC_FIRMWARE_IRQ_LIBRARY): $(RISCC_FIRMWARE_IRQ_DEFAULT) \
 		$(RISCC_FIRMWARE_IRQ_CONTROL) $(RISCC_FIRMWARE_IRQ_ENTRY) $(RISCC_AR)
 	@mkdir -p $(@D)
@@ -1360,6 +1418,64 @@ $(RISCC_FIRMWARE_IRQ_LIBRARY): $(RISCC_FIRMWARE_IRQ_DEFAULT) \
 
 riscc-firmware: $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
 	$(RISCC_FIRMWARE_LIBRARIES)
+
+# ---- Board C++ demos --------------------------------------------------
+
+# The board demos intentionally use only C++ language features.  There is no
+# C++ standard library, exception support, RTTI, global constructors, or
+# thread-safe local-static machinery in the freestanding target runtime.
+RISCC_DEMO_CXXFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) -O2 -std=c++11 \
+	-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostdinc++ \
+	-Ifirmware/include
+
+ifneq ($(filter %.cpp,$(ICEPI_PROGRAM)),)
+$(ICEPI_CPP_OBJECT): $(ICEPI_PROGRAM) $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_DEMO_CXXFLAGS) -c $< -o $@
+
+$(ICEPI_ELF): $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
+		$(ICEPI_CPP_OBJECT) $(RISCC_FIRMWARE_LIBRARIES) firmware/unified.ld \
+		$(RISCC_CLANG) $(RISCC_LLD)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
+	  -Wl,-T,$(abspath firmware/unified.ld) -Wl,-Map,$(@:.elf=.map) \
+	  $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) $(ICEPI_CPP_OBJECT) \
+	  $(RISCC_FIRMWARE_LIBRARIES) -o $@
+
+$(ICEPI_BIN): $(ICEPI_ELF) $(RISCC_OBJCOPY)
+	$(RISCC_OBJCOPY) -O binary $< $@
+else ifneq ($(filter %.asm,$(ICEPI_PROGRAM)),)
+$(ICEPI_BIN): $(ICEPI_PROGRAM) tools/riscc_asm.py
+	@mkdir -p $(@D)
+	$(PYTHON) tools/riscc_asm.py $< -o $@
+else
+$(error ICEPI_PROGRAM must name a .cpp or .asm source)
+endif
+
+ifneq ($(filter %.cpp,$(ATUM_PROGRAM)),)
+$(ATUM_CPP_OBJECT): $(ATUM_PROGRAM) $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_DEMO_CXXFLAGS) \
+	  -DRISCC_ATUM_A3 -c $< -o $@
+
+$(ATUM_ELF): $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
+		$(ATUM_CPP_OBJECT) $(RISCC_FIRMWARE_LIBRARIES) firmware/unified.ld \
+		$(RISCC_CLANG) $(RISCC_LLD)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
+	  -Wl,-T,$(abspath firmware/unified.ld) -Wl,-Map,$(@:.elf=.map) \
+	  $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) $(ATUM_CPP_OBJECT) \
+	  $(RISCC_FIRMWARE_LIBRARIES) -o $@
+
+$(ATUM_BIN): $(ATUM_ELF) $(RISCC_OBJCOPY)
+	$(RISCC_OBJCOPY) -O binary $< $@
+else ifneq ($(filter %.asm,$(ATUM_PROGRAM)),)
+$(ATUM_BIN): $(ATUM_PROGRAM) tools/riscc_asm.py
+	@mkdir -p $(@D)
+	$(PYTHON) tools/riscc_asm.py -D RISCC_ATUM_A3 $< -o $@
+else
+$(error ATUM_PROGRAM must name a .cpp or .asm source)
+endif
 
 $(RISCC_COMPILER_BUILD)/%.o: test/compiler/%.c \
 		test/compiler/riscc_compiler_test.h $(RISCC_CLANG)
@@ -1539,7 +1655,7 @@ $(RISCC_COMPILER_ICEPI_RTLSIM): $(RISCC_COMPILER_UART_MEMH) $(ICEPI_SIM_RTL) \
 	@mkdir -p $(@D)
 	$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module icepi_zero_soc_sim --prefix Vicepi_zero_soc_sim \
-	  -Mdir $(@D) $(ICEPI_CPU_DEFS) -I$(abspath rtl) -I$(abspath $(ICEPI_DIR)/vendor/dvi) \
+	  -Mdir $(@D) $(ICEPI_CPU_DEFS) -I$(abspath rtl) \
 	  -GMEM_HEX='"$(abspath $(RISCC_COMPILER_UART_MEMH))"' \
 	  -CFLAGS "$(TB_CXXFLAGS)" -o Vicepi_zero_soc_sim \
 	  $(abspath $(ICEPI_SIM_RTL)) $(abspath test/compiler/icepi_compiler_tb.cpp)
@@ -1657,6 +1773,94 @@ $(foreach opt,o0 o2 os,$(eval $(call riscc_compiler_feature_rules,$(opt))))
 compiler-features-iss: compiler-features-o0-iss compiler-features-o2-iss \
 	compiler-features-os-iss
 
+# Each libc probe is a separately linked application.  This checks archive
+# extraction and section GC as used by ordinary RISC-C firmware, at every
+# supported compiler optimization level.
+define riscc_libc_test_rules
+RISCC_LIBC_TEST_BINS_$(1) := $$(addprefix \
+	$$(RISCC_COMPILER_BUILD)/libc/$(1)/,$$(addsuffix .bin,$$(RISCC_LIBC_ALL_TESTS)))
+
+$$(RISCC_COMPILER_BUILD)/libc/$(1)/%.o: test/compiler/libc/%.c \
+		$$(RISCC_LIBC_TEST_HEADERS) $$(RISCC_CLANG)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_CFLAGS_NO_OPT) \
+	  $$(call riscc_opt_flag,$(1)) -Itest/compiler/libc -Ifirmware/include \
+	  -c $$< -o $$@
+
+$$(RISCC_COMPILER_BUILD)/libc/$(1)/%.elf: \
+		$$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+		$$(RISCC_COMPILER_BUILD)/libc/$(1)/%.o $$(RISCC_FIRMWARE_LIBRARIES) \
+		firmware/unified.ld $$(RISCC_CLANG) $$(RISCC_LLD)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
+	  -Wl,-T,$$(abspath firmware/unified.ld) -Wl,-Map,$$(@:.elf=.map) \
+	  $$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+	  $$(RISCC_COMPILER_BUILD)/libc/$(1)/$$*.o \
+	  $$(RISCC_FIRMWARE_LIBRARIES) -o $$@
+
+$$(RISCC_COMPILER_BUILD)/libc/$(1)/%.bin: \
+		$$(RISCC_COMPILER_BUILD)/libc/$(1)/%.elf $$(RISCC_OBJCOPY)
+	$$(RISCC_OBJCOPY) -O binary $$< $$@
+
+compiler-libc-$(1)-iss: $$(RISCC_LIBC_TEST_BINS_$(1)) $$(RISCC_SIM) \
+		test/compiler/libc/stdio.in test/compiler/libc/stdio.out \
+		test/compiler/libc/all.out
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/memory_string.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/bsp_stdio.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/snprintf.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/alloc.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/integer.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/clock.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/time.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/timer.bin --full \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/all.bin --full --uart \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS) \
+	  > $$(RISCC_COMPILER_BUILD)/libc/$(1)/all.uart
+	cmp test/compiler/libc/all.out $$(RISCC_COMPILER_BUILD)/libc/$(1)/all.uart
+	$$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/stdio.bin --full --uart \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS) < test/compiler/libc/stdio.in \
+	  > $$(RISCC_COMPILER_BUILD)/libc/$(1)/stdio.uart
+	cmp test/compiler/libc/stdio.out $$(RISCC_COMPILER_BUILD)/libc/$(1)/stdio.uart
+	@for test in $$(RISCC_LIBC_TERMINATE_TESTS); do \
+	  log=$$(RISCC_COMPILER_BUILD)/libc/$(1)/$$$$test.terminate; \
+	  if ! $$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/$$$$test.bin --full \
+	       --max-insns $$(RISCC_LIBC_TERMINATE_MAX_INSNS) > $$$$log 2>&1; then \
+	    cat $$$$log; \
+	    exit 1; \
+	  fi; \
+	  if ! grep -q 'HALT .*result=0x0000: PASS' $$$$log; then \
+	    cat $$$$log; \
+	    exit 1; \
+	  fi; \
+	done
+endef
+
+$(foreach opt,o0 o2 os,$(eval $(call riscc_libc_test_rules,$(opt))))
+
+compiler-libc-iss: compiler-libc-o0-iss compiler-libc-o2-iss \
+	compiler-libc-os-iss
+
+compiler-libc-size: $(RISCC_COMPILER_BUILD)/libc/os/all.elf
+	$(LLVM_RISCC_BIN)/llvm-size -A $<
+	@$(LLVM_RISCC_BIN)/llvm-size -A $< | awk '\
+	  $$1 == ".text" { text = $$2 } \
+	  $$1 == ".data" { data = $$2 } \
+	  $$1 == ".bss" { bss = $$2 } \
+	  END { \
+	    if (text > 4096 || data + bss > 32) { \
+	      printf "tiny libc size gate failed: text=%d data+bss=%d\\n", text, data + bss; \
+	      exit 1; \
+	    } \
+	  }'
+
 check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 		tools/riscc_asm.py $(RISCC_MC) $(RISCC_OBJCOPY)
 	$(PYTHON) $< --llvm-mc $(LLVM_RISCC_BIN)/llvm-mc \
@@ -1665,6 +1869,7 @@ check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 test-compiler: compiler-smoke-iss compiler-smoke-split \
 	compiler-smoke-tiny16 compiler-smoke-fast compiler-smoke-icepi compiler-smoke-atum \
 	compiler-smoke-opt-matrix compiler-features-iss \
+	compiler-libc-iss compiler-libc-size \
 	compiler-stdio-iss compiler-irq-iss compiler-irq-tiny16 \
 	compiler-irq-fast compiler-irq-custom-iss compiler-irq-custom-tiny16 \
 	compiler-irq-custom-fast compiler-irq-linkage check-llvm-mc-encodings

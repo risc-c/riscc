@@ -760,6 +760,10 @@ boot_queue_loop:
     JMP8  boot_queue_loop
 boot_queue_done:
     CALL16 draw_border
+    ; Enable the UART source in the shared two-source interrupt controller.
+    LDI16 r1, 0xFFE2
+    LDI   r2, 1
+    STW   r2, [r1+0]
     LDI16 r1, 0xFFF6
     LDI   r2, 3
     STW   r2, [r1+0]

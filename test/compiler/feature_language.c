@@ -1,6 +1,7 @@
 #include "riscc_compiler_features.h"
 
-enum feature_mode {
+enum feature_mode
+{
     FEATURE_ZERO,
     FEATURE_ONE,
     FEATURE_SEVEN = 7,
@@ -19,7 +20,8 @@ static u16 bump(u16 *value)
 
 static u16 select_case(u16 value)
 {
-    switch (value) {
+    switch (value)
+    {
     case FEATURE_ZERO:
         return 11;
     case FEATURE_ONE:
@@ -75,7 +77,8 @@ u16 feature_test_language(void)
         return 10;
 
     sum = 0;
-    for (i = 0; i != (u16)(seed + 3); ++i) {
+    for (i = 0; i != (u16)(seed + 3); ++i)
+    {
         if (i == (u16)(seed - 3))
             continue;
         if (i == (u16)(seed + 1))
@@ -89,7 +92,8 @@ u16 feature_test_language(void)
     sum = 0;
     while (i != (u16)(seed - 2))
         sum = (u16)(sum + i++);
-    do {
+    do
+    {
         sum = (u16)(sum + i);
         --i;
     } while (i != 0);

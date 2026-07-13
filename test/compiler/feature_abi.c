@@ -32,16 +32,16 @@ u16 feature_test_abi(void)
     quad = feature_abi_return_quad(0x2000u);
     for (i = 0; i != 4; ++i)
         if (quad.word[i] != (u16)(0x2000u + i))
-            return 9;
+        return 9;
     large = feature_abi_return_large(0x3000u);
     for (i = 0; i != 5; ++i)
         if (large.word[i] != (u16)(0x3000u + i))
-            return 10;
+        return 10;
 
     if (feature_abi_return_u32(0x5678u) != 0x12345678ul ||
         feature_abi_return_u64(0x7788u) != 0x1122334455667788ull ||
         feature_abi_u64_roundtrip(0xfedcba9876543210ull) !=
-            0xfedcba9876543210ull)
+        0xfedcba9876543210ull)
         return 11;
 
     if (feature_global_binary == (feature_binary_fn)0 ||
@@ -60,7 +60,7 @@ u16 feature_test_abi(void)
 
     for (i = 0; i != 10; ++i)
         if (feature_abi_stack_mix(1, 2, 3, 0x12345678ul, 5) != 0x2468u)
-            return 16;
+        return 16;
 
     return 0;
 }

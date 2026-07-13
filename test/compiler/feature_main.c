@@ -4,7 +4,8 @@
 
 // A failure result is 0xbMDD: M is the one-based module index below and DD is
 // that module's return code.  Success uses the project-wide 0x600d sentinel.
-static const feature_test_fn feature_tests[] = {
+static const feature_test_fn feature_tests[] =
+{
     feature_test_language,
     feature_test_integer,
     feature_test_builtins,
@@ -30,9 +31,9 @@ int main(void)
     _Static_assert(sizeof(u64) == 8, "64-bit long long type");
     _Static_assert(sizeof(short) == 2 && sizeof(int) == 2, "16-bit C int");
     _Static_assert(sizeof(long) == 4 && sizeof(long long) == 8,
-                   "wide C integer types");
+        "wide C integer types");
     _Static_assert(sizeof(usize) == 2 && sizeof(sptr) == 2,
-                   "pointer-sized integer types");
+        "pointer-sized integer types");
     _Static_assert(sizeof(void *) == 2, "16-bit data pointer");
     _Static_assert(sizeof(feature_test_fn) == 2, "16-bit code pointer");
     _Static_assert(sizeof(float) == 4, "32-bit float representation");
@@ -44,8 +45,9 @@ int main(void)
     _Static_assert(_Alignof(long double) == 2, "long double ABI alignment");
 
     for (index = 0;
-         index != (u16)(sizeof(feature_tests) / sizeof(feature_tests[0]));
-         ++index) {
+        index != (u16)(sizeof(feature_tests) / sizeof(feature_tests[0]));
+        ++index)
+    {
         u16 detail = feature_tests[index]();
         if (detail != 0)
             fail((u16)(index + 1), detail);

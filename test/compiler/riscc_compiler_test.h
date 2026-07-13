@@ -9,7 +9,8 @@ typedef unsigned long u32;
 typedef signed long s32;
 typedef unsigned long long u64;
 
-struct pair16 {
+struct pair16
+{
     u16 first;
     u16 second;
 };

@@ -48,9 +48,9 @@ u16 feature_varargs_copy(u16 count, ...)
     va_end(copy);
     va_end(first);
     return first_a == 0x1357u && first_b == 0x1357u &&
-                   second_a == 0x2468u && second_b == 0x2468u
-               ? 0x3579u
-               : 0;
+        second_a == 0x2468u && second_b == 0x2468u
+        ? 0x3579u
+        : 0;
 }
 
 u16 feature_varargs_mix(u16 lead, u16 a, u16 b, u16 c, u16 count, ...)
@@ -70,9 +70,9 @@ u16 feature_varargs_mix(u16 lead, u16 a, u16 b, u16 c, u16 count, ...)
     tail = va_arg(ap, unsigned int);
     va_end(ap);
     return pair.first == 0x1357u && pair.second == 0x2468u &&
-                   bytes.byte[0] == 0x12u && bytes.byte[1] == 0x34u &&
-                   bytes.byte[2] == 0x56u &&
-                   wide == 0x12345678ul && tail == 0xabcdu
-               ? 0x5aa5u
-               : 0;
+        bytes.byte[0] == 0x12u && bytes.byte[1] == 0x34u &&
+        bytes.byte[2] == 0x56u &&
+        wide == 0x12345678ul && tail == 0xabcdu
+        ? 0x5aa5u
+        : 0;
 }

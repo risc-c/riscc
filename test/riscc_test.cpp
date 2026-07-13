@@ -48,33 +48,35 @@ static void print_trace(RISCC_TB_TOP *top, uint64_t step)
         return;
 
     printf("TRACE step=%llu pc=%04X ir=%04X ie=%u "
-           "r=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X "
-           "s=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X\n",
-           (unsigned long long)step,
-           (unsigned)top->trace_pc,
-           (unsigned)top->trace_ir,
-           (unsigned)top->trace_ie,
-           (unsigned)top->trace_r0, (unsigned)top->trace_r1,
-           (unsigned)top->trace_r2, (unsigned)top->trace_r3,
-           (unsigned)top->trace_r4, (unsigned)top->trace_r5,
-           (unsigned)top->trace_r6, (unsigned)top->trace_r7,
-           (unsigned)top->trace_s0, (unsigned)top->trace_s1,
-           (unsigned)top->trace_s2, (unsigned)top->trace_s3,
-           (unsigned)top->trace_s4, (unsigned)top->trace_s5,
-           (unsigned)top->trace_s6, (unsigned)top->trace_s7);
+        "r=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X "
+        "s=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X\n",
+        (unsigned long long)step,
+        (unsigned)top->trace_pc,
+        (unsigned)top->trace_ir,
+        (unsigned)top->trace_ie,
+        (unsigned)top->trace_r0, (unsigned)top->trace_r1,
+        (unsigned)top->trace_r2, (unsigned)top->trace_r3,
+        (unsigned)top->trace_r4, (unsigned)top->trace_r5,
+        (unsigned)top->trace_r6, (unsigned)top->trace_r7,
+        (unsigned)top->trace_s0, (unsigned)top->trace_s1,
+        (unsigned)top->trace_s2, (unsigned)top->trace_s3,
+        (unsigned)top->trace_s4, (unsigned)top->trace_s5,
+        (unsigned)top->trace_s6, (unsigned)top->trace_s7);
 }
 #endif
 
 int main(int argc, char **argv)
 {
     Verilated::commandArgs(argc, argv);
-    if (argc < 2) {
+    if (argc < 2)
+    {
         fprintf(stderr, "usage: %s <image.bin> [max_cycles]\n", argv[0]);
         return 2;
     }
 
     FILE *f = fopen(argv[1], "rb");
-    if (!f) {
+    if (!f)
+    {
         perror(argv[1]);
         return 2;
     }
@@ -91,7 +93,8 @@ int main(int argc, char **argv)
     int64_t irq_at = -1;
     int trace = 0;
     int dump_written = 0;
-    for (int i = 2; i < argc; i++) {
+    for (int i = 2; i < argc; i++)
+    {
         if (!strcmp(argv[i], "--irq-at") && i + 1 < argc)
             irq_at = strtoll(argv[++i], nullptr, 0);
         else if (!strcmp(argv[i], "--max-cycles") && i + 1 < argc)
@@ -105,10 +108,11 @@ int main(int argc, char **argv)
     }
 
 #ifndef RISCC_TB_TRACE
-    if (trace) {
+    if (trace)
+{
         fprintf(stderr, "--trace needs a testbench built with RISCC_TRACE and RISCC_TB_TRACE\n");
         return 2;
-    }
+}
 #endif
 
     RISCC_TB_TOP *top = new RISCC_TB_TOP;
@@ -127,7 +131,8 @@ int main(int argc, char **argv)
     int done = 0;
     int done_trace_age = 0;
     int trace_printed = 0;
-    for (; cyc < max_cycles; cyc++) {
+    for (; cyc < max_cycles; cyc++)
+    {
         trace_printed = 0;
         if (cyc == 4)
             top->rst = 0;
@@ -151,7 +156,8 @@ int main(int argc, char **argv)
         top->eval();
 
         // Synchronous memory commits at the posedge
-        if (we && !top->rst) {
+        if (we && !top->rst)
+        {
             uint16_t old = mem[addr];
             uint16_t nw  = old;
             if (wmask & 1) nw = (uint16_t)((nw & 0xFF00) | (wdata & 0x00FF));
@@ -163,11 +169,12 @@ int main(int argc, char **argv)
             if (addr == 0x7FFF) done = 1;  // byte 0xFFFE: result word
         }
 #ifdef RISCC_TB_TRACE
-        if (trace && top->trace_valid) {
+        if (trace && top->trace_valid)
+{
             print_trace(top, trace_step);
             trace_step++;
             trace_printed = 1;
-        }
+}
 #endif
         rdata = mem[addr & 0x7FFF];
 
@@ -178,27 +185,29 @@ int main(int argc, char **argv)
         // record reaches the trace output.  Allow two drain cycles; memory
         // serialization prevents a younger instruction from overtaking it.
         if (done && (!trace ||
-                     (done_trace_age >= RISCC_TB_TRACE_DRAIN && trace_printed)))
+            (done_trace_age >= RISCC_TB_TRACE_DRAIN && trace_printed)))
             break;
         if (done && trace)
             done_trace_age++;
     }
 
     uint16_t result = mem[0x7FFF];   // byte address 0xFFFE
-    if (!done) {
+    if (!done)
+    {
         printf("TIMEOUT after %llu cycles, result=0x%04X\n",
-               (unsigned long long)cyc, result);
+            (unsigned long long)cyc, result);
         delete top;
         return 1;
     }
-    if (dump_written) {
+    if (dump_written)
+    {
         for (size_t i = 0; i < sizeof mem / sizeof mem[0]; i++)
             if (mem_written[i])
-                printf("MEM 0x%04X 0x%04X\n", (unsigned)i, (unsigned)mem[i]);
+            printf("MEM 0x%04X 0x%04X\n", (unsigned)i, (unsigned)mem[i]);
     }
     printf("done after %llu cycles, result=0x%04X: %s\n",
-           (unsigned long long)cyc, result,
-           result == 0x600D ? "PASS" : "FAIL");
+        (unsigned long long)cyc, result,
+        result == 0x600D ? "PASS" : "FAIL");
     delete top;
     return result == 0x600D ? 0 : 1;
 }

@@ -2,6 +2,6 @@
 
 int main(void)
 {
-  puts("Hello, RISC-C!");
-  return 0;
+    puts("Hello, RISC-C!");
+    return 0;
 }

@@ -16,7 +16,7 @@ module icepi_tmds_ddr (
     wire [9:0] green_code;
     wire [9:0] blue_code;
 
-    tmds_encoder enc_b (
+    icepi_tmds_encoder enc_b (
         .clk(pix_clk),
         .data(b),
         .c({vsync, hsync}),
@@ -24,7 +24,7 @@ module icepi_tmds_ddr (
         .out(blue_code)
     );
 
-    tmds_encoder enc_g (
+    icepi_tmds_encoder enc_g (
         .clk(pix_clk),
         .data(g),
         .c(2'b00),
@@ -32,7 +32,7 @@ module icepi_tmds_ddr (
         .out(green_code)
     );
 
-    tmds_encoder enc_r (
+    icepi_tmds_encoder enc_r (
         .clk(pix_clk),
         .data(r),
         .c(2'b00),

@@ -68,7 +68,9 @@ SECTIONS
   } > RAM
 
   __image_end = .;
+  __heap_start = __image_end;
   __stack_top = ORIGIN(RAM) + LENGTH(RAM);
+  __heap_end = __stack_top;
 
   ASSERT(__image_end <= __stack_top,
          "RISC-C unified image exceeds the 32 KiB RAM")

@@ -23,6 +23,7 @@ RISCC_LDFLAGS := -fuse-ld=lld -nostdlib -Wl,--gc-sections \
 	-Wl,-T,$(RISCC_ROOT)/firmware/unified.ld
 
 RISCC_STARTFILES := $(RISCC_RUNTIME_DIR)/vectors.o $(RISCC_RUNTIME_DIR)/crt0.o
-RISCC_LIBRARIES := $(RISCC_RUNTIME_DIR)/libirq.a \
-	$(RISCC_RUNTIME_DIR)/libbuiltins.a $(RISCC_RUNTIME_DIR)/libc.a
+RISCC_BSP_LIBRARY ?= $(RISCC_RUNTIME_DIR)/libbsp.a
+RISCC_LIBRARIES := $(RISCC_RUNTIME_DIR)/libc.a $(RISCC_BSP_LIBRARY) \
+	$(RISCC_RUNTIME_DIR)/libirq.a $(RISCC_RUNTIME_DIR)/libbuiltins.a
 RISCC_LINKER_SCRIPT := $(RISCC_ROOT)/firmware/unified.ld

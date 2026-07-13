@@ -209,13 +209,18 @@ Yosys synthesis is not a ccache workload.
 
 ## 5. Board builds and demos
 
-The current board SoCs are demonstrations, not a stable general-purpose
-platform SDK. Their small common map is useful for the supplied firmware:
+The current board SoCs share a deliberately small peripheral map.  It is
+enough for common demo firmware without forcing the FPGA-specific video,
+clocking, RAM-inference, LEDs, or buttons into a shared layer:
 
 | Byte address or range | Demo function |
 |---:|---|
 | `0x0000..0x7fff` | unified program/data RAM |
 | `0x8000..0xa57f` | displayed 160x120 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
+| `0xffe0` | interrupt pending: UART bit 0, timer bit 1 (read-only) |
+| `0xffe2` | interrupt enable mask: UART bit 0, timer bit 1 (reset masked) |
+| `0xffe4` | one-shot 1 kHz timer: write a non-zero delay in milliseconds to arm/rearm; write zero to disarm; read remaining ticks |
+| `0xffe6` | free-running 16-bit millisecond tick counter (wraps every 65.536 seconds) |
 | `0xffe8` | LED output; Icepi uses five low bits and Atum uses four |
 | `0xfff0..0xfff6` | UART; see the [Programming manual](PROGRAMMING.md#1-software-tools-and-the-iss) for register semantics |
 
@@ -223,13 +228,33 @@ The active framebuffer is 4,800 words. The surrounding display aperture and
 other high-MMIO addresses are board implementation details; in particular,
 the ISS/generic-testbench registers at `0xfff8..0xfffe` are not board devices.
 The UART divisor is likewise a board-build setting, not a RISC-C platform
-standard.
+standard. [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines
+the shared addresses and bits for C code.
+
+The IRQ controller is intentionally only a two-bit level mask: it has no
+priority encoder, vectoring, edge capture, or acknowledgement register. A
+UART source clears when its peripheral condition clears; a timer source clears
+when software writes its next delay. The readable one-shot counter and the
+free-running counter use a 1 kHz board-local timebase. A timer IRQ armed with
+1,000 ticks supplies a one-second software clock event; software can extend
+the 16-bit free-running count across its rollover. Both cores retain their
+fixed IRQ vector.
 
 ### Icepi Zero
 
 The Icepi demo is in [`boards/icepi_zero`](../boards/icepi_zero). It runs a
 50 MHz Fast SoC, a 160x120 4-bit framebuffer scaled to 640x480 DVI, UART,
-LEDs, and the Julia-set demo firmware.
+LEDs, and C++ Julia-set demo firmware. The renderer writes one Julia row per
+main-loop iteration. Before every row, its title ticker samples the demo
+BSP's 1 kHz `clock()` counter; a fractional accumulator advances it smoothly
+at 30 pixels per second.
+
+Its ECP5 PLL wrapper, TMDS encoder, and DDR serializer are maintained under
+`boards/icepi_zero/rtl`; the board build has no vendor RTL checkout.
+
+The current ECP5 synthesis of the complete demo uses 885 LUT4s, 21 EBRs,
+and one DSP block. The common timer and IRQ mask use ordinary logic; the
+framebuffer RAM and DVI pipeline remain Icepi-local.
 
 ```sh
 make icepi-zero-demo-bin
@@ -240,11 +265,10 @@ make icepi-zero-demo-json
 make icepi-zero-demo-bit
 ```
 
-For the multiplier/UART smoke image, use:
-
-```sh
-make -B ICEPI_ASM=boards/icepi_zero/sw/mul_uart_test.asm icepi-zero-demo-bit
-```
+The default source is
+[`demo.cpp`](../boards/icepi_zero/sw/demo.cpp), compiled as freestanding C++
+without a C++ standard library, exceptions, RTTI, or constructors. For an
+alternate C++ or assembly image, set `ICEPI_PROGRAM`.
 
 The bit target only builds a bitstream. The tested SRAM-load command is:
 
@@ -267,7 +291,9 @@ video output.
 [`boards/atum_a3_nano`](../boards/atum_a3_nano) is the Quartus Pro Agilex 3
 demo. It runs a 225 MHz Faster SoC, UART, on-chip program RAM, and a 160x120
 4-bit framebuffer expanded to 1920x1080p60 through the TFP410. Firmware
-assembly, ISS use, and RTL simulation need no external board checkout:
+source, ISS use, and RTL simulation need no external board checkout. It uses
+the same freestanding C++ Julia/timer-ticker source as the Icepi demo, with an
+Atum-specific banner:
 
 ```sh
 make atum-a3-demo-bin
@@ -326,14 +352,15 @@ For persistent QSPI programming, generate a `.jic` and follow Terasic's
 That intentionally replaces the flash image and is outside this project's
 normal development flow.
 
-The UART keeps its level-sensitive interrupt behind a peripheral register,
-breaking the UART-to-CPU-to-MMIO combinational path at the cost of one system
-clock of interrupt latency. The 32 KiB unified program/data RAM remains on the
-existing shared interface, with no cache, wait state, or extra memory pipeline
-stage. The Quartus Pro 26.1 post-fit demo uses 607 ALMs, 21 M20K blocks, one
-DSP block, and two IOPLLs. Both the 225 MHz system and 148.5 MHz pixel-clock
-constraints meet setup timing (0.025 ns and 3.530 ns slack respectively); the
-system hold slack is 0.015 ns and its restricted Fmax is 226.3 MHz.
+The shared controller keeps the level-sensitive peripheral-to-CPU interrupt
+behind a register, breaking the UART/timer-to-CPU combinational path at the
+cost of one system clock of interrupt latency. The 32 KiB unified
+program/data RAM remains on the existing shared interface, with no cache, wait
+state, or extra memory pipeline stage. The Quartus Pro 26.1 post-fit demo uses
+637 ALMs, 21 M20K blocks, one DSP block, and two IOPLLs. Both the 225 MHz
+system and 148.5 MHz pixel-clock constraints meet setup timing (0.028 ns and
+3.491 ns slack respectively); the system hold slack is 0.022 ns and its
+restricted Fmax is 226.45 MHz.
 
 ![Video capture of RISC-C running on Atum A3 Nano](riscc_on_atum-a3.jpg)
 

@@ -13,7 +13,7 @@ module top (
     wire clk5x;
     wire pll_locked;
 
-    dvi_pll pll (
+    icepi_dvi_pll pll (
         .clk_in(clk),
         .clkp(clkp),
         .clkt(clkt),

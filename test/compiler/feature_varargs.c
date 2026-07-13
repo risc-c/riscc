@@ -15,7 +15,7 @@ u16 feature_test_varargs(void)
     if (feature_varargs_copy(2, 0x1357u, 0x2468u) != 0x3579u)
         return 3;
     if (feature_varargs_mix(0x55aau, 1, 2, 3, 4, pair, bytes, 0x12345678ul,
-                            0xabcdu) != 0x5aa5u)
+        0xabcdu) != 0x5aa5u)
         return 4;
     return 0;
 }

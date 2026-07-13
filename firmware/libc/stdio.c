@@ -1,33 +1,55 @@
-/* Minimal UART-backed stdio for the RISC-C freestanding runtime. */
+/* Generic unbuffered streams backed by the selected RISC-C BSP console. */
 
 #include <stdio.h>
 
-#define RISCC_UART_TX (*(volatile unsigned short *)0xfff0u)
-#define RISCC_UART_RX (*(volatile unsigned short *)0xfff2u)
-#define RISCC_UART_STATUS (*(volatile unsigned short *)0xfff4u)
-
-#define RISCC_UART_TX_READY 0x0001u
-#define RISCC_UART_RX_READY 0x0002u
-
-int putchar(int character)
+struct riscc_FILE
 {
-  while ((RISCC_UART_STATUS & RISCC_UART_TX_READY) == 0)
-    ;
-  RISCC_UART_TX = (unsigned char)character;
-  return (unsigned char)character;
+    int (*put)(int character);
+    int (*get)(void);
+};
+
+static struct riscc_FILE input_stream = {0, getchar};
+static struct riscc_FILE output_stream = {putchar, 0};
+
+FILE *const stdin = &input_stream;
+FILE *const stdout = &output_stream;
+FILE *const stderr = &output_stream;
+
+int fputc(int character, FILE *stream)
+{
+    return stream->put(character);
 }
 
-int getchar(void)
+int fgetc(FILE *stream)
 {
-  while ((RISCC_UART_STATUS & RISCC_UART_RX_READY) == 0)
-    ;
-  return RISCC_UART_RX & 0x00ffu;
+    return stream->get();
 }
 
-int puts(const char *string)
+int fputs(const char *string, FILE *stream)
 {
-  while (*string != '\0')
-    putchar((unsigned char)*string++);
-  putchar('\n');
-  return 0;
+    while (*string)
+        fputc((unsigned char)*string++, stream);
+    return 0;
+}
+
+char *fgets(char *string, int count, FILE *stream)
+{
+    int index = 0;
+
+    if (count <= 0)
+        return (char *)0;
+    if (count == 1)
+    {
+        string[0] = '\0';
+        return string;
+    }
+    while (index + 1 < count)
+    {
+        int character = fgetc(stream);
+        string[index++] = (char)character;
+        if (character == '\n')
+            break;
+    }
+    string[index] = '\0';
+    return string;
 }

@@ -81,14 +81,14 @@ u16 feature_test_builtins(void)
 
     if ((u64)__muldi3((s64)value64, 3) != 0x369d0369d0369cd0ull ||
         (u64)__ashldi3((s64)0x0000000100000001ull, 4) !=
-            0x0000001000000010ull ||
+        0x0000001000000010ull ||
         __lshrdi3(0x8000000000000001ull, 4) != 0x0800000000000000ull ||
         __ashrdi3(-0x100000000ll, 4) != -0x10000000ll)
         return 6;
     if (__udivdi3(value64, 65537) != 0x0000123444445678ull ||
         __umoddi3(value64, 65537) != 0x8878ull ||
         __udivmoddi4(value64, 65537, &remainder64) !=
-            0x0000123444445678ull ||
+        0x0000123444445678ull ||
         remainder64 != 0x8878ull)
         return 7;
     if (__divdi3(signed64, 300) != -333ll ||

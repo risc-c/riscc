@@ -56,7 +56,7 @@ result word is untouched. An ISS/RTL self-checking test instead writes
 a general target `exit()` interface.
 
 The four UART words below are implemented by the ISSes and current demo-board
-SoCs. They are the current runtime UART contract, not general-purpose RAM:
+SoCs. They are the default demo-BSP UART contract, not general-purpose RAM:
 
 | Byte address | Register | Availability |
 |---:|---|---|
@@ -73,16 +73,39 @@ The demo SoCs reserve their high MMIO aperture, but do not implement the four
 testbench devices. Board firmware must not use `0xfff8..0xfffe` as RAM or
 expect test-result/IRQ behavior there.
 
+The current demo boards also share a tiny source-level interrupt controller:
+`0xffe0` reads pending UART (bit 0) and timer (bit 1), while `0xffe2` is the
+same two-bit enable mask and resets to zero. `0xffe4` is a 16-bit one-shot
+1 kHz timer ticks: a non-zero write loads and arms it, terminal count latches
+the timer source, and a subsequent timer write both clears that source and
+re-arms (or disarms with zero). `0xffe6` is a free-running 16-bit millisecond
+tick counter. It wraps every 65.536 seconds, so an application that needs a
+longer clock must extend it from a periodic timer interrupt. The default BSP
+does this for its narrow `time()` service with one IRQ per second. There is no
+priority, vector, edge latch, or controller acknowledgement. Use
+[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) for the timer
+helpers. The ISS implements the same timer/controller registers for firmware
+tests. Its 1 kHz timebase advances from modeled CPU cycles: `--mhz N` selects
+an `N` MHz simulated clock, while an unthrottled ISS run without `--mhz` uses
+a deterministic 50 MHz virtual clock.
+
 ### Run a UART hello world
 
 `--uart` bridges the simulated UART: target transmit bytes go to host standard
-output and host standard input supplies target receive bytes. The freestanding
-runtime provides a deliberately small [`<stdio.h>`](../firmware/include/stdio.h)
-subset: `putchar(int)`, `getchar(void)`, and `puts(const char *)`. `putchar`
-blocks for TX-ready and returns the written unsigned byte. `getchar` blocks
-for RX-ready and returns a value from 0 through 255; there is no EOF. `puts`
-writes its string followed by a newline and returns zero. `FILE`, `printf`,
-and every other hosted stdio interface remain unavailable.
+output and host standard input supplies target receive bytes. With the default
+demo BSP, the freestanding [`<stdio.h>`](../firmware/include/stdio.h) front end
+exposes unbuffered `stdin`, `stdout`, and `stderr`; standard output and standard
+error are the same UART sink. `getchar`/`putchar`/`puts` and
+`fgetc`/`fputc`/`fgets`/`fputs` block on the UART as needed. RX has no EOF, so
+`fgets` returns after a newline or a full buffer, not end-of-file.
+
+The integer-only formatter supplies `printf`, `fprintf`, `sprintf`,
+`snprintf`, and their `v` forms. It accepts `%%`, `%c`, `%s`, `%d`/`%i`, `%u`,
+`%x`/`%X`, `%p`, decimal width, `-`, `0`, and `l` for the 32-bit `long` type.
+`snprintf` has the C99 result and truncation rules: it always counts the full
+would-have-written output and NUL terminates when its size is non-zero.
+There is no buffering, file I/O, EOF-producing device, `scanf`, precision,
+floating-point formatting, or `long long` formatting.
 
 The complete source is in [`firmware/hello`](../firmware/hello):
 [`hello.c`](../firmware/hello/hello.c) and its visible
@@ -157,12 +180,13 @@ runtime; use `make distclean` only when those SDK artifacts must be discarded.
 The C target is freestanding `riscc-none-elf -mcpu=full`. The initial compiler
 supports integer C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS objects,
 stack frames, aggregate calls and returns, function pointers, and 16-, 32-,
-and 64-bit integer operations. It has no hosted environment or full libc;
-the supplied headers include minimal `<stdio.h>`, `<stdarg.h>`, and
-`<riscc/interrupt.h>`. Variadic functions keep named arguments on the ordinary
-ABI convention and place unnamed arguments on the stack; see the normative
+and 64-bit integer operations. It has no hosted environment; the supplied tiny
+libc provides standard type/utility headers, C90 narrow strings, ASCII/C-locale
+`<ctype.h>`, `<errno.h>`, integer `<stdlib.h>`, and the small stdio surface
+described below. Variadic functions keep named arguments on the ordinary ABI
+convention and place unnamed arguments on the stack; see the normative
 [C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for `va_list`
-semantics. It has no VLA/dynamic allocation, soft float, PIC, atomics, exceptions,
+semantics. It has no VLA/dynamic `alloca`, soft float, PIC, atomics, exceptions,
 unwinding, jump tables, tail calls, compiler interrupt attributes, or C++
 runtime.
 
@@ -203,8 +227,8 @@ build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
 build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
   -fuse-ld=lld -nostdlib -Wl,--gc-sections -Wl,-T,firmware/unified.ld \
   build/firmware/vectors.o build/firmware/crt0.o hello.o \
-  build/firmware/libirq.a build/firmware/libbuiltins.a \
-  build/firmware/libc.a -o hello.elf
+  build/firmware/libc.a build/firmware/libbsp.a build/firmware/libirq.a \
+  build/firmware/libbuiltins.a -o hello.elf
 ```
 
 `-ffunction-sections -fdata-sections` and `--gc-sections` are deliberate:
@@ -219,15 +243,100 @@ unreachable functions and data within selected objects.
 | Archive | Purpose |
 |---|---|
 | `libbuiltins.a` | compiler helpers for division, remainder, wide integer arithmetic, shifts, comparisons, and related lowering |
-| `libc.a` | `memcpy`, `memmove`, `memset`, and UART-backed `putchar`/`getchar`/`puts` |
+| `libc.a` | tiny sectioned, hardware-independent RISC-C C library: memory/strings, ASCII ctype, integer utilities and heap, unbuffered streams, and integer formatting |
+| `libbsp.a` | default demo-board support package: UART console and one-second timer/uptime service |
 | `libirq.a` | optional interrupt fallback, control helpers, and C-handler wrapper |
 
-They are intentionally not a general libc. Public headers are the minimal
-[`<stdio.h>`](../firmware/include/stdio.h) subset and
-[`<riscc/interrupt.h>`](../firmware/include/riscc/interrupt.h); standard C
-headers and a port of picolibc are future work. The static archive is built
-with per-function sections and linked with `--gc-sections`, so using
-`puts` does not retain `getchar` or unrelated routines.
+`libc.a` is intentionally narrow, not a port of picolibc. Its public headers
+are [`<stddef.h>`](../firmware/include/stddef.h), `<stdint.h>`, `<stdbool.h>`,
+`<limits.h>`, `<errno.h>`, `<assert.h>`, `<ctype.h>`, `<string.h>`,
+[`<stdlib.h>`](../firmware/include/stdlib.h),
+[`<stdio.h>`](../firmware/include/stdio.h). The optional `libirq.a` instead
+provides [`<riscc/interrupt.h>`](../firmware/include/riscc/interrupt.h). Each
+archive is built with function/data sections and linked with `--gc-sections`,
+so an application pays only for referenced functions and their dependencies.
+
+The default `libbsp.a` also supplies the deliberately narrow
+[`<time.h>`](../firmware/include/time.h) surface: `clock_t`, `time_t`,
+`CLOCKS_PER_SEC`, `clock()`, and `time()`. It is a board service rather than a
+generic libc feature, so another BSP may provide different clock semantics or
+omit it entirely.
+
+`libc.a` deliberately contains no board MMIO definitions. The selected BSP
+supplies its direct `putchar`, `getchar`, and `puts` implementations; the
+generic stdio layer supplies `FILE`, the other stream operations, and integer
+formatting around them. The default `libbsp.a` implements those three entry
+points with the shared demo UART. A different board can link its own BSP
+archive *after* `libc.a`, defining the same three functions; no UART object
+from the default archive is then selected. Application makefiles using
+[`firmware/riscc.mk`](../firmware/riscc.mk) can set `RISCC_BSP_LIBRARY` before
+including it. The public
+[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) helpers describe
+the default demo BSP's hardware map, not generic libc.
+
+`<string.h>` contains the complete C90 narrow memory and string set. The
+locale is fixed ASCII/C: `<ctype.h>` is arithmetic rather than table-backed.
+`<stdlib.h>` supplies `atoi`/`atol`, `strtol`/`strtoul`, `abs`/`labs`,
+`div`/`ldiv`, `bsearch`, selection-sort `qsort`, `rand`/`srand`, and
+`malloc`/`free`/`calloc`/`realloc`. `calloc` detects multiplication overflow;
+`realloc` is deliberately allocate/copy/free, rather than an in-place growth
+optimization. `abort`, `exit`, and `_Exit` halt immediately: there are no
+destructors, `atexit` handlers, process status, environment, or POSIX APIs.
+
+The allocator is deliberately small and single-threaded. Allocated blocks
+have one 16-bit total-size word; a freed block reuses its first payload word
+as the address-ordered free-list link. `free` only inserts, while `malloc`
+lazily coalesces adjacent free blocks during a first-fit scan and splits only
+a useful remainder. This makes allocation unsuitable for interrupt handlers.
+
+There is no fixed heap or reserved stack. The linker exports `__heap_start`
+immediately after the image and `__heap_end` at the RAM ceiling. The private
+`sbrk` implementation also compares each proposed heap break with the live
+`r7` stack pointer, so allocation may use all memory below the current stack
+frame. That check is only a point-in-time limit: a later deeper stack frame can
+still collide with and corrupt heap memory, exactly like any unchecked stack
+overflow. This is intentional for the tiny single-stack runtime. A future
+scheduler can replace the private heap-limit provider with the lowest active
+stack bound and add allocator locking without changing the public allocation
+API.
+
+Explicit exclusions remain floating point, `scanf`, files, locale beyond the
+ASCII C locale, multibyte/wide-character APIs, `long long` formatting,
+calendar conversion and all other time APIs, threads, atomics,
+process/environment APIs, and dynamic linking.
+
+### Default BSP clock and uptime
+
+`clock()` returns the 1 kHz free-running hardware counter and
+`CLOCKS_PER_SEC` is 1000. It is cheap and does not install an IRQ handler, but
+it wraps after 65.536 seconds. It measures board ticks, not CPU execution time.
+
+`time()` returns whole seconds since the uptime service was first initialized;
+there is no wall-clock epoch. Its first call is sufficient: it installs the
+one BSP timer handler through `libirq`, arms the one-shot timer for 1000 ticks,
+enables the timer source and global IRQs, and increments a private 32-bit
+seconds counter on each timer interrupt. `riscc_time_init()` in
+[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) is available when
+an application wants that setup earlier. It is idempotent.
+
+Generic startup deliberately performs no BSP initialization before `main`.
+An application owns board policy and explicitly initializes any optional BSP
+service it needs before first use; calling `riscc_time_init()` near the start
+of `main` makes this uptime counter begin at program startup. This keeps a
+program which does not use a peripheral from linking or enabling it.
+
+The service has one interrupt per nominal second and re-arms the one-shot from
+the handler, so handler latency introduces a small accumulating delay. It is a
+tiny uptime clock, not a precision timebase. A scheduler or precision-timer BSP
+can replace it without changing generic libc.
+
+`time()` owns `libirq`'s single global C handler and acknowledges the timer by
+rearming the one-shot. Do not enable UART IRQs or install another C handler in
+an application using this minimal service; the default UART console is polling
+and needs neither. A future BSP dispatcher can combine timer and UART callbacks
+when an IRQ-driven second device is actually needed. A custom assembly IRQ
+vector owns its timer policy and therefore does not use this default time
+service.
 
 ### Startup and layouts
 
@@ -246,8 +355,8 @@ separate: executable VMAs begin at zero and data VMAs use the ELF-only
 In both layouts, `.tdata` follows ordinary initialized data and supplies the
 initial TLS template; `.tbss` is followed by `.bss` in the range cleared by
 startup. The linker exports `__tls_start`, `__tdata_end`, `__tbss_start`,
-`__tls_end`, `__bss_start`, `__bss_end`, `__zero_start`, `__zero_end`, and
-`__stack_top` for startup or platform code.
+`__tls_end`, `__bss_start`, `__bss_end`, `__zero_start`, `__zero_end`,
+`__heap_start`, `__heap_end`, and `__stack_top` for startup or platform code.
 
 For a split image, extract executable and initialized data sections separately:
 
@@ -330,6 +439,18 @@ promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
 callee-save, and complete integer-runtime-helper checks.  It also executes
 `memcpy`, `memmove`, and `memset`, including overlap and zero-length cases.
 Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
+
+`compiler-libc-iss` separately links each tiny-libc probe through `libc.a` at
+the same three optimization levels. It covers string and ctype boundaries,
+integer conversion and search utilities, UART stream and every formatter entry
+point, allocator splitting/coalescing/reallocation and heap collision, and
+immediate termination through `abort`, `exit`, `_Exit`, and failed `assert`.
+It also verifies that an application-provided BSP console works without
+extracting the default UART backend, and that `clock()` does not pull IRQ
+state while `time()` installs and arms its BSP service. UART probes compare
+exact byte streams. `compiler-libc-size` checks the all-features image remains
+within 4 KiB of `.text` and 32 bytes of combined `.data`/`.bss`;
+`test-compiler` runs both targets.
 
 The remaining compiler suite exercises C-wrapper and assembly-owned IRQ
 vectors. The split-image check verifies that `.tdata` appears in the data image

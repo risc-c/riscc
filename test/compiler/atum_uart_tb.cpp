@@ -7,8 +7,14 @@
 
 static constexpr int BaudDiv = 8;
 
-struct TxCapture {
-    enum State { Idle, Data, Stop } state = Idle;
+struct TxCapture
+{
+    enum State
+    {
+        Idle,
+        Data,
+        Stop
+    } state = Idle;
     int wait = 0;
     int bit = 0;
     uint8_t current = 0;
@@ -16,30 +22,34 @@ struct TxCapture {
 
     void sample(int tx)
     {
-        switch (state) {
+        switch (state)
+        {
         case Idle:
-            if (!tx) {
+            if (!tx)
+        {
                 state = Data;
                 wait = BaudDiv + BaudDiv / 2;
                 bit = 0;
                 current = 0;
-            }
+        }
             break;
         case Data:
-            if (--wait <= 0) {
+            if (--wait <= 0)
+        {
                 if (tx)
                     current |= uint8_t(1u << bit);
                 ++bit;
                 wait = BaudDiv;
                 if (bit == 8)
                     state = Stop;
-            }
+        }
             break;
         case Stop:
-            if (--wait <= 0) {
+            if (--wait <= 0)
+        {
                 output.push_back(char(current));
                 state = Idle;
-            }
+        }
             break;
         }
     }
@@ -68,9 +78,11 @@ int main(int argc, char **argv)
     top->rst = 0;
 
     static const std::string Expected = "LLVM RISCC PASS\n";
-    for (int cycle = 0; cycle < 1000000; ++cycle) {
+    for (int cycle = 0; cycle < 1000000; ++cycle)
+    {
         tick(top, capture);
-        if (capture.output.find(Expected) != std::string::npos) {
+        if (capture.output.find(Expected) != std::string::npos)
+        {
             std::printf("Atum compiler UART PASS: %s", capture.output.c_str());
             delete top;
             return 0;

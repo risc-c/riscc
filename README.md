@@ -69,9 +69,9 @@ Representative implementation results:
 | Implementation | Profile | Platform | Logic | Fmax | Benchmark rate |
 |---|---|---|---:|---:|---:|
 | Nano | `nano` | iCE40 UP5K | 93 LUT4 + 1 EBR | 31.56 MHz | 1.02 MIPS |
-| Tiny `/1` through `/16` | `sys` | ECP5 | 153–303 LUT sites + 1 EBR | 81.11–106.61 MHz | 2.86–20.16 MIPS |
-| Fast, DSP multiplier | `full` | ECP5 | 450 LUT sites + 1 DSP | 67.00 MHz | 45.37 MIPS |
-| Faster, DSP multiplier | `full` | Agilex 3 | 299.3 ALMs + 1 DSP | 222.97 MHz | 106.07 MIPS |
+| Tiny `/1` through `/16` | `sys` | ECP5 | 149–302 LUT sites + 1 EBR | 85.16–109.23 MHz | 3.04–20.20 MIPS |
+| Fast, DSP multiplier | `full` | ECP5 | 450 LUT sites + 1 DSP | 68.00 MHz | 46.05 MIPS |
+| Faster, DSP multiplier | `full` | Agilex 3 | 310.4 ALMs + 1 DSP | 251.76 MHz | 119.77 MIPS |
 
 The [Hardware manual](doc/HARDWARE.md#3-current-implementation-results)
 contains the complete cross-device matrices, multiplier variants, resource
@@ -101,8 +101,7 @@ make -j16 test-compiler
 |---|---|
 | `make -j16 test-all` | Deterministic Verilator RTL regression for every core family. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
-| `make -j16 test-compiler` | Builds LLVM/Clang when needed, then runs compiler, TLS, IRQ, ISS, and board-RTL smoke tests. |
-| `make -j16 compiler-features-iss` | Runs the supported C11, ABI, runtime-helper, and libc feature matrix at `-O0`, `-O2`, and `-Os` on the ISS. |
+| `make -j16 test-compiler` | Builds LLVM/Clang when needed, then runs compiler, tiny-libc, TLS, IRQ, ISS, and board-RTL smoke tests. |
 | `make -j16 all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports. It does not include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
 | `make -j16 tables` | Regenerates area, Fmax, and benchmark measurement tables; substantially slower. |

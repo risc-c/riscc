@@ -79,7 +79,9 @@ SECTIONS
 
   __data_space_tag = ORIGIN(DATA);
   __data_image_end = __tdata_end;
+  __heap_start = __bss_end;
   __stack_top = ORIGIN(DATA) + LENGTH(DATA);
+  __heap_end = __stack_top;
 
   ASSERT(__bss_end <= __stack_top,
          "RISC-C data image and BSS exceed the 32 KiB data RAM")

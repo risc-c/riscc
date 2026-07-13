@@ -12,29 +12,35 @@ typedef __INT64_TYPE__ s64;
 typedef __SIZE_TYPE__ usize;
 typedef __PTRDIFF_TYPE__ sptr;
 
-struct feature_byte {
+struct feature_byte
+{
     s8 value;
 };
 
-struct feature_pair {
+struct feature_pair
+{
     u16 first;
     u16 second;
 };
 
-struct feature_quad {
+struct feature_quad
+{
     u16 word[4];
 };
 
-struct feature_large {
+struct feature_large
+{
     u16 word[5];
 };
 
-struct feature_vararg_pair {
+struct feature_vararg_pair
+{
     u16 first;
     u16 second;
 };
 
-struct feature_vararg_bytes3 {
+struct feature_vararg_bytes3
+{
     u8 byte[3];
 };
 

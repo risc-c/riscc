@@ -6,19 +6,22 @@ void *memcpy(void *, const void *, usize);
 void *memmove(void *, const void *, usize);
 void *memset(void *, int, usize);
 
-struct memory_layout {
+struct memory_layout
+{
     u8 head;
     u16 word;
     u8 tail;
 };
 
-struct memory_bits {
+struct memory_bits
+{
     unsigned first : 3;
     unsigned second : 5;
     unsigned third : 8;
 };
 
-union memory_union {
+union memory_union
+{
     u16 word;
     u8 byte[2];
 };
@@ -95,7 +98,7 @@ u16 feature_test_memory(void)
         return 12;
     for (i = 0; i != sizeof(bytes); ++i)
         if (bytes[i] != 0xa5u)
-            return 13;
+        return 13;
     if (memcpy(bytes, memory_rodata, sizeof(memory_rodata)) != bytes ||
         bytes[0] != 3 || bytes[5] != 9)
         return 14;

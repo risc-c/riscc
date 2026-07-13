@@ -1,22 +1,24 @@
-// diamond 3.7 accepts this PLL
-// diamond 3.8-3.9 is untested
-// diamond 3.10 or higher is likely to abort with error about unable to use feedback signal
-// cause of this could be from wrong CPHASE/FPHASE parameters
-module dvi_pll (
-    input clk_in,
-    output clkp,
-    output clkt,
-    output clk5x,
-    output locked
-);
-(* FREQUENCY_PIN_CLKI="50" *)
-(* FREQUENCY_PIN_CLKOP="250" *)
-(* FREQUENCY_PIN_CLKOS="25" *)
-(* FREQUENCY_PIN_CLKOS2="125" *)
+`default_nettype none
 
-(* ICP_CURRENT="12" *) (* LPF_RESISTOR="8" *) (* MFG_ENABLE_FILTEROPAMP="1" *) (* MFG_GMCREF_SEL="2" *)
-/* verilator lint_off PINCONNECTEMPTY */
-EHXPLLL #(
+// ECP5 PLL for a 50 MHz input, producing 25 MHz pixels, a 125 MHz shift
+// clock, and the 250 MHz feedback clock required by the primitive.
+module icepi_dvi_pll (
+    input  wire clk_in,
+    output wire clkp,
+    output wire clkt,
+    output wire clk5x,
+    output wire locked
+);
+    (* FREQUENCY_PIN_CLKI="50" *)
+    (* FREQUENCY_PIN_CLKOP="250" *)
+    (* FREQUENCY_PIN_CLKOS="25" *)
+    (* FREQUENCY_PIN_CLKOS2="125" *)
+    (* ICP_CURRENT="12" *)
+    (* LPF_RESISTOR="8" *)
+    (* MFG_ENABLE_FILTEROPAMP="1" *)
+    (* MFG_GMCREF_SEL="2" *)
+    /* verilator lint_off PINCONNECTEMPTY */
+    EHXPLLL #(
         .PLLRST_ENA("DISABLED"),
         .INTFB_WAKE("DISABLED"),
         .STDBY_ENABLE("DISABLED"),
@@ -61,5 +63,7 @@ EHXPLLL #(
         .ENCLKOS2(1'b0),
         .ENCLKOS3(1'b0),
         .LOCK(locked)
-     );
+    );
 endmodule
+
+`default_nettype wire

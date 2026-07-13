@@ -3,32 +3,32 @@
 u16 feature_abi_narrow(s8 a, u8 b, s16 c, u16 d, s8 e)
 {
     return a == -7 && b == 250 && c == -1234 && d == 0xabcdu && e == -9
-               ? 0x1357u
-               : 0;
+        ? 0x1357u
+        : 0;
 }
 
 u16 feature_abi_stack_mix(u16 a, u16 b, u16 c, u32 wide, u16 tail)
 {
     return a == 1 && b == 2 && c == 3 && wide == 0x12345678ul && tail == 5
-               ? 0x2468u
-               : 0;
+        ? 0x2468u
+        : 0;
 }
 
 u16 feature_abi_pair_regs(u16 prefix, struct feature_pair value, u16 suffix)
 {
     return prefix == 0x1111u && value.first == 0x2222u &&
-                   value.second == 0x3333u && suffix == 0x4444u
-               ? 0x3579u
-               : 0;
+        value.second == 0x3333u && suffix == 0x4444u
+        ? 0x3579u
+        : 0;
 }
 
 u16 feature_abi_pair_stack(u16 a, u16 b, u16 c, struct feature_pair value,
-                           u16 suffix)
+    u16 suffix)
 {
     return a == 1 && b == 2 && c == 3 && value.first == 0x2222u &&
-                   value.second == 0x3333u && suffix == 4
-               ? 0x468au
-               : 0;
+        value.second == 0x3333u && suffix == 4
+        ? 0x468au
+        : 0;
 }
 
 u16 feature_abi_large_arg(struct feature_large value, u16 tail)
@@ -36,15 +36,15 @@ u16 feature_abi_large_arg(struct feature_large value, u16 tail)
     u16 i;
     for (i = 0; i != 5; ++i)
         if (value.word[i] != (u16)(i + 1))
-            return 0;
+        return 0;
     return tail == 6 ? 0x579bu : 0;
 }
 
 u16 feature_abi_u64_stack(u16 prefix, u64 value, u16 suffix)
 {
     return prefix == 7 && value == 0x1122334455667788ull && suffix == 9
-               ? 0x68acu
-               : 0;
+        ? 0x68acu
+        : 0;
 }
 
 struct feature_byte feature_abi_return_byte(s8 value)

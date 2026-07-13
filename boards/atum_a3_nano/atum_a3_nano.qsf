@@ -24,7 +24,10 @@ set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/top.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_sys_pll.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_reset_release.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_a3_nano_soc.v
-set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_uart_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_framebuffer_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_uart_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_timer_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_irq_ctrl.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_fb_hdmi.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_tfp410_init.v
 set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_faster.v
