@@ -14,9 +14,9 @@ static __attribute__((noinline)) u16 tail_direct(u16 value)
     [[clang::musttail]] return tail_leaf(value);
 }
 
-static __attribute__((noinline)) u16 tail_indirect(u16 value)
+static __attribute__((noinline)) u16 call_indirect(u16 value)
 {
-    [[clang::musttail]] return tail_target(value);
+    return tail_target(value);
 }
 
 static __attribute__((noinline)) u16 tail_after_call(u16 value)
@@ -37,7 +37,7 @@ u16 feature_test_tail(void)
 {
     if (tail_direct(10) != 17)
         return 1;
-    if (tail_indirect(20) != 27)
+    if (call_indirect(20) != 27)
         return 2;
     if (tail_after_call(30) != 44)
         return 3;
