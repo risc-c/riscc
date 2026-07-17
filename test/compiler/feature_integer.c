@@ -17,6 +17,21 @@ static volatile s32 integer_s32_divisor = 300l;
 static volatile s64 integer_s64_divisor = 300ll;
 static volatile u16 integer_shift = 4;
 
+static __attribute__((noinline)) u16 multiply_by_3(u16 value)
+{
+    return (u16)(value * 3u);
+}
+
+static __attribute__((noinline)) u16 multiply_by_10(u16 value)
+{
+    return (u16)(value * 10u);
+}
+
+static __attribute__((noinline)) u16 select_or_zero(u16 condition, u16 value)
+{
+    return condition ? value : 0;
+}
+
 u16 feature_test_integer(void)
 {
     u16 a = integer_u16_a;
@@ -88,6 +103,12 @@ u16 feature_test_integer(void)
     if ((u8)value32 != 0x78u || (u16)value32 != 0x5678u ||
         (u32)(s32)(s16)-2 != 0xfffffffeul)
         return 18;
+    if (multiply_by_3(0x1234u) != 0x369cu ||
+        multiply_by_10(0x1234u) != 0xb608u)
+        return 19;
+    if (select_or_zero(1, 0x5678u) != 0x5678u ||
+        select_or_zero(0, 0x5678u) != 0)
+        return 20;
 
     return 0;
 }
