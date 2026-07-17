@@ -53,6 +53,7 @@ u16 feature_test_builtins(void);
 u16 feature_test_memory(void);
 u16 feature_test_abi(void);
 u16 feature_test_varargs(void);
+u16 feature_test_tail(void);
 
 u16 feature_abi_narrow(s8, u8, s16, u16, s8);
 u16 feature_abi_stack_mix(u16, u16, u16, u32, u16);

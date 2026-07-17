@@ -1332,7 +1332,7 @@ RISCC_COMPILER_IRQ_CUSTOM_BIN := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.bin
 RISCC_COMPILER_IRQ_CUSTOM_MAP := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.map
 RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer \
 	feature_builtins feature_memory feature_abi feature_abi_callee \
-	feature_varargs feature_varargs_callee
+	feature_varargs feature_varargs_callee feature_tail
 RISCC_COMPILER_FEATURE_ASM_OBJECT := \
 	$(RISCC_COMPILER_BUILD)/features/feature_abi_asm.o
 RISCC_LIBC_TESTS := memory_string stdio bsp_stdio snprintf alloc integer clock \
