@@ -51,6 +51,19 @@ static u16 abs16(s16 value)
     return value < 0 ? (u16)(0 - bits) : bits;
 }
 
+u16 __mulhi3(u16 left, u16 right)
+{
+    u16 result = 0;
+    while (right != 0)
+    {
+        if (right & 1)
+            result = (u16)(result + left);
+        left = (u16)(left + left);
+        right = (u16)(right >> 1);
+    }
+    return result;
+}
+
 u16 __udivhi3(u16 numerator, u16 denominator)
 {
     return udivmod16(numerator, denominator, (u16 *)0);

@@ -26,6 +26,11 @@ _start:
         JMP8    .Lclear_zero
 
 .Lzero_done:
+#ifdef __RISCC_MIN__
+        LDI16   r0, code(main)
+        CALL    r0
+#else
         CALL16  main
+#endif
         HALT
         .size _start, . - _start

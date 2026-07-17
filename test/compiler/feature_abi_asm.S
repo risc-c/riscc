@@ -18,7 +18,12 @@ feature_check_callee_saved:
         LDI16   r5, 0x55aa
         LDI16   r6, 0xaa55
         LDI     r1, 7
+#ifdef __RISCC_MIN__
+        LDI16   r0, code(feature_abi_pressure)
+        CALL    r0
+#else
         CALL16  feature_abi_pressure
+#endif
 
         LDI16   r0, 0x55aa
         SUB     r0, r5, r0

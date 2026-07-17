@@ -177,18 +177,24 @@ debugging; no C++ runtime or Clang development-tool suite is included.
 Top-level `make clean` preserves the prebuilt LLVM toolchain and RISC-C
 runtime; use `make distclean` only when those SDK artifacts must be discarded.
 
-The C target is freestanding `riscc-none-elf -mcpu=full`. The initial compiler
-supports integer C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS objects,
-stack frames, aggregate calls and returns, function pointers, and 16-, 32-,
-and 64-bit integer operations. It has no hosted environment; the supplied tiny
-libc provides standard type/utility headers, C90 narrow strings, ASCII/C-locale
-`<ctype.h>`, `<errno.h>`, integer `<stdlib.h>`, and the small stdio surface
-described below. Variadic functions keep named arguments on the ordinary ABI
-convention and place unnamed arguments on the stack; see the normative
-[C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for `va_list`
-semantics. It has no VLA/dynamic `alloca`, soft float, PIC, atomics, exceptions,
-unwinding, jump tables, tail calls, compiler interrupt attributes, or C++
-runtime.
+The C target is freestanding `riscc-none-elf`; `-mcpu=full` is the default, and
+`-mcpu=sys` and `-mcpu=min` select the smaller mainline profiles. Clang defines
+exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, or `__RISCC_MIN__`. The
+backend replaces unavailable multiplication with `__mulhi3`, expands shifts
+to the selected profile's legal instructions, and uses register-target calls
+and jumps where `min` lacks `JAL16`.
+
+The compiler supports integer C at `-O0`, `-O2`, and `-Os`, ordinary global
+and TLS objects, stack frames, aggregate calls and returns, function pointers,
+and 16-, 32-, and 64-bit integer operations. It has no hosted environment; the
+supplied tiny libc provides standard type/utility headers, C90 narrow strings,
+ASCII/C-locale `<ctype.h>`, `<errno.h>`, integer `<stdlib.h>`, and the small
+stdio surface described below. Variadic functions keep named arguments on the
+ordinary ABI convention and place unnamed arguments on the stack; see the
+normative [C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for
+`va_list` semantics. It has no VLA/dynamic `alloca`, soft float, PIC, atomics,
+exceptions, unwinding, jump tables, tail calls, compiler interrupt attributes,
+or C++ runtime.
 
 ### Inline assembly
 
@@ -217,6 +223,11 @@ checkout. Its default unified build emits `build/hello/hello.elf` and
 `build/hello/hello.bin`, plus `build/hello/hello.s` for inspection.
 Applications that need a different startup, linker layout, or image-conversion
 policy can replace the visible rules in their own Makefile.
+
+Set `RISCC_CPU := sys` or `RISCC_CPU := min` before including `riscc.mk` to
+select a smaller profile. Build its matching runtime first with
+`make -j16 riscc-firmware-sys` or `make -j16 riscc-firmware-min`. The `min`
+runtime omits interrupt support because that profile has no system extension.
 
 The essentials of the direct invocation are:
 
@@ -439,6 +450,9 @@ promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
 callee-save, and complete integer-runtime-helper checks.  It also executes
 `memcpy`, `memmove`, and `memset`, including overlap and zero-length cases.
 Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
+`test-compiler-profiles-iss` runs that feature matrix for `full`, `sys`, and
+`min`; the individual smaller-profile targets are
+`compiler-features-sys-iss` and `compiler-features-min-iss`.
 
 `compiler-libc-iss` separately links each tiny-libc probe through `libc.a` at
 the same three optimization levels. It covers string and ctype boundaries,

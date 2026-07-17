@@ -1187,14 +1187,16 @@ LLVM_RISCC_CMAKE ?= cmake
 LLVM_RISCC_CMAKE_FLAGS ?=
 # Keep the downstream build to the tools used by this repository.  The
 # optional pieces below are deliberately unavailable: RISC-C does not use
-# upstream tests, documentation, examples, benchmarks, bindings, runtimes,
-# static analysis, plugins, or compressed/debug-object support.
+# documentation, examples, benchmarks, bindings, runtimes, static analysis,
+# plugins, or compressed/debug-object support.  Test targets are configured so
+# the focused RISC-C lit suite can reuse LLVM's standard substitutions, but
+# they remain excluded from normal builds.
 LLVM_RISCC_MINIMAL_CMAKE_FLAGS := \
-	-DLLVM_INCLUDE_TESTS=OFF \
+	-DLLVM_INCLUDE_TESTS=ON \
 	-DLLVM_INCLUDE_EXAMPLES=OFF \
 	-DLLVM_INCLUDE_BENCHMARKS=OFF \
 	-DLLVM_INCLUDE_DOCS=OFF \
-	-DLLVM_INCLUDE_UTILS=OFF \
+	-DLLVM_INCLUDE_UTILS=ON \
 	-DLLVM_INCLUDE_RUNTIMES=OFF \
 	-DLLVM_BUILD_TOOLS=OFF \
 	-DLLVM_BUILD_UTILS=OFF \
@@ -1209,7 +1211,7 @@ LLVM_RISCC_MINIMAL_CMAKE_FLAGS := \
 	-DLLVM_ENABLE_ZLIB=OFF \
 	-DLLVM_ENABLE_ZSTD=OFF \
 	-DCLANG_BUILD_TOOLS=OFF \
-	-DCLANG_INCLUDE_TESTS=OFF \
+	-DCLANG_INCLUDE_TESTS=ON \
 	-DCLANG_INCLUDE_DOCS=OFF \
 	-DCLANG_ENABLE_STATIC_ANALYZER=OFF \
 	-DCLANG_PLUGIN_SUPPORT=OFF \
@@ -1217,6 +1219,8 @@ LLVM_RISCC_MINIMAL_CMAKE_FLAGS := \
 LLVM_RISCC_BUILD_TARGETS ?= clang lld llvm-ar llvm-mc llvm-objcopy \
 	llvm-objdump llvm-readobj llvm-nm llvm-size \
 	llc opt llvm-as llvm-dis
+LLVM_RISCC_LIT_TARGETS ?= FileCheck count llvm-config not split-file yaml2obj
+LLVM_RISCC_LIT_ARGS ?= -sv
 # Reuse the project's writable ccache selection for LLVM's host C/C++
 # compilation.  Set this empty to disable it or point it at another launcher.
 LLVM_RISCC_COMPILER_LAUNCHER ?= $(CCACHE)
@@ -1225,6 +1229,16 @@ LLVM_RISCC_COMPILER_LAUNCHER_FLAGS := $(if $(strip $(LLVM_RISCC_COMPILER_LAUNCHE
 	-DCMAKE_CXX_COMPILER_LAUNCHER=$(LLVM_RISCC_COMPILER_LAUNCHER))
 
 LLVM_RISCC_BIN := $(LLVM_RISCC_BUILD)/bin
+LLVM_RISCC_LIT := $(LLVM_RISCC_BIN)/llvm-lit
+LLVM_RISCC_LIT_TESTS := \
+	external/llvm-project/llvm/test/MC/RISCC \
+	external/llvm-project/llvm/test/CodeGen/RISCC \
+	external/llvm-project/clang/test/CodeGen/RISCC \
+	external/llvm-project/clang/test/Sema/RISCC \
+	external/llvm-project/clang/test/Driver/riscc-toolchain.c \
+	external/llvm-project/clang/test/Preprocessor/init-riscc.c \
+	external/llvm-project/clang/test/Modules/riscc-target-features.m \
+	$(wildcard external/llvm-project/lld/test/ELF/riscc-*)
 RISCC_CLANG := $(LLVM_RISCC_BIN)/clang
 RISCC_AR := $(LLVM_RISCC_BIN)/llvm-ar
 RISCC_OBJCOPY := $(LLVM_RISCC_BIN)/llvm-objcopy
@@ -1236,7 +1250,10 @@ RISCC_FIRMWARE_BUILD ?= build/firmware
 RISCC_COMPILER_BUILD ?= build/compiler
 RISCC_COMPILER_MAX_INSNS ?= 1000000
 RISCC_LIBC_TERMINATE_MAX_INSNS ?= 256
-RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=full
+RISCC_CPU ?= full
+RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=$(RISCC_CPU)
+RISCC_SIM_PROFILE_FLAGS := $(if $(filter min,$(RISCC_CPU)),--min, \
+	$(if $(filter full,$(RISCC_CPU)),--full))
 RISCC_ASFLAGS ?= -ffreestanding
 RISCC_CFLAGS ?= -Os -ffreestanding -fno-builtin -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \
@@ -1278,7 +1295,7 @@ RISCC_LIBC_HEADERS := $(wildcard firmware/include/*.h firmware/include/riscc/*.h
 RISCC_LIBC_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libc.a
 RISCC_FIRMWARE_LIBRARIES := $(RISCC_LIBC_LIBRARY) \
 	$(RISCC_BSP_LIBRARY) \
-	$(RISCC_FIRMWARE_IRQ_LIBRARY) \
+	$(if $(filter-out min,$(RISCC_CPU)),$(RISCC_FIRMWARE_IRQ_LIBRARY)) \
 	$(RISCC_BUILTINS_LIBRARY)
 
 RISCC_COMPILER_OBJECTS := $(RISCC_COMPILER_BUILD)/smoke.o \
@@ -1319,13 +1336,16 @@ RISCC_LIBC_TERMINATE_TESTS := terminate_abort terminate_exit terminate__exit \
 RISCC_LIBC_ALL_TESTS := $(RISCC_LIBC_TESTS) $(RISCC_LIBC_TERMINATE_TESTS)
 RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 
-.PHONY: llvm-riscc-configure llvm-riscc riscc-firmware \
+.PHONY: llvm-riscc-configure llvm-riscc check-llvm-riscc riscc-firmware \
+	riscc-firmware-sys riscc-firmware-min \
 	compiler-smoke compiler-smoke-unified compiler-smoke-iss \
 	compiler-smoke-split compiler-smoke-tiny16 compiler-smoke-fast compiler-smoke-icepi \
 	compiler-smoke-atum compiler-smoke-opt-o0 compiler-smoke-opt-o2 \
 	compiler-smoke-opt-os compiler-smoke-opt-matrix \
 	compiler-features-o0-iss compiler-features-o2-iss \
 	compiler-features-os-iss compiler-features-iss \
+	compiler-features-sys-iss compiler-features-min-iss \
+	test-compiler-profiles-iss \
 	compiler-libc-o0-iss compiler-libc-o2-iss compiler-libc-os-iss \
 	compiler-libc-iss compiler-libc-size \
 	compiler-stdio-iss \
@@ -1355,6 +1375,14 @@ $(LLVM_RISCC_CACHE):
 llvm-riscc: $(LLVM_RISCC_CACHE)
 	$(LLVM_RISCC_CMAKE) --build $(LLVM_RISCC_BUILD) \
 	  --target $(LLVM_RISCC_BUILD_TARGETS) --parallel $(RISCC_BUILD_JOBS)
+
+# Configure lit's build-tree test suites, build only their RISC-C dependencies,
+# and keep temporary/output files in the LLVM build tree.
+check-llvm-riscc: llvm-riscc-configure
+	$(LLVM_RISCC_CMAKE) --build $(LLVM_RISCC_BUILD) \
+	  --target $(LLVM_RISCC_BUILD_TARGETS) $(LLVM_RISCC_LIT_TARGETS) \
+	  --parallel $(RISCC_BUILD_JOBS)
+	$(LLVM_RISCC_LIT) $(LLVM_RISCC_LIT_ARGS) $(LLVM_RISCC_LIT_TESTS)
 
 # Each tool is made available through the phony build target, but is a normal
 # prerequisite of the artifacts that use it.  That avoids gratuitously
@@ -1418,6 +1446,14 @@ $(RISCC_FIRMWARE_IRQ_LIBRARY): $(RISCC_FIRMWARE_IRQ_DEFAULT) \
 
 riscc-firmware: $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
 	$(RISCC_FIRMWARE_LIBRARIES)
+
+riscc-firmware-sys:
+	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \
+	  riscc-firmware
+
+riscc-firmware-min:
+	$(MAKE) RISCC_CPU=min RISCC_FIRMWARE_BUILD=build/firmware/min \
+	  riscc-firmware
 
 # ---- Board C++ demos --------------------------------------------------
 
@@ -1765,13 +1801,28 @@ $$(RISCC_COMPILER_BUILD)/features/$(1)/features.bin: \
 
 compiler-features-$(1)-iss: \
 		$$(RISCC_COMPILER_BUILD)/features/$(1)/features.bin $$(RISCC_SIM)
-	$$(RISCC_SIM) $$< --full --max-insns $$(RISCC_COMPILER_MAX_INSNS)
+	$$(RISCC_SIM) $$< $$(RISCC_SIM_PROFILE_FLAGS) \
+	  --max-insns $$(RISCC_COMPILER_MAX_INSNS)
 endef
 
 $(foreach opt,o0 o2 os,$(eval $(call riscc_compiler_feature_rules,$(opt))))
 
 compiler-features-iss: compiler-features-o0-iss compiler-features-o2-iss \
 	compiler-features-os-iss
+
+compiler-features-sys-iss:
+	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \
+	  RISCC_COMPILER_BUILD=build/compiler/sys compiler-features-iss
+
+compiler-features-min-iss:
+	$(MAKE) RISCC_CPU=min RISCC_FIRMWARE_BUILD=build/firmware/min \
+	  RISCC_COMPILER_BUILD=build/compiler/min compiler-features-iss
+
+test-compiler-profiles-iss: compiler-features-iss
+	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \
+	  RISCC_COMPILER_BUILD=build/compiler/sys compiler-features-iss
+	$(MAKE) RISCC_CPU=min RISCC_FIRMWARE_BUILD=build/firmware/min \
+	  RISCC_COMPILER_BUILD=build/compiler/min compiler-features-iss
 
 # Each libc probe is a separately linked application.  This checks archive
 # extraction and section GC as used by ordinary RISC-C firmware, at every

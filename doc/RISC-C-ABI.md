@@ -6,10 +6,10 @@ only by the [RISC-C ISA specification](RISC-C.md).
 
 ## 1. Scope and target identity
 
-ABI v1 identifies the target as `riscc-none-elf`. The initial compiler
-configuration is `-mcpu=full`. An ABI-v1 object may be linked for either a
-unified physical memory or distinct instruction and data memories; that choice
-does not change the object ABI.
+ABI v1 identifies the target as `riscc-none-elf`. The compiler defaults to
+`-mcpu=full` and also supports the mainline `sys` and `min` profiles. An ABI-v1
+object may be linked for either a unified physical memory or distinct
+instruction and data memories; that choice does not change the object ABI.
 
 ABI v1 is little-endian. It defines C calls, including variadic calls, static
 local-exec TLS, and static ELF links. It does not define a hosted environment,
