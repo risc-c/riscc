@@ -2,7 +2,7 @@
 
 This document is the normative version 1 ABI for freestanding C objects for
 mainline RISC-C. Instruction semantics and architectural state are specified
-only by the [RISC-C ISA specification](RISC-C.md).
+only by the [RISC-C ISA specification](RISC-C-ISA.md).
 
 ## 1. Scope and target identity
 

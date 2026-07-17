@@ -14,7 +14,7 @@
   Put detailed RTL, board, FPGA-flow, timing, and area material in
   `doc/HARDWARE.md`; put assembly, compiler, runtime, and application material
   in `doc/PROGRAMMING.md`.
-- `doc/RISC-C.md` is the ISA specification. Do not change the ISA unless
+- `doc/RISC-C-ISA.md` is the ISA specification. Do not change the ISA unless
   explicitly asked; keep it to normative ISA behavior, without history,
   platform, or implementation material.
 - `doc/RISC-C-ABI.md` is the normative C/object ABI. Keep it concise and

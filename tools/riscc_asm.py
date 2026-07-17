@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assembler for RISC-C (see doc/RISC-C.md).
+"""Assembler for RISC-C (see doc/RISC-C-ISA.md).
 
 Flat two-pass assembler.  Labels evaluate to byte addresses.  Branch
 displacements are word-relative from PC+1; register jump/call targets are word

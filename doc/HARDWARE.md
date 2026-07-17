@@ -2,13 +2,13 @@
 
 This manual covers RISC-C RTL implementations, FPGA targets, validation,
 measurement, and board demos. The normative instruction definition is the
-[ISA specification](RISC-C.md). Software development, assembly, C, runtime,
+[ISA specification](RISC-C-ISA.md). Software development, assembly, C, runtime,
 and linker-layout guidance is in the [Programming manual](PROGRAMMING.md).
 
 ## 1. Implementation family
 
 RISC-C is implemented as several in-order cores sharing the ISA profiles
-defined by the [ISA specification](RISC-C.md). The implementation and profile
+defined by the [ISA specification](RISC-C-ISA.md). The implementation and profile
 are independent build choices.
 
 | Implementation | RTL | Organization | Profiles |
@@ -265,10 +265,11 @@ make icepi-zero-demo-json
 make icepi-zero-demo-bit
 ```
 
-The default source is
-[`demo.cpp`](../boards/icepi_zero/sw/demo.cpp), compiled as freestanding C++
+The default shared source is
+[`demo.cpp`](../boards/shared/sw/demo.cpp), compiled as freestanding C++
 without a C++ standard library, exceptions, RTTI, or constructors. For an
-alternate C++ or assembly image, set `ICEPI_PROGRAM`.
+alternate C++ or assembly image on both boards, set `DEMO_PROGRAM`. Set
+`ICEPI_PROGRAM` or `ATUM_PROGRAM` to override only that board.
 
 The bit target only builds a bitstream. The tested SRAM-load command is:
 

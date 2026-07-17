@@ -2,7 +2,7 @@
 
 This manual describes the software environment around the RISC-C ISA: writing
 assembly and C, the compiler/runtime, and application images. The normative
-instruction definition is the [ISA specification](RISC-C.md); the normative
+instruction definition is the [ISA specification](RISC-C-ISA.md); the normative
 C and ELF interoperability contract is the [C and object ABI](RISC-C-ABI.md).
 Hardware implementation, board builds, and FPGA flows are in the
 [Hardware manual](HARDWARE.md).

@@ -42,7 +42,7 @@ explicitly with `git submodule update --remote external/llvm-project`.
 - [Programming manual](doc/PROGRAMMING.md) — assembly and ISS use,
   LLVM/Clang, application Makefiles, runtime libraries, startup/layouts, TLS,
   interrupts, and split images.
-- [RISC-C ISA specification](doc/RISC-C.md) — the normative instruction-set
+- [RISC-C ISA specification](doc/RISC-C-ISA.md) — the normative instruction-set
   definition.
 - [RISC-C C and object ABI](doc/RISC-C-ABI.md) — the normative static C/ELF
   interoperability contract.

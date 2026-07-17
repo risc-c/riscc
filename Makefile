@@ -181,7 +181,7 @@ version:
 	@printf '%s\n' '$(RISCC_VERSION)'
 
 check-version:
-	@test "$$(sed -n 's/^Version: `\([^`]*\)`\.$$/\1/p' doc/RISC-C.md)" = "$(RISCC_VERSION)"
+	@test "$$(sed -n 's/^Version: `\([^`]*\)`\.$$/\1/p' doc/RISC-C-ISA.md)" = "$(RISCC_VERSION)"
 
 test-all: test-peripherals test-matrix test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp test-faster test-faster-soft
 
@@ -577,12 +577,16 @@ test-matrix: test-tiny-matrix $(MATRIX_NANO_OK)
 test-matrix-parallel:
 	$(MAKE) test-matrix
 
+# ---- Shared board demo ------------------------------------------------
+
+DEMO_PROGRAM ?= boards/shared/sw/demo.cpp
+
 # ---- Icepi Zero SoC demo ---------------------------------------------
 
 ICEPI_DIR := boards/icepi_zero
 ICEPI_BUILD := build/icepi_zero
 ICEPI_BIN := $(ICEPI_BUILD)/demo.bin
-ICEPI_PROGRAM ?= $(ICEPI_DIR)/sw/demo.cpp
+ICEPI_PROGRAM ?= $(DEMO_PROGRAM)
 ICEPI_CPP_OBJECT := $(ICEPI_BUILD)/demo.o
 ICEPI_ELF := $(ICEPI_BUILD)/demo.elf
 ICEPI_MEMH := $(ICEPI_BUILD)/demo.memh
@@ -699,7 +703,7 @@ icepi-zero-video-test-bit: $(ICEPI_VIDEO_TEST_BIT)
 ATUM_DIR := boards/atum_a3_nano
 ATUM_BUILD := build/atum_a3_nano
 ATUM_BIN := $(ATUM_BUILD)/demo.bin
-ATUM_PROGRAM ?= $(ICEPI_PROGRAM)
+ATUM_PROGRAM ?= $(DEMO_PROGRAM)
 ATUM_CPP_OBJECT := $(ATUM_BUILD)/demo.o
 ATUM_ELF := $(ATUM_BUILD)/demo.elf
 ATUM_MEMH := $(ATUM_BUILD)/mem/demo.memh

@@ -1,4 +1,4 @@
-; RISC-C Icepi Zero SoC demo.
+; RISC-C shared board SoC demo.
 ;
 ; UART hardware is intentionally tiny.  The ISR moves bytes between the
 ; hardware registers and software queues; the main loop owns command policy.
