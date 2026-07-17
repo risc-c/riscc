@@ -5,11 +5,11 @@
         .global __vectors
         .type __vectors,@object
 __vectors:
-#ifdef __RISCC_MIN__
+#if defined(__RISCC_MIN__) || defined(__RISCC_NANO__)
         JMP8    _start
         NOP
-.Lmin_irq:
-        JMP8    .Lmin_irq
+.Lno_irq:
+        JMP8    .Lno_irq
         NOP
 #else
         JAL16   S0, _start

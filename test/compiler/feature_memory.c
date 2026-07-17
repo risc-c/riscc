@@ -30,8 +30,10 @@ static volatile u16 memory_data_word = 0x1357u;
 static volatile u16 memory_bss_word;
 static const u8 memory_rodata[] = {3, 1, 4, 1, 5, 9};
 static volatile u16 *memory_data_pointer = &memory_data_word;
+#ifndef __RISCC_NANO__
 static __thread volatile u16 memory_tls_data = 0x2468u;
 static _Thread_local volatile u8 memory_tls_bss;
+#endif
 
 u16 feature_test_memory(void)
 {
@@ -42,8 +44,10 @@ u16 feature_test_memory(void)
     u8 bytes[8];
     u16 words[4];
     const char *text = "RISC-C";
+#ifndef __RISCC_NANO__
     volatile u16 *tls_data_pointer = &memory_tls_data;
     volatile u8 *tls_bss_pointer = &memory_tls_bss;
+#endif
     u16 i;
 
     _Static_assert(sizeof(struct memory_layout) == 6, "struct tail padding");
@@ -65,12 +69,14 @@ u16 feature_test_memory(void)
     if (memory_bss_word != 0xa55au || memory_data_word != 0x7531u)
         return 3;
 
+#ifndef __RISCC_NANO__
     if (memory_tls_data != 0x2468u || memory_tls_bss != 0)
         return 4;
     *tls_data_pointer = (u16)(*tls_data_pointer + 0x1111u);
     *tls_bss_pointer = 0x5au;
     if (memory_tls_data != 0x3579u || memory_tls_bss != 0x5au)
         return 5;
+#endif
 
     second = first;
     if (second.head != 0x12 || second.word != 0x3456 || second.tail != 0x56)

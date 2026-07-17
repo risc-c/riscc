@@ -12,8 +12,10 @@
         .extern __stack_top
 _start:
         LDI16   r7, __stack_top
+#ifndef __RISCC_NANO__
         LDI16   r0, __tls_start
         MTS     s2, r0
+#endif
         LDI16   r1, __zero_start
         LDI16   r2, __zero_end
         LDI     r3, 0
@@ -26,7 +28,10 @@ _start:
         JMP8    .Lclear_zero
 
 .Lzero_done:
-#ifdef __RISCC_MIN__
+#ifdef __RISCC_NANO__
+        LDI16   r0, code(main)
+        JAL     r6, r0
+#elif defined(__RISCC_MIN__)
         LDI16   r0, code(main)
         CALL    r0
 #else

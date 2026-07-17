@@ -450,9 +450,11 @@ promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
 callee-save, and complete integer-runtime-helper checks.  It also executes
 `memcpy`, `memmove`, and `memset`, including overlap and zero-length cases.
 Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
-`test-compiler-profiles-iss` runs that feature matrix for `full`, `sys`, and
-`min`; the individual smaller-profile targets are
-`compiler-features-sys-iss` and `compiler-features-min-iss`.
+`test-compiler-profiles-iss` runs that feature matrix for `full`, `sys`, `min`,
+and `nano`; the individual profile targets are `compiler-features-sys-iss`,
+`compiler-features-min-iss`, and `compiler-features-nano-iss`.
+`compiler-features-nano-rtl` runs the same Nano binaries at all three
+optimization levels on the Nano RTL model.
 
 `compiler-libc-iss` separately links each tiny-libc probe through `libc.a` at
 the same three optimization levels. It covers string and ctype boundaries,
@@ -465,6 +467,12 @@ state while `time()` installs and arms its BSP service. UART probes compare
 exact byte streams. `compiler-libc-size` checks the all-features image remains
 within 4 KiB of `.text` and 32 bytes of combined `.data`/`.bss`;
 `test-compiler` runs both targets.
+
+`compiler-libc-nano-iss` runs the portable libc probes on Nano at the same
+three optimization levels. It excludes only `time()` and the timer probe,
+which require the S-register interrupt facility that Nano does not have.
+`test-compiler-nano` combines this libc matrix with the Nano feature tests on
+both the ISS and RTL model.
 
 The remaining compiler suite exercises C-wrapper and assembly-owned IRQ
 vectors. The split-image check verifies that `.tdata` appears in the data image

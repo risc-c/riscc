@@ -1,15 +1,17 @@
 # RISC-C C and Object ABI
 
 This document is the normative version 1 ABI for freestanding C objects for
-mainline RISC-C. Instruction semantics and architectural state are specified
-only by the [RISC-C ISA specification](RISC-C-ISA.md).
+mainline RISC-C and its separately linkable Nano profile. Instruction
+semantics and architectural state are specified only by the
+[RISC-C ISA specification](RISC-C-ISA.md).
 
 ## 1. Scope and target identity
 
 ABI v1 identifies the target as `riscc-none-elf`. The compiler defaults to
-`-mcpu=full` and also supports the mainline `sys` and `min` profiles. An ABI-v1
-object may be linked for either a unified physical memory or distinct
-instruction and data memories; that choice does not change the object ABI.
+`-mcpu=full` and also supports the mainline `sys` and `min` profiles and the
+incompatible `nano` profile. An ABI-v1 object may be linked for either a
+unified physical memory or distinct instruction and data memories; that choice
+does not change the object ABI.
 
 ABI v1 is little-endian. It defines C calls, including variadic calls, static
 local-exec TLS, and static ELF links. It does not define a hosted environment,
@@ -59,11 +61,25 @@ callee-saved: a non-leaf C function preserves the link value it needs before
 making a call. Hand-written code may use an unallocated S register as a link
 register only if it preserves every live value required by its own convention.
 
+### Nano register variant
+
+Nano keeps the same stack layout, argument/result registers, and data model,
+but has no S-register bank. `r7` is the fixed stack pointer, `r5` is
+callee-saved, and `r0..r4` plus `r6` are caller-saved and allocatable. A call
+delivers its return address in `r6`; `r6` is not otherwise reserved. A
+non-leaf function treats that address like any other live value, so the
+compiler may move it to another register or spill it to the stack.
+
 ## 4. Calls, arguments, and results
 
 The standard call forms are `JAL16 S7, target` for a direct call, `JAL S7,
 register` for an indirect call, and `RET S7` for return. The link value and a
 function pointer are instruction-word addresses.
+
+Nano calls use `JAL r6, register`; direct calls first materialize the
+instruction-word address in a GPR. A Nano return uses `JAL r0, register`.
+The return-address operand may be any GPR holding the saved incoming link;
+`r0` as the destination suppresses creation of a new link.
 
 Arguments occupy 16-bit slots, low word first. `r1`, `r2`, `r3`, and `r4`
 hold the first four slots. Integer values narrower than a slot are extended
@@ -98,6 +114,9 @@ Tail calls, dynamic `alloca`, and compiler-generated interrupt-function
 calling conventions are outside ABI v1.
 
 ## 5. Thread-local storage
+
+Nano does not support TLS. The remainder of this section applies only to
+mainline profiles.
 
 `S2` is the 16-bit byte-addressed data-memory anchor for the current thread.
 C TLS occupies non-negative offsets from `S2`; negative offsets are outside
@@ -145,7 +164,8 @@ defined by ABI v1. Mainline objects must agree on the ABI version. A static
 link may combine `min`, `sys`, and `full` objects; its output profile is the
 highest required capability, ordered `min < sys < full`. `nano` has an
 incompatible link-register convention and is not C-ABI compatible with
-mainline objects.
+mainline objects. A static link may contain only Nano objects or only mainline
+objects; an all-Nano output retains the Nano profile flag.
 
 TLS definitions and references use `STT_TLS`. A linker must reject a TPOFF
 relocation against a non-TLS symbol and must reject TPOFF relocations in a
