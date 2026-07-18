@@ -12,6 +12,13 @@ union feature_double_bits
     u64 bits;
 };
 
+struct feature_float_case
+{
+    u32 left;
+    u32 right;
+    u32 expected;
+};
+
 static volatile float float_left = 1.5f;
 static volatile float float_right = 2.25f;
 static volatile double double_left = 1.5;
@@ -23,6 +30,44 @@ static volatile u32 unsigned32 = 0xf0000000ul;
 static volatile s64 signed64 = -0x100000000ll;
 static volatile u64 unsigned64 = 0x100000000ull;
 
+static volatile struct feature_float_case float_add_cases[] =
+{
+    {0x00000001ul, 0x00000001ul, 0x00000002ul},
+    {0x007ffffful, 0x00000001ul, 0x00800000ul},
+    {0x3f800000ul, 0x33800000ul, 0x3f800000ul},
+    {0x3f800001ul, 0x33800000ul, 0x3f800002ul},
+    {0x7f7ffffful, 0x7f7ffffful, 0x7f800000ul},
+    {0x80000000ul, 0x80000000ul, 0x80000000ul},
+    {0x3f800000ul, 0xbf800000ul, 0x00000000ul},
+    {0x7f800001ul, 0x3f800000ul, 0x7fc00001ul},
+    {0x7f800000ul, 0xff800000ul, 0x7fc00000ul}
+};
+
+static volatile struct feature_float_case float_multiply_cases[] =
+{
+    {0x00800000ul, 0x3f000000ul, 0x00400000ul},
+    {0x00000001ul, 0x40000000ul, 0x00000002ul},
+    {0x00000001ul, 0x3f000000ul, 0x00000000ul},
+    {0x00000003ul, 0x3f000000ul, 0x00000002ul},
+    {0x7f7ffffful, 0x40000000ul, 0x7f800000ul},
+    {0x80000000ul, 0xc0000000ul, 0x00000000ul},
+    {0x7f800000ul, 0x00000000ul, 0x7fc00000ul},
+    {0x7f800001ul, 0x3f800000ul, 0x7fc00001ul}
+};
+
+static volatile struct feature_float_case float_divide_cases[] =
+{
+    {0x3f800000ul, 0x40400000ul, 0x3eaaaaabul},
+    {0x00800000ul, 0x40000000ul, 0x00400000ul},
+    {0x00000001ul, 0x40000000ul, 0x00000000ul},
+    {0x00000003ul, 0x40000000ul, 0x00000002ul},
+    {0x7f7ffffful, 0x3f000000ul, 0x7f800000ul},
+    {0x3f800000ul, 0x7f800000ul, 0x00000000ul},
+    {0x00000000ul, 0x00000000ul, 0x7fc00000ul},
+    {0x7f800000ul, 0x7f800000ul, 0x7fc00000ul},
+    {0x7f800001ul, 0x3f800000ul, 0x7fc00001ul}
+};
+
 static u32 float_bits(float value)
 {
     union feature_float_bits converted = {value};
@@ -33,6 +78,49 @@ static u64 double_bits(double value)
 {
     union feature_double_bits converted = {value};
     return converted.bits;
+}
+
+static float float_from_bits(u32 bits)
+{
+    union feature_float_bits converted = {.bits = bits};
+    return converted.value;
+}
+
+static u16 test_float_edge_cases(void)
+{
+    u16 index;
+
+    for (index = 0; index !=
+        sizeof(float_add_cases) / sizeof(float_add_cases[0]); ++index)
+    {
+        float left = float_from_bits(float_add_cases[index].left);
+        float right = float_from_bits(float_add_cases[index].right);
+
+        if (float_bits(left + right) != float_add_cases[index].expected)
+            return 1;
+    }
+    for (index = 0; index !=
+        sizeof(float_multiply_cases) /
+            sizeof(float_multiply_cases[0]); ++index)
+    {
+        float left = float_from_bits(float_multiply_cases[index].left);
+        float right = float_from_bits(float_multiply_cases[index].right);
+
+        if (float_bits(left * right) !=
+            float_multiply_cases[index].expected)
+            return 2;
+    }
+    for (index = 0; index !=
+        sizeof(float_divide_cases) /
+            sizeof(float_divide_cases[0]); ++index)
+    {
+        float left = float_from_bits(float_divide_cases[index].left);
+        float right = float_from_bits(float_divide_cases[index].right);
+
+        if (float_bits(left / right) != float_divide_cases[index].expected)
+            return 3;
+    }
+    return 0;
 }
 
 u16 feature_test_float(void)
@@ -105,6 +193,12 @@ u16 feature_test_float(void)
             0x401a000000000000ull ||
         feature_float_varargs(3, 1.25f, -2.5, 3.75L) != 0x6f10u)
         return 12;
+
+    {
+        u16 detail = test_float_edge_cases();
+        if (detail)
+            return (u16)(12 + detail);
+    }
 
     return 0;
 }

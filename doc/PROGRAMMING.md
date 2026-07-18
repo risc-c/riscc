@@ -304,9 +304,12 @@ implements directly.
   wide algorithms operate on little-endian 16-bit limbs.
 - Min and Nano can use shared fixed-count shift entry points when a call is
   smaller than repeating the instruction at each call site.
-- Compiler-rt supplies binary32 and binary64 addition, subtraction,
-  multiplication, division, comparisons, integer conversions, and
-  `float`/`double` conversion.
+- RISC-C-specific binary32 addition, multiplication, and division use
+  explicit 16-bit limbs. They avoid recursively calling the wide integer
+  helpers and let leaf functions use the mainline S-register cache.
+- Compiler-rt supplies the binary32 subtraction wrapper and comparisons,
+  binary32 integer and format conversions, and all binary64 arithmetic,
+  comparison, and conversion helpers.
 
 Soft-float arithmetic and format conversion use round-to-nearest,
 ties-to-even. Conversion to an integer truncates toward zero as required by C.
@@ -586,11 +589,13 @@ zero-length cases. Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
 The separate `compiler-float-iss` matrix covers binary32/binary64 arithmetic,
 comparisons and NaNs, signed and unsigned 32-/64-bit conversions, cross-file
 scalar and aggregate calls, `long double`, stack arguments, and variadic
-promotion. `compiler-libm-iss` runs two separately linked images that check
-archive extraction, classification, signed zero, NaNs and infinities,
-subnormal boundaries, and the public float/double/long-double functions at the
-same three optimization levels. The focused LLVM regression also checks the
-backend lowering for each supported math intrinsic.
+promotion. Its binary32 cases include signed zero, overflow, subnormal
+boundaries, and ties-to-even rounding. `compiler-libm-iss` runs two separately
+linked images that check archive extraction, classification, signed zero, NaNs
+and infinities, subnormal boundaries, and the public
+float/double/long-double functions at the same three optimization levels. The
+focused LLVM regression also checks the backend lowering for each supported
+math intrinsic.
 `test-compiler-profiles-iss` runs all three matrices for `full`, `sys`, `min`,
 and `nano`; the individual
 integer feature targets are

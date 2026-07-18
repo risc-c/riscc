@@ -1290,9 +1290,13 @@ RISCC_SOFT_FLOAT_MODULES := fp_mode \
 	fixdfsi fixdfdi fixunsdfsi fixunsdfdi \
 	floatsisf floatdisf floatunsisf floatundisf \
 	floatsidf floatdidf floatunsidf floatundidf
+RISCC_SOFT_FLOAT_OVERRIDES := addsf3 mulsf3 divsf3
 RISCC_SOFT_FLOAT_OBJECTS := $(addprefix \
 	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/, \
 	$(addsuffix .o,$(RISCC_SOFT_FLOAT_MODULES)))
+RISCC_SOFT_FLOAT_OVERRIDE_OBJECTS := $(addprefix \
+	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/, \
+	$(addsuffix .o,$(RISCC_SOFT_FLOAT_OVERRIDES)))
 RISCC_BUILTINS_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libbuiltins.a
 RISCC_BSP_DIR ?= firmware/bsp/demo
 RISCC_BSP_MODULES ?= console clock $(if $(filter-out nano,$(RISCC_CPU)),time)
@@ -1462,6 +1466,13 @@ $(RISCC_BUILTINS_OBJECT): firmware/builtins/integer.c $(RISCC_CLANG)
 $(RISCC_SHIFT_BUILTINS_OBJECT): firmware/builtins/shift.S $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_SOFT_FLOAT_OVERRIDE_OBJECTS): \
+		$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
+		firmware/builtins/softfloat/%.c \
+		firmware/builtins/softfloat/internal.h Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 		$(RISCC_COMPILER_RT_BUILTINS)/%.c \
