@@ -507,8 +507,9 @@ offsets are runtime-private; their layout is not a C ABI interface.
 
 RISC-C currently has no memory protection or privilege model. The register
 convention is therefore a cooperation contract among mutually trusted
-software. Interrupt and context-switch code conventionally preserves `S2` and
-`S3`; a context switch saves/restores `S2` with the other thread state.
+software. Interrupt and context-switch code preserves the TLS anchor in `S2`
+and any live compiler-managed state in `S3..S7`; a context switch
+saves/restores those registers with the other thread state.
 
 Nano has no S-register bank or TLS. Its startup therefore omits the `S2`
 initialization described above.
@@ -552,17 +553,17 @@ level-sensitive source it services.
 
 The supplied wrapper is non-nesting. Hardware arrives with `S0` containing
 EPC and interrupts masked; the wrapper returns with `RETI S0`. It saves only
-the ordinary-call clobbers (`r0..r4`, `r7`, and `S7`), not a full task context.
-It never assumes the interrupted `r7` is a stack pointer: it saves that value
-in a 14-byte prefix immediately below `S2`, then runs the C handler on one
-64-byte global downward-growing IRQ stack. `r5` and `r6` are ordinary
-callee-saved registers, and generated C does not allocate `S2..S6`.
+the interrupted caller-volatile GPRs (`r0..r4` and `r7`) and all
+compiler-managed `S3..S7`, not a full task context. It never assumes the
+interrupted `r7` is a stack pointer: it saves that state in a 22-byte prefix
+immediately below `S2`, then runs the C handler on one 64-byte global
+downward-growing IRQ stack. `r5` and `r6` are ordinary callee-saved registers.
 
 The wrapper keeps interrupts disabled and cannot support nesting because the
 architecture has one EPC register. A handler must not execute `STI`, `RETI`,
 or otherwise enable nested interrupts. A future nested design must switch to
 another stack and, where appropriate, another TLS/context before enabling an
-inner interrupt. An RTOS using this wrapper reserves its 14-byte prefix for
+inner interrupt. An RTOS using this wrapper reserves its 22-byte prefix for
 each thread; custom vectors need not use the prefix or global stack.
 
 ## 5. Compiler checks and smoke programs
@@ -599,6 +600,12 @@ are `compiler-float-sys-iss`, `compiler-float-min-iss`, and
 `compiler-float-nano-iss`.
 `compiler-features-nano-rtl` runs the same Nano binaries at all three
 optimization levels on the Nano RTL model.
+
+`compiler-benchmarks-iss` runs small, deterministic workloads at `-O2` and
+`-Os`: 32-bit arithmetic, soft-float/libm, float matrix multiplication with
+LU, Cholesky, and QR decompositions, and linked-list, tree, and graph
+algorithms. These are intended for before/after code-size and cycle
+comparisons; the focused suites above remain the correctness baseline.
 
 `compiler-libc-iss` separately links each tiny-runtime probe through the
 runtime archives at the same three optimization levels. It covers string and

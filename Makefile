@@ -1254,6 +1254,7 @@ RISCC_FIRMWARE_BUILD ?= build/firmware
 RISCC_COMPILER_BUILD ?= build/compiler
 RISCC_COMPILER_MAX_INSNS ?= 1000000
 RISCC_COMPILER_FLOAT_MAX_INSNS ?= 5000000
+RISCC_COMPILER_BENCHMARK_MAX_INSNS ?= 10000000
 RISCC_LIBC_TERMINATE_MAX_INSNS ?= 256
 RISCC_CPU ?= full
 RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=$(RISCC_CPU)
@@ -1357,6 +1358,9 @@ RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer 
 	feature_builtins feature_memory feature_abi feature_abi_callee \
 	feature_varargs feature_varargs_callee feature_tail
 RISCC_COMPILER_FLOAT_MODULES := float_main feature_float feature_float_callee
+RISCC_COMPILER_BENCHMARKS := int32 softfloat matrix structures
+.PRECIOUS: $(RISCC_COMPILER_BUILD)/benchmarks/%.o \
+	$(RISCC_COMPILER_BUILD)/benchmarks/%.elf
 RISCC_COMPILER_FEATURE_ASM_OBJECT := \
 	$(RISCC_COMPILER_BUILD)/features/feature_abi_asm.o
 RISCC_LIBC_TESTS := memory_string stdio bsp_stdio snprintf alloc integer math clock \
@@ -1381,6 +1385,8 @@ RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 	compiler-float-o0-iss compiler-float-o2-iss compiler-float-os-iss \
 	compiler-float-iss compiler-float-sys-iss compiler-float-min-iss \
 	compiler-float-nano-iss \
+	compiler-benchmarks-o2-iss compiler-benchmarks-os-iss \
+	compiler-benchmarks-iss \
 	compiler-features-rtl \
 	test-compiler-profiles-iss test-compiler-nano \
 	compiler-libc-o0-iss compiler-libc-o2-iss compiler-libc-os-iss \
@@ -1877,6 +1883,58 @@ $(foreach opt,o0 o2 os,$(eval $(call riscc_compiler_feature_rules,$(opt))))
 
 compiler-features-iss: compiler-features-o0-iss compiler-features-o2-iss \
 	compiler-features-os-iss
+
+define riscc_compiler_benchmark_rules
+RISCC_COMPILER_BENCHMARK_BINS_$(1) := $$(addprefix \
+	$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/, \
+	$$(addsuffix .bin,$$(RISCC_COMPILER_BENCHMARKS)))
+
+$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/%.o: \
+		test/compiler/bench/%.c test/compiler/bench/bench.h $$(RISCC_CLANG)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_CFLAGS_NO_OPT) \
+	  $$(call riscc_opt_flag,$(1)) -std=c11 -Itest/compiler/bench \
+	  -Ifirmware/include -c $$< -o $$@
+
+$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/%.elf: \
+		$$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+		$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/%.o \
+		$$(RISCC_FIRMWARE_LIBRARIES) firmware/unified.ld \
+		$$(RISCC_CLANG) $$(RISCC_LLD)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_LDFLAGS) \
+	  -fuse-ld=lld -nostdlib -Wl,-T,$$(abspath firmware/unified.ld) \
+	  $$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+	  $$(patsubst %.elf,%.o,$$@) \
+	  $$(RISCC_FIRMWARE_LIBRARIES) -o $$@
+
+$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/%.bin: \
+		$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/%.elf $$(RISCC_OBJCOPY)
+	$$(RISCC_OBJCOPY) -O binary $$< $$@
+
+compiler-benchmarks-$(1)-iss: \
+		$$(RISCC_COMPILER_BENCHMARK_BINS_$(1)) $$(RISCC_SIM)
+	@for benchmark in $$(RISCC_COMPILER_BENCHMARKS); do \
+	  echo "RISCC benchmark $(1): $$$$benchmark"; \
+	  $$(RISCC_SIM) \
+	    "$$(RISCC_COMPILER_BUILD)/benchmarks/$(1)/$$$$benchmark.bin" \
+	    $$(RISCC_SIM_PROFILE_FLAGS) \
+	    --max-insns $$(RISCC_COMPILER_BENCHMARK_MAX_INSNS) || exit; \
+	done
+endef
+
+$(foreach opt,o2 os,$(eval $(call riscc_compiler_benchmark_rules,$(opt))))
+
+compiler-benchmarks-iss: $(RISCC_COMPILER_BENCHMARK_BINS_o2) \
+		$(RISCC_COMPILER_BENCHMARK_BINS_os) $(RISCC_SIM)
+	@for opt in o2 os; do \
+	  for benchmark in $(RISCC_COMPILER_BENCHMARKS); do \
+	    echo "RISCC benchmark $$opt: $$benchmark"; \
+	    $(RISCC_SIM) \
+	      "$(RISCC_COMPILER_BUILD)/benchmarks/$$opt/$$benchmark.bin" \
+	      $(RISCC_SIM_PROFILE_FLAGS) \
+	      --max-insns $(RISCC_COMPILER_BENCHMARK_MAX_INSNS) || exit; \
+	  done; \
+	done
 
 compiler-features-sys-iss:
 	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \

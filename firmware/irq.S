@@ -2,20 +2,22 @@
 //
 // Hardware enters with S0 = EPC and IE = 0.  An interrupted leaf may be
 // using r7 for a non-stack value, so entry never uses the interrupted r7 as a
-// stack pointer.  The thread prefix below S2 supplies only the caller-save
-// area; the C runtime has one optional global handler stack:
+// stack pointer.  The thread prefix below S2 supplies the interrupted context;
+// the C runtime has one optional global handler stack:
 //
+//   S2 - 22 .. S2 - 16  interrupted S3 .. S6
 //   S2 - 14              interrupted r7
 //   S2 - 12 .. S2 - 4    interrupted r0 .. r4
 //   S2 - 2               interrupted S7
 //
-// The wrapper saves only state an ordinary C call may clobber.  r5, r6, and
-// the handler stack pointer are ordinary C callee-saved state; S2..S6 are not
-// allocated by generated C.  S1 is the deliberate interrupt scratch register.
+// r5, r6, and the handler stack pointer are ordinary C callee-saved state.
+// S0 holds EPC, S1 is the deliberate interrupt scratch register, and S2 keeps
+// the current thread/context anchor.  S3..S7 are software-managed registers
+// and are restored unconditionally after the C handler.
 
         .section .riscc.irq_context,"aw",@nobits
         .p2align 1
-        .zero   14
+        .zero   22
         .global __riscc_irq_context_end
 __riscc_irq_context_end:
 
@@ -63,6 +65,14 @@ __riscc_irq_entry:
         STW     r7, [r0-14]
         MFS     r1, S1
         STW     r1, [r0-12]
+        MFS     r1, S3
+        STW     r1, [r0-22]
+        MFS     r1, S4
+        STW     r1, [r0-20]
+        MFS     r1, S5
+        STW     r1, [r0-18]
+        MFS     r1, S6
+        STW     r1, [r0-16]
 
         LDI16   r0, __riscc_irq_handler_ptr
         LDW     r0, [r0+0]
@@ -75,6 +85,14 @@ __riscc_irq_entry:
         MFS     r0, S2
         LDW     r1, [r0-14]
         MTS     S1, r1
+        LDW     r1, [r0-22]
+        MTS     S3, r1
+        LDW     r1, [r0-20]
+        MTS     S4, r1
+        LDW     r1, [r0-18]
+        MTS     S5, r1
+        LDW     r1, [r0-16]
+        MTS     S6, r1
         LDW     r1, [r0-2]
         MTS     S7, r1
         LDW     r4, [r0-4]

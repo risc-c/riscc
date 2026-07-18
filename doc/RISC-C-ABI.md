@@ -53,18 +53,18 @@ register-argument home area. The caller removes stack arguments.
 | `r7` | Stack pointer at C call boundaries; caller-saved otherwise |
 | `S0`, `S1` | Interrupt-volatile; unavailable to ordinary allocation |
 | `S2` | TLS anchor; unavailable to ordinary allocation |
-| `S3` | Runtime-reserved; unavailable to ordinary allocation |
-| `S4..S6` | Unallocated by the C ABI |
-| `S7` | C link register; call-clobbered and unallocated as a general register |
+| `S3..S6` | Compiler-managed software cache; call-clobbered |
+| `S7` | Public C link register and compiler-managed software cache; call-clobbered |
 
 `r0` is a normal general register, not a zero register. Instructions with an
 implicit `r0` definition or use, including compare and branch instructions,
 have their architectural clobber or dependency.
 
-A callee restores incoming `r5` and `r6` before it returns. `S7` is not
-callee-saved: a non-leaf C function preserves the link value it needs before
-making a call. Hand-written code may use an unallocated S register as a link
-register only if it preserves every live value required by its own convention.
+A callee restores incoming `r5` and `r6` before it returns. `S3..S7` are not
+callee-saved. The compiler uses them for links, callee-saved GPR backups, and
+short-lived spill values; a value that must survive a call is saved first.
+Hand-written code may use the same bank if it obeys the call convention of
+every function it calls.
 
 ### Nano register variant
 
@@ -77,9 +77,15 @@ compiler may move it to another register or spill it to the stack.
 
 ## 4. Calls, arguments, and results
 
-The standard call forms are `JAL16 S7, target` for a direct call, `JAL S7,
+The public call forms are `JAL16 S7, target` for a direct call, `JAL S7,
 register` for an indirect call, and `RET S7` for return. The link value and a
 function pointer are instruction-word addresses.
+
+A compiler gives a direct-only local function the private `S3` link register;
+all direct callers and the callee then use that same register.
+Externally visible, address-taken, and indirectly called functions always use
+the public `S7` convention. This private convention is internal to one object
+and does not change its ABI.
 
 Nano calls use `JAL r6, register`; direct calls first materialize the
 instruction-word address in a GPR. A Nano return uses `JAL r0, register`.
@@ -130,7 +136,7 @@ mainline profiles.
 
 `S2` is the 16-bit byte-addressed data-memory anchor for the current thread.
 C TLS occupies non-negative offsets from `S2`; negative offsets are outside
-the C TLS ABI. `S3` is reserved for runtime use.
+the C TLS ABI and may be used by an interrupt or context-switch runtime.
 
 ABI v1 supports only C `__thread` and `_Thread_local` objects in the static
 local-exec model. A TLS address is `S2 + TPOFF(symbol)`. TLS references use

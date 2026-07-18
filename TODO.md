@@ -57,6 +57,10 @@ make -j16 test-compiler-profiles-iss
 - [x] Keep Nano's `r6` link/return register allocatable outside its fixed ABI
   uses. Reserve only the `r7` stack pointer among GPRs; special registers stay
   outside ordinary allocation.
+- [x] Use mainline `S3..S7` as a small software-managed register cache.
+  Direct-only local functions may use a private link register; leaf functions
+  keep `r5`/`r6` backups and simple local spills there when that removes stack
+  traffic.
 - [ ] Add profitable switch jump-table lowering while retaining branch chains
   for small or sparse switches.
 - [x] Implement and validate eligible tail calls.
