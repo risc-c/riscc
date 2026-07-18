@@ -34,6 +34,11 @@ Objects and aggregate members use their natural alignment from this table,
 capped at two bytes. Padding in aggregates follows the ordinary C layout and
 is not required to have a value when passed or returned.
 
+`float` uses IEEE 754 binary32. `double` and `long double` both use IEEE 754
+binary64; there is no extended `long double` representation. Floating-point
+objects have the same little-endian, low-word-first representation in every
+profile.
+
 ## 3. Stack and registers
 
 The data stack is byte addressed and grows toward lower addresses. `r7` is
@@ -93,6 +98,11 @@ Scalar and aggregate results up to eight bytes occupy `r1..r4`, low word
 first. A larger aggregate result uses a hidden pointer in `r1`; explicit
 arguments then begin in `r2`. The result pointer is caller-owned and need not
 be returned separately.
+
+There are no floating-point argument or result registers. A scalar `float`
+occupies two ordinary slots and a scalar `double` or `long double` occupies
+four. Aggregates containing floating members follow the ordinary aggregate
+rules above; they do not acquire a separate calling convention.
 
 For a variadic function, its named parameters use the convention above.
 Every unnamed argument is stack-passed, regardless of unused argument

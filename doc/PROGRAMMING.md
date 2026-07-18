@@ -177,24 +177,31 @@ debugging; no C++ runtime or Clang development-tool suite is included.
 Top-level `make clean` preserves the prebuilt LLVM toolchain and RISC-C
 runtime; use `make distclean` only when those SDK artifacts must be discarded.
 
-The C target is freestanding `riscc-none-elf`; `-mcpu=full` is the default, and
-`-mcpu=sys` and `-mcpu=min` select the smaller mainline profiles. Clang defines
-exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, or `__RISCC_MIN__`. The
-backend replaces unavailable multiplication with `__mulhi3`, expands shifts
-to the selected profile's legal instructions, and uses register-target calls
-and jumps where `min` lacks `JAL16`.
+The C target is freestanding `riscc-none-elf`; `-mcpu=full` is the default.
+`-mcpu=sys` and `-mcpu=min` select the smaller mainline profiles, while
+`-mcpu=nano` selects the incompatible reduced-register Nano ABI. Clang defines
+exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, `__RISCC_MIN__`, or
+`__RISCC_NANO__`. The backend replaces unavailable multiplication with
+`__mulhi3`, expands shifts to instructions legal for the selected profile, and
+uses register-target calls and jumps where a profile lacks `JAL16`. Nano has
+no S-register bank or TLS and receives a call link in allocatable `r6`; see the
+[C and object ABI](RISC-C-ABI.md#nano-register-variant).
 
-The compiler supports integer C at `-O0`, `-O2`, and `-Os`, ordinary global
-and TLS objects, stack frames, aggregate calls and returns, function pointers,
-and 16-, 32-, and 64-bit integer operations. It has no hosted environment; the
-supplied tiny libc provides standard type/utility headers, C90 narrow strings,
-ASCII/C-locale `<ctype.h>`, `<errno.h>`, integer `<stdlib.h>`, and the small
-stdio surface described below. Variadic functions keep named arguments on the
-ordinary ABI convention and place unnamed arguments on the stack; see the
-normative [C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for
-`va_list` semantics. It has no VLA/dynamic `alloca`, soft float, PIC, atomics,
-exceptions, unwinding, jump tables, tail calls, compiler interrupt attributes,
-or C++ runtime.
+The compiler supports C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS
+objects, stack frames, aggregate calls and returns, function pointers,
+16-/32-/64-bit integer operations, and software `float`, `double`, and
+`long double`. It has no hosted environment; the supplied tiny libc provides
+standard type/utility headers, C90 narrow strings, ASCII/C-locale `<ctype.h>`,
+`<errno.h>`, integer `<stdlib.h>`, and the small stdio surface described
+below. Variadic functions keep named arguments on the ordinary ABI convention
+and place unnamed arguments on the stack; see the normative
+[C and object ABI](RISC-C-ABI.md#4-calls-arguments-and-results) for `va_list`
+semantics. It has no VLA/dynamic `alloca`, PIC, atomics, exceptions, unwinding,
+jump tables, compiler interrupt attributes, or C++ runtime. The backend emits
+direct sibling tail calls when the caller and callee signatures match and no
+stack arguments are needed. This is a code-generation optimization, not a
+separate ABI calling convention; indirect and otherwise ineligible tail calls
+remain ordinary calls.
 
 ### Inline assembly
 
@@ -225,9 +232,14 @@ Applications that need a different startup, linker layout, or image-conversion
 policy can replace the visible rules in their own Makefile.
 
 Set `RISCC_CPU := sys` or `RISCC_CPU := min` before including `riscc.mk` to
-select a smaller profile. Build its matching runtime first with
-`make -j16 riscc-firmware-sys` or `make -j16 riscc-firmware-min`. The `min`
+select a smaller mainline profile. Build its matching runtime first with
+`make -j16 riscc-firmware-sys` or `make -j16 riscc-firmware-min`. The Min
 runtime omits interrupt support because that profile has no system extension.
+The compiler and top-level build also provide `-mcpu=nano` and
+`make -j16 riscc-firmware-nano`; Nano applications use the archives under
+`build/firmware/nano` without the mainline interrupt library, TLS, or the
+interrupt-driven `time()` service. Nano packaging in the application
+`riscc.mk` fragment remains to be completed.
 
 The essentials of the direct invocation are:
 
@@ -238,8 +250,8 @@ build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
 build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
   -fuse-ld=lld -nostdlib -Wl,--gc-sections -Wl,-T,firmware/unified.ld \
   build/firmware/vectors.o build/firmware/crt0.o hello.o \
-  build/firmware/libc.a build/firmware/libbsp.a build/firmware/libirq.a \
-  build/firmware/libbuiltins.a -o hello.elf
+  build/firmware/libc.a build/firmware/libm.a build/firmware/libbsp.a \
+  build/firmware/libirq.a build/firmware/libbuiltins.a -o hello.elf
 ```
 
 `-ffunction-sections -fdata-sections` and `--gc-sections` are deliberate:
@@ -249,50 +261,106 @@ unreachable functions and data within selected objects.
 
 ## 3. Runtime libraries
 
-`make riscc-firmware` produces these archives under `build/firmware`:
+The runtime is an intentionally small freestanding SDK, not a port of
+picolibc. Build the archives that match the selected compiler profile:
 
-| Archive | Purpose |
+```sh
+make -j16 riscc-firmware        # Full, under build/firmware/
+make -j16 riscc-firmware-sys    # Sys,  under build/firmware/sys/
+make -j16 riscc-firmware-min    # Min,  under build/firmware/min/
+make -j16 riscc-firmware-nano   # Nano, under build/firmware/nano/
+```
+
+### 3.1 Archives and link order
+
+| Archive | Profiles | Source and responsibility |
+|---|---|---|
+| `libc.a` | All | [`firmware/libc`](../firmware/libc/): board-independent memory, strings, ASCII character handling, integer utilities, heap, streams, and integer formatting |
+| `libm.a` | All | [`firmware/libm`](../firmware/libm/): small binary32/binary64 math API |
+| `libbsp.a` | All | [`firmware/bsp/demo`](../firmware/bsp/demo/): board-specific console and clock/uptime services |
+| `libirq.a` | Full, Sys | [`firmware/irq*.S`](../firmware/irq.S): interrupt fallback, control API, and ordinary-C handler wrapper |
+| `libbuiltins.a` | All | [`firmware/builtins`](../firmware/builtins/) plus [compiler-rt builtins](../external/llvm-project/compiler-rt/lib/builtins/): compiler-generated integer and soft-float helper calls |
+
+The normal order is startup objects, application objects, `libc.a`, `libm.a`,
+`libbsp.a`, optional `libirq.a`, then `libbuiltins.a`. This is significant:
+generic libc stream code refers to `getchar`, `putchar`, and `puts`, which the
+later BSP supplies, while libc and libm may refer to compiler helpers supplied
+last.
+
+All runtime C files use function/data sections, and applications link with
+`--gc-sections`. Archive extraction selects relevant object files and section
+GC removes unused functions within those objects. A program which does not
+use floating point, the heap, formatting, time, or interrupts does not pay for
+those facilities.
+
+### 3.2 Compiler support library: `libbuiltins.a`
+
+`libbuiltins.a` has no public application header. Clang and LLVM emit its
+symbols when an operation is wider or more complex than the selected profile
+implements directly.
+
+- The RISC-C integer runtime supplies 16-, 32-, and 64-bit multiply,
+  divide/remainder, wide shift, negate, and 64-bit comparison helpers. Its
+  wide algorithms operate on little-endian 16-bit limbs.
+- Min and Nano can use shared fixed-count shift entry points when a call is
+  smaller than repeating the instruction at each call site.
+- Compiler-rt supplies binary32 and binary64 addition, subtraction,
+  multiplication, division, comparisons, integer conversions, and
+  `float`/`double` conversion.
+
+Soft-float arithmetic and format conversion use round-to-nearest,
+ties-to-even. Conversion to an integer truncates toward zero as required by C.
+`long double` is the same binary64 format as `double`. There is no hardware
+floating-point ABI, floating-point environment, or alternate rounding mode.
+
+### 3.3 Public headers and `libc.a`
+
+The table below is the implemented public surface, not a claim of complete
+hosted-C compatibility.
+
+| Header | Implemented surface |
 |---|---|
-| `libbuiltins.a` | compiler helpers for division, remainder, wide integer arithmetic, shifts, comparisons, and related lowering |
-| `libc.a` | tiny sectioned, hardware-independent RISC-C C library: memory/strings, ASCII ctype, integer utilities and heap, unbuffered streams, and integer formatting |
-| `libbsp.a` | default demo-board support package: UART console and one-second timer/uptime service |
-| `libirq.a` | optional interrupt fallback, control helpers, and C-handler wrapper |
+| [`<stddef.h>`](../firmware/include/stddef.h), [`<stdint.h>`](../firmware/include/stdint.h), [`<stdbool.h>`](../firmware/include/stdbool.h), [`<limits.h>`](../firmware/include/limits.h), [`<stdarg.h>`](../firmware/include/stdarg.h) | Target types, limits, constants, `offsetof`, and the RISC-C variadic ABI |
+| [`<assert.h>`](../firmware/include/assert.h) | `assert`; `NDEBUG` removes the check, failure calls `abort` |
+| [`<errno.h>`](../firmware/include/errno.h) | Global `errno`; `ENOMEM`, `EINVAL`, and `ERANGE` |
+| [`<string.h>`](../firmware/include/string.h) | Complete C90 narrow memory/string set, including `memcpy`, `memmove`, `strtok`, `strerror`, and the C-locale `strcoll`/`strxfrm` behavior |
+| [`<ctype.h>`](../firmware/include/ctype.h) | ASCII/C-locale classification and case conversion, plus `isascii` and `toascii` |
+| [`<stdlib.h>`](../firmware/include/stdlib.h) | Integer conversion, integer arithmetic utilities, search/sort, PRNG, heap allocation, and immediate termination |
+| [`<stdio.h>`](../firmware/include/stdio.h) | Unbuffered console streams and integer-only formatted output |
+| [`<time.h>`](../firmware/include/time.h) | Declares BSP-provided `clock` and `time`; profile availability is described under [BSP services](#35-bsp-boundary-and-services) |
+| [`<math.h>`](../firmware/include/math.h) | `libm.a`; listed under [Math library](#34-math-library-libma) |
+| [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) | Default demo-SoC MMIO definitions and timer helpers |
+| [`<riscc/interrupt.h>`](../firmware/include/riscc/interrupt.h) | Optional `libirq.a` API; specified in [Interrupt runtime](#4-interrupt-runtime-libirq) |
 
-`libc.a` is intentionally narrow, not a port of picolibc. Its public headers
-are [`<stddef.h>`](../firmware/include/stddef.h), `<stdint.h>`, `<stdbool.h>`,
-`<limits.h>`, `<errno.h>`, `<assert.h>`, `<ctype.h>`, `<string.h>`,
-[`<stdlib.h>`](../firmware/include/stdlib.h),
-[`<stdio.h>`](../firmware/include/stdio.h). The optional `libirq.a` instead
-provides [`<riscc/interrupt.h>`](../firmware/include/riscc/interrupt.h). Each
-archive is built with function/data sections and linked with `--gc-sections`,
-so an application pays only for referenced functions and their dependencies.
+`<stdlib.h>` provides:
 
-The default `libbsp.a` also supplies the deliberately narrow
-[`<time.h>`](../firmware/include/time.h) surface: `clock_t`, `time_t`,
-`CLOCKS_PER_SEC`, `clock()`, and `time()`. It is a board service rather than a
-generic libc feature, so another BSP may provide different clock semantics or
-omit it entirely.
+- `atoi`, `atol`, `strtol`, and `strtoul`;
+- `abs`, `labs`, `div`, and `ldiv`;
+- `bsearch` and a small selection-sort `qsort`;
+- `rand` and `srand`;
+- `malloc`, `free`, `calloc`, and `realloc`; and
+- `abort`, `exit`, and `_Exit`.
 
-`libc.a` deliberately contains no board MMIO definitions. The selected BSP
-supplies its direct `putchar`, `getchar`, and `puts` implementations; the
-generic stdio layer supplies `FILE`, the other stream operations, and integer
-formatting around them. The default `libbsp.a` implements those three entry
-points with the shared demo UART. A different board can link its own BSP
-archive *after* `libc.a`, defining the same three functions; no UART object
-from the default archive is then selected. Application makefiles using
-[`firmware/riscc.mk`](../firmware/riscc.mk) can set `RISCC_BSP_LIBRARY` before
-including it. The public
-[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) helpers describe
-the default demo BSP's hardware map, not generic libc.
+`calloc` checks multiplication overflow. `realloc` is deliberately
+allocate/copy/free rather than an in-place growth optimization. `abort`,
+`exit`, and `_Exit` ignore process status and halt immediately; there are no
+destructors or `atexit` handlers.
 
-`<string.h>` contains the complete C90 narrow memory and string set. The
-locale is fixed ASCII/C: `<ctype.h>` is arithmetic rather than table-backed.
-`<stdlib.h>` supplies `atoi`/`atol`, `strtol`/`strtoul`, `abs`/`labs`,
-`div`/`ldiv`, `bsearch`, selection-sort `qsort`, `rand`/`srand`, and
-`malloc`/`free`/`calloc`/`realloc`. `calloc` detects multiplication overflow;
-`realloc` is deliberately allocate/copy/free, rather than an in-place growth
-optimization. `abort`, `exit`, and `_Exit` halt immediately: there are no
-destructors, `atexit` handlers, process status, environment, or POSIX APIs.
+The unbuffered `<stdio.h>` layer exposes `stdin`, `stdout`, and `stderr`, plus
+`getchar`, `putchar`, `puts`, `fgetc`, `fputc`, `fgets`, and `fputs`.
+`printf`, `fprintf`, `sprintf`, `snprintf`, and all four corresponding `v`
+forms accept:
+
+- `%%`, `%c`, and `%s`;
+- `%d`/`%i`, `%u`, `%x`/`%X`, and `%p`;
+- decimal field width and the `-` and `0` flags; and
+- `l` for the 32-bit `long` type.
+
+There is no buffering, EOF-producing device, `scanf`, precision, floating
+formatting, or `long long` formatting. The console behavior is described in
+[Run a UART hello world](#run-a-uart-hello-world).
+
+#### Heap model
 
 The allocator is deliberately small and single-threaded. Allocated blocks
 have one 16-bit total-size word; a freed block reuses its first payload word
@@ -311,12 +379,48 @@ scheduler can replace the private heap-limit provider with the lowest active
 stack bound and add allocator locking without changing the public allocation
 API.
 
-Explicit exclusions remain floating point, `scanf`, files, locale beyond the
-ASCII C locale, multibyte/wide-character APIs, `long long` formatting,
-calendar conversion and all other time APIs, threads, atomics,
-process/environment APIs, and dynamic linking.
+### 3.4 Math library: `libm.a`
 
-### Default BSP clock and uptime
+Classification and ordered comparisons are compiler-backed macros in
+`<math.h>`. Every function below has `float`, `double`, and `long double`
+forms; `long double` reuses the binary64 implementation.
+
+| Category | Implemented functions |
+|---|---|
+| Sign | `fabs`, `copysign` |
+| Rounding | `trunc`, `floor`, `ceil`, `round`, `lround`, `llround` |
+| Comparison/difference | `fmin`, `fmax`, `fdim` |
+| Decomposition/scaling | `modf`, `frexp`, `ldexp`, `scalbn`, `scalbln`, `ilogb`, `logb` |
+| Representation | `nextafter`, `nexttoward`, `nan` |
+| Arithmetic | `sqrt`, `fmod` |
+
+`sqrt` is correctly rounded to nearest with ties to even. Scaling uses exact
+powers of two and the compiler-rt multiply helpers to preserve IEEE rounding
+at subnormal boundaries. Wide bit operations use explicit little-endian
+16-bit limbs instead of expanded 64-bit compiler helpers.
+
+The library neither sets `errno` nor exposes floating exceptions;
+`math_errhandling` is zero. Transcendentals, `fma`, alternate-rounding-mode
+operations such as `rint`, and nearest-quotient operations such as
+`remainder` are intentionally absent.
+
+### 3.5 BSP boundary and services
+
+`libc.a` contains no board MMIO definitions. The selected BSP supplies the
+hardware-facing services: `getchar`, `putchar`, and `puts` for generic libc
+streams, plus any supported `clock` and `time` implementations. The default
+`libbsp.a` uses the shared demo UART and timer hardware for these services.
+
+A custom BSP can provide the console functions and whichever clock services it
+supports, then set `RISCC_BSP_LIBRARY` before including
+[`firmware/riscc.mk`](../firmware/riscc.mk). Objects for unused services are
+not extracted from either BSP archive.
+
+[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) describes the
+current demo-SoC framebuffer, UART, interrupt-controller, timer, tick-counter,
+and LED addresses. It is a default BSP interface, not generic libc.
+
+#### Clock and uptime
 
 `clock()` returns the 1 kHz free-running hardware counter and
 `CLOCKS_PER_SEC` is 1000. It is cheap and does not install an IRQ handler, but
@@ -349,13 +453,23 @@ when an IRQ-driven second device is actually needed. A custom assembly IRQ
 vector owns its timer policy and therefore does not use this default time
 service.
 
-### Startup and layouts
+Supported default services are:
+
+| Service | Full | Sys | Min | Nano |
+|---|---:|---:|---:|---:|
+| `clock()` | Yes | Yes | Yes | Yes |
+| Interrupt-backed `time()` | Yes | Yes | No | No |
+
+`time()` requires `libirq`; Min has no interrupt support, and Nano omits the
+uptime object entirely.
+
+### 3.6 Startup and memory layouts
 
 The default startup objects are `vectors.o` and `crt0.o`. The vector table
 contains reset and IRQ slots. `crt0.o` establishes `r7` from `__stack_top`,
-establishes the initial `S2` TLS anchor from `__tls_start`, clears the
-zero-initialized range, calls `main`, then executes the `HALT` (`JMP8 -1`)
-loop if `main` returns.
+clears the zero-initialized range, calls `main`, then executes the `HALT`
+(`JMP8 -1`) loop if `main` returns. On non-Nano profiles it also establishes
+the initial `S2` TLS anchor from `__tls_start`.
 
 [`firmware/unified.ld`](../firmware/unified.ld) places vectors, code, constants,
 initialized data, TLS, and ordinary data in one 32 KiB RAM address space.
@@ -382,19 +496,35 @@ the data image or provide an equivalent data-initialization transport; the
 generic startup never reads instruction memory as data. Current board targets
 use the unified layout.
 
-### TLS runtime use
+### 3.7 TLS runtime use
 
-The ABI assigns non-negative `S2` offsets to C TLS. The default startup makes
-one initial TLS instance by placing `S2` at `__tls_start` and clearing `.tbss`.
-A scheduler or RTOS which creates another thread allocates its own context and
-TLS block, copies the `.tdata` template, clears its `.tbss`, and installs that
-thread's `S2` on a context switch. Negative `S2` offsets are runtime-private;
-their layout is not a C ABI interface.
+The mainline ABI assigns non-negative `S2` offsets to C TLS. Its default
+startup makes one initial TLS instance by placing `S2` at `__tls_start` and
+clearing `.tbss`. A scheduler or RTOS which creates another thread allocates
+its own context and TLS block, copies the `.tdata` template, clears its
+`.tbss`, and installs that thread's `S2` on a context switch. Negative `S2`
+offsets are runtime-private; their layout is not a C ABI interface.
 
 RISC-C currently has no memory protection or privilege model. The register
 convention is therefore a cooperation contract among mutually trusted
 software. Interrupt and context-switch code conventionally preserves `S2` and
 `S3`; a context switch saves/restores `S2` with the other thread state.
+
+Nano has no S-register bank or TLS. Its startup therefore omits the `S2`
+initialization described above.
+
+### 3.8 Deliberate omissions
+
+The runtime currently provides none of the following:
+
+- floating-point parsing or formatted output;
+- transcendental or comprehensive hosted libm facilities;
+- `scanf`, files, or an EOF-producing input device;
+- locale beyond ASCII/C, or multibyte/wide-character APIs;
+- calendar conversion and time APIs other than `clock` and `time`;
+- threads, atomics, processes, environment variables, or POSIX APIs;
+- destructors and `atexit`; or
+- shared libraries and dynamic linking.
 
 ## 4. Interrupt runtime (`libirq`)
 
@@ -437,30 +567,46 @@ each thread; custom vectors need not use the prefix or global stack.
 
 ## 5. Compiler checks and smoke programs
 
-`make -j16 test-compiler` rebuilds the current firmware dependencies, checks
-LLVM MC encoding against the in-tree assembler, and runs the multi-file C
-smoke suite in the ISS, Tiny16/full RTL, Fast RTL, Icepi Zero UART simulation,
-and Atum UART simulation. `make compiler-smoke` uses the Icepi Zero RTL run
-as its default target.
+`make -j16 test-compiler` rebuilds the current firmware dependencies,
+exhaustively checks Full-profile LLVM MC encoding against the in-tree
+assembler, and runs the multi-file C smoke suite in the ISS, Tiny16/full RTL,
+Fast RTL, Icepi Zero UART simulation, and Atum UART simulation. Nano-specific
+MC encodings and profile restrictions have focused LLVM `lit` coverage but are
+not yet part of that exhaustive oracle. `make compiler-smoke` uses the Icepi
+Zero RTL run as its default target.
 
 The smoke program covers globals, constants, BSS, TLS, calls, recursion,
 aggregates, function pointers, and 16/32/64-bit integer arithmetic.  The
 `compiler-features-iss` matrix adds focused C11 language, control-flow,
 promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
-callee-save, and complete integer-runtime-helper checks.  It also executes
-`memcpy`, `memmove`, and `memset`, including overlap and zero-length cases.
-Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
-`test-compiler-profiles-iss` runs that feature matrix for `full`, `sys`, `min`,
-and `nano`; the individual profile targets are `compiler-features-sys-iss`,
-`compiler-features-min-iss`, and `compiler-features-nano-iss`.
+callee-save, sibling-tail-call, and complete integer-runtime-helper checks. It
+also executes `memcpy`, `memmove`, and `memset`, including overlap and
+zero-length cases. Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
+The separate `compiler-float-iss` matrix covers binary32/binary64 arithmetic,
+comparisons and NaNs, signed and unsigned 32-/64-bit conversions, cross-file
+scalar and aggregate calls, `long double`, stack arguments, and variadic
+promotion. `compiler-libm-iss` runs two separately linked images that check
+archive extraction, classification, signed zero, NaNs and infinities,
+subnormal boundaries, and the public float/double/long-double functions at the
+same three optimization levels. The focused LLVM regression also checks the
+backend lowering for each supported math intrinsic.
+`test-compiler-profiles-iss` runs all three matrices for `full`, `sys`, `min`,
+and `nano`; the individual
+integer feature targets are
+`compiler-features-sys-iss`, `compiler-features-min-iss`, and
+`compiler-features-nano-iss`. The corresponding focused floating-point targets
+are `compiler-float-sys-iss`, `compiler-float-min-iss`, and
+`compiler-float-nano-iss`.
 `compiler-features-nano-rtl` runs the same Nano binaries at all three
 optimization levels on the Nano RTL model.
 
-`compiler-libc-iss` separately links each tiny-libc probe through `libc.a` at
-the same three optimization levels. It covers string and ctype boundaries,
+`compiler-libc-iss` separately links each tiny-runtime probe through the
+runtime archives at the same three optimization levels. It covers string and
+ctype boundaries,
 integer conversion and search utilities, UART stream and every formatter entry
-point, allocator splitting/coalescing/reallocation and heap collision, and
-immediate termination through `abort`, `exit`, `_Exit`, and failed `assert`.
+point, allocator splitting/coalescing/reallocation and heap collision, the
+small libm surface, and immediate termination through `abort`, `exit`, `_Exit`,
+and failed `assert`.
 It also verifies that an application-provided BSP console works without
 extracting the default UART backend, and that `clock()` does not pull IRQ
 state while `time()` installs and arms its BSP service. UART probes compare

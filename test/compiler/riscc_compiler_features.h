@@ -44,6 +44,12 @@ struct feature_vararg_bytes3
     u8 byte[3];
 };
 
+struct feature_float_pair
+{
+    float first;
+    float second;
+};
+
 typedef u16 (*feature_binary_fn)(u16, u16);
 typedef u16 (*feature_test_fn)(void);
 
@@ -53,6 +59,7 @@ u16 feature_test_builtins(void);
 u16 feature_test_memory(void);
 u16 feature_test_abi(void);
 u16 feature_test_varargs(void);
+u16 feature_test_float(void);
 u16 feature_test_tail(void);
 
 u16 feature_abi_narrow(s8, u8, s16, u16, s8);
@@ -77,6 +84,15 @@ u16 feature_varargs_sum(u16, u16, ...);
 u16 feature_varargs_promote(u16, ...);
 u16 feature_varargs_copy(u16, ...);
 u16 feature_varargs_mix(u16, u16, u16, u16, u16, ...);
+
+float feature_float_add(float, float);
+float feature_float_stack(u16, u16, u16, float, u16);
+double feature_double_arithmetic(double, double);
+double feature_float_mixed(u16, float, u16);
+long double feature_long_double_roundtrip(long double);
+struct feature_float_pair feature_float_pair_roundtrip(
+    struct feature_float_pair);
+u16 feature_float_varargs(u16, ...);
 
 extern feature_binary_fn feature_global_binary;
 

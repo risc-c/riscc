@@ -1253,6 +1253,7 @@ LLVM_RISCC_CACHE := $(LLVM_RISCC_BUILD)/CMakeCache.txt
 RISCC_FIRMWARE_BUILD ?= build/firmware
 RISCC_COMPILER_BUILD ?= build/compiler
 RISCC_COMPILER_MAX_INSNS ?= 1000000
+RISCC_COMPILER_FLOAT_MAX_INSNS ?= 5000000
 RISCC_LIBC_TERMINATE_MAX_INSNS ?= 256
 RISCC_CPU ?= full
 RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=$(RISCC_CPU)
@@ -1278,6 +1279,19 @@ RISCC_FIRMWARE_IRQ_DEFAULT := $(RISCC_FIRMWARE_BUILD)/irq_default.o
 RISCC_FIRMWARE_IRQ_CONTROL := $(RISCC_FIRMWARE_BUILD)/irq_control.o
 RISCC_FIRMWARE_IRQ_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libirq.a
 RISCC_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer.o
+RISCC_SHIFT_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/shift.o
+RISCC_COMPILER_RT_BUILTINS := external/llvm-project/compiler-rt/lib/builtins
+RISCC_SOFT_FLOAT_MODULES := fp_mode \
+	addsf3 subsf3 mulsf3 divsf3 comparesf2 \
+	adddf3 subdf3 muldf3 divdf3 comparedf2 \
+	extendsfdf2 truncdfsf2 \
+	fixsfsi fixsfdi fixunssfsi fixunssfdi \
+	fixdfsi fixdfdi fixunsdfsi fixunsdfdi \
+	floatsisf floatdisf floatunsisf floatundisf \
+	floatsidf floatdidf floatunsidf floatundidf
+RISCC_SOFT_FLOAT_OBJECTS := $(addprefix \
+	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/, \
+	$(addsuffix .o,$(RISCC_SOFT_FLOAT_MODULES)))
 RISCC_BUILTINS_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libbuiltins.a
 RISCC_BSP_DIR ?= firmware/bsp/demo
 RISCC_BSP_MODULES ?= console clock $(if $(filter-out nano,$(RISCC_CPU)),time)
@@ -1298,7 +1312,16 @@ RISCC_LIBC_OBJECTS := $(RISCC_FIRMWARE_BUILD)/libc/memory.o \
 RISCC_LIBC_OBJECTS += $(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o
 RISCC_LIBC_HEADERS := $(wildcard firmware/include/*.h firmware/include/riscc/*.h)
 RISCC_LIBC_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libc.a
+RISCC_LIBM_OBJECTS := $(RISCC_FIRMWARE_BUILD)/libm/bits.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/compare.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/decompose.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/fmod.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/next.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/sqrt.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/wide.o
+RISCC_LIBM_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libm.a
 RISCC_FIRMWARE_LIBRARIES := $(RISCC_LIBC_LIBRARY) \
+	$(RISCC_LIBM_LIBRARY) \
 	$(RISCC_BSP_LIBRARY) \
 	$(if $(filter sys full,$(RISCC_CPU)),$(RISCC_FIRMWARE_IRQ_LIBRARY)) \
 	$(RISCC_BUILTINS_LIBRARY)
@@ -1333,14 +1356,16 @@ RISCC_COMPILER_IRQ_CUSTOM_MAP := $(RISCC_COMPILER_BUILD)/irq-custom-smoke.map
 RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer \
 	feature_builtins feature_memory feature_abi feature_abi_callee \
 	feature_varargs feature_varargs_callee feature_tail
+RISCC_COMPILER_FLOAT_MODULES := float_main feature_float feature_float_callee
 RISCC_COMPILER_FEATURE_ASM_OBJECT := \
 	$(RISCC_COMPILER_BUILD)/features/feature_abi_asm.o
-RISCC_LIBC_TESTS := memory_string stdio bsp_stdio snprintf alloc integer clock \
+RISCC_LIBC_TESTS := memory_string stdio bsp_stdio snprintf alloc integer math clock \
 	$(if $(filter-out nano,$(RISCC_CPU)),time timer) all
 RISCC_LIBC_BATCH_TESTS := $(filter-out stdio all,$(RISCC_LIBC_TESTS))
 RISCC_LIBC_TERMINATE_TESTS := terminate_abort terminate_exit terminate__exit \
 	terminate_assert
 RISCC_LIBC_ALL_TESTS := $(RISCC_LIBC_TESTS) $(RISCC_LIBC_TERMINATE_TESTS)
+RISCC_LIBM_TESTS := math math_extra
 RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 
 .PHONY: llvm-riscc-configure llvm-riscc check-llvm-riscc riscc-firmware \
@@ -1353,10 +1378,15 @@ RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 	compiler-features-os-iss compiler-features-iss \
 	compiler-features-sys-iss compiler-features-min-iss \
 	compiler-features-nano-iss compiler-features-nano-rtl \
+	compiler-float-o0-iss compiler-float-o2-iss compiler-float-os-iss \
+	compiler-float-iss compiler-float-sys-iss compiler-float-min-iss \
+	compiler-float-nano-iss \
 	compiler-features-rtl \
 	test-compiler-profiles-iss test-compiler-nano \
 	compiler-libc-o0-iss compiler-libc-o2-iss compiler-libc-os-iss \
 	compiler-libc-iss compiler-libc-nano-iss compiler-libc-size \
+	compiler-libm-o0-iss compiler-libm-o2-iss compiler-libm-os-iss \
+	compiler-libm-iss \
 	compiler-stdio-iss \
 	compiler-irq-iss compiler-irq-tiny16 compiler-irq-fast \
 	compiler-irq-custom-iss compiler-irq-custom-tiny16 compiler-irq-custom-fast \
@@ -1423,7 +1453,25 @@ $(RISCC_BUILTINS_OBJECT): firmware/builtins/integer.c $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -c $< -o $@
 
+$(RISCC_SHIFT_BUILTINS_OBJECT): firmware/builtins/shift.S $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
+		$(RISCC_COMPILER_RT_BUILTINS)/%.c \
+		$(wildcard $(RISCC_COMPILER_RT_BUILTINS)/fp_*.h) \
+		$(wildcard $(RISCC_COMPILER_RT_BUILTINS)/fp_*.inc) \
+		$(wildcard $(RISCC_COMPILER_RT_BUILTINS)/int_*.h) $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) \
+	  -I$(RISCC_COMPILER_RT_BUILTINS) -c $< -o $@
+
 $(RISCC_FIRMWARE_BUILD)/libc/%.o: firmware/libc/%.c $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/libm/%.o: firmware/libm/%.c \
+		firmware/libm/internal.h $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
 
@@ -1435,13 +1483,20 @@ $(RISCC_FIRMWARE_BUILD)/bsp/%.o: $(RISCC_BSP_DIR)/%.c $(RISCC_LIBC_HEADERS) Make
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
 
-$(RISCC_BUILTINS_LIBRARY): $(RISCC_BUILTINS_OBJECT) $(RISCC_AR)
+$(RISCC_BUILTINS_LIBRARY): $(RISCC_BUILTINS_OBJECT) \
+		$(RISCC_SHIFT_BUILTINS_OBJECT) \
+		$(RISCC_SOFT_FLOAT_OBJECTS) $(RISCC_AR)
 	@mkdir -p $(@D)
-	$(RISCC_AR) rcs $@ $(RISCC_BUILTINS_OBJECT)
+	$(RISCC_AR) rcs $@ $(RISCC_BUILTINS_OBJECT) \
+		$(RISCC_SHIFT_BUILTINS_OBJECT) $(RISCC_SOFT_FLOAT_OBJECTS)
 
 $(RISCC_LIBC_LIBRARY): $(RISCC_LIBC_OBJECTS) $(RISCC_AR)
 	@mkdir -p $(@D)
 	$(RISCC_AR) rcs $@ $(RISCC_LIBC_OBJECTS)
+
+$(RISCC_LIBM_LIBRARY): $(RISCC_LIBM_OBJECTS) $(RISCC_AR)
+	@mkdir -p $(@D)
+	$(RISCC_AR) rcs $@ $(RISCC_LIBM_OBJECTS)
 
 $(RISCC_BSP_LIBRARY): $(RISCC_BSP_OBJECTS) $(RISCC_AR)
 	@mkdir -p $(@D)
@@ -1835,6 +1890,58 @@ compiler-features-nano-iss:
 	$(MAKE) RISCC_CPU=nano RISCC_FIRMWARE_BUILD=build/firmware/nano \
 	  RISCC_COMPILER_BUILD=build/compiler/nano compiler-features-iss
 
+define riscc_compiler_float_rules
+RISCC_COMPILER_FLOAT_OBJECTS_$(1) := $$(addprefix \
+	$$(RISCC_COMPILER_BUILD)/float/$(1)/, \
+	$$(addsuffix .o,$$(RISCC_COMPILER_FLOAT_MODULES)))
+
+$$(RISCC_COMPILER_FLOAT_OBJECTS_$(1)): \
+		$$(RISCC_COMPILER_BUILD)/float/$(1)/%.o: test/compiler/%.c \
+		test/compiler/riscc_compiler_features.h $$(RISCC_CLANG)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_CFLAGS_NO_OPT) \
+	  $$(call riscc_opt_flag,$(1)) -std=c11 -Itest/compiler \
+	  -Ifirmware/include -c $$< -o $$@
+
+$$(RISCC_COMPILER_BUILD)/float/$(1)/float.elf: \
+		$$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+		$$(RISCC_COMPILER_FLOAT_OBJECTS_$(1)) \
+		$$(RISCC_FIRMWARE_LIBRARIES) firmware/unified.ld \
+		$$(RISCC_CLANG) $$(RISCC_LLD)
+	@mkdir -p $$(@D)
+	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_LDFLAGS) \
+	  -fuse-ld=lld -nostdlib -Wl,-T,$$(abspath firmware/unified.ld) \
+	  $$(RISCC_FIRMWARE_VECTORS) $$(RISCC_FIRMWARE_CRT0) \
+	  $$(RISCC_COMPILER_FLOAT_OBJECTS_$(1)) \
+	  $$(RISCC_FIRMWARE_LIBRARIES) -o $$@
+
+$$(RISCC_COMPILER_BUILD)/float/$(1)/float.bin: \
+		$$(RISCC_COMPILER_BUILD)/float/$(1)/float.elf $$(RISCC_OBJCOPY)
+	$$(RISCC_OBJCOPY) -O binary $$< $$@
+
+compiler-float-$(1)-iss: \
+		$$(RISCC_COMPILER_BUILD)/float/$(1)/float.bin $$(RISCC_SIM)
+	$$(RISCC_SIM) $$< $$(RISCC_SIM_PROFILE_FLAGS) \
+	  --max-insns $$(RISCC_COMPILER_FLOAT_MAX_INSNS)
+endef
+
+$(foreach opt,o0 o2 os,$(eval $(call riscc_compiler_float_rules,$(opt))))
+
+compiler-float-iss: compiler-float-o0-iss compiler-float-o2-iss \
+	compiler-float-os-iss
+
+compiler-float-sys-iss:
+	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \
+	  RISCC_COMPILER_BUILD=build/compiler/sys compiler-float-iss
+
+compiler-float-min-iss:
+	$(MAKE) RISCC_CPU=min RISCC_FIRMWARE_BUILD=build/firmware/min \
+	  RISCC_COMPILER_BUILD=build/compiler/min compiler-float-iss
+
+compiler-float-nano-iss:
+	$(MAKE) RISCC_CPU=nano RISCC_FIRMWARE_BUILD=build/firmware/nano \
+	  RISCC_COMPILER_BUILD=build/compiler/nano compiler-float-iss
+
 compiler-features-rtl: \
 		$(RISCC_COMPILER_BUILD)/features/o0/features.bin \
 		$(RISCC_COMPILER_BUILD)/features/o2/features.bin \
@@ -1851,13 +1958,17 @@ compiler-features-nano-rtl:
 	$(MAKE) RISCC_CPU=nano RISCC_FIRMWARE_BUILD=build/firmware/nano \
 	  RISCC_COMPILER_BUILD=build/compiler/nano compiler-features-rtl
 
-test-compiler-profiles-iss: compiler-features-iss
+test-compiler-profiles-iss: compiler-features-iss compiler-float-iss \
+	compiler-libm-iss
 	$(MAKE) RISCC_CPU=sys RISCC_FIRMWARE_BUILD=build/firmware/sys \
-	  RISCC_COMPILER_BUILD=build/compiler/sys compiler-features-iss
+	  RISCC_COMPILER_BUILD=build/compiler/sys \
+	  compiler-features-iss compiler-float-iss compiler-libm-iss
 	$(MAKE) RISCC_CPU=min RISCC_FIRMWARE_BUILD=build/firmware/min \
-	  RISCC_COMPILER_BUILD=build/compiler/min compiler-features-iss
+	  RISCC_COMPILER_BUILD=build/compiler/min \
+	  compiler-features-iss compiler-float-iss compiler-libm-iss
 	$(MAKE) RISCC_CPU=nano RISCC_FIRMWARE_BUILD=build/firmware/nano \
-	  RISCC_COMPILER_BUILD=build/compiler/nano compiler-features-iss
+	  RISCC_COMPILER_BUILD=build/compiler/nano \
+	  compiler-features-iss compiler-float-iss compiler-libm-iss
 
 # Each libc probe is a separately linked application.  This checks archive
 # extraction and section GC as used by ordinary RISC-C firmware, at every
@@ -1865,6 +1976,8 @@ test-compiler-profiles-iss: compiler-features-iss
 define riscc_libc_test_rules
 RISCC_LIBC_TEST_BINS_$(1) := $$(addprefix \
 	$$(RISCC_COMPILER_BUILD)/libc/$(1)/,$$(addsuffix .bin,$$(RISCC_LIBC_ALL_TESTS)))
+RISCC_LIBM_TEST_BINS_$(1) := $$(addprefix \
+	$$(RISCC_COMPILER_BUILD)/libc/$(1)/,$$(addsuffix .bin,$$(RISCC_LIBM_TESTS)))
 
 $$(RISCC_COMPILER_BUILD)/libc/$(1)/%.o: test/compiler/libc/%.c \
 		$$(RISCC_LIBC_TEST_HEADERS) $$(RISCC_CLANG)
@@ -1919,6 +2032,13 @@ compiler-libc-$(1)-iss: $$(RISCC_LIBC_TEST_BINS_$(1)) $$(RISCC_SIM) \
 	    exit 1; \
 	  fi; \
 	done
+
+compiler-libm-$(1)-iss: $$(RISCC_LIBM_TEST_BINS_$(1)) $$(RISCC_SIM)
+	@for test in $$(RISCC_LIBM_TESTS); do \
+	  $$(RISCC_SIM) $$(RISCC_COMPILER_BUILD)/libc/$(1)/$$$$test.bin \
+	    $$(RISCC_SIM_PROFILE_FLAGS) \
+	    --max-insns $$(RISCC_COMPILER_FLOAT_MAX_INSNS) || exit 1; \
+	done
 endef
 
 $(foreach opt,o0 o2 os,$(eval $(call riscc_libc_test_rules,$(opt))))
@@ -1926,12 +2046,16 @@ $(foreach opt,o0 o2 os,$(eval $(call riscc_libc_test_rules,$(opt))))
 compiler-libc-iss: compiler-libc-o0-iss compiler-libc-o2-iss \
 	compiler-libc-os-iss
 
+compiler-libm-iss: compiler-libm-o0-iss compiler-libm-o2-iss \
+	compiler-libm-os-iss
+
 compiler-libc-nano-iss:
 	$(MAKE) RISCC_CPU=nano RISCC_FIRMWARE_BUILD=build/firmware/nano \
 	  RISCC_COMPILER_BUILD=build/compiler/nano compiler-libc-iss
 
 test-compiler-nano:
 	$(MAKE) compiler-features-nano-iss
+	$(MAKE) compiler-float-nano-iss
 	$(MAKE) compiler-features-nano-rtl
 	$(MAKE) compiler-libc-nano-iss
 
@@ -1955,7 +2079,7 @@ check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 
 test-compiler: compiler-smoke-iss compiler-smoke-split \
 	compiler-smoke-tiny16 compiler-smoke-fast compiler-smoke-icepi compiler-smoke-atum \
-	compiler-smoke-opt-matrix compiler-features-iss \
+	compiler-smoke-opt-matrix compiler-features-iss compiler-float-iss \
 	compiler-libc-iss compiler-libc-size \
 	compiler-stdio-iss compiler-irq-iss compiler-irq-tiny16 \
 	compiler-irq-fast compiler-irq-custom-iss compiler-irq-custom-tiny16 \
