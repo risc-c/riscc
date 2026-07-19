@@ -118,15 +118,15 @@ tiny_sim_opts = $(strip \
   $(if $(filter min,$(1)),--min) \
   $(if $(filter full,$(1)),--full))
 
-# Area-best mapper options differ by datapath and profile. Serial min uses
-# two-pass ABC; selected /16, sys /1, and full /2 builds also benefit from
-# flip-flop-aware mapping.
+# Area-best mapper options differ by datapath and profile. Serial Min /2-/8
+# uses two-pass ABC; selected /16, Sys /1, and Full /2 builds also benefit
+# from flip-flop-aware mapping.
 tiny_area_synth_opts = $(strip \
   $(if $(and $(filter 16,$(1)),$(filter min,$(2))),-dff, \
   $(if $(and $(filter 1,$(1)),$(filter sys,$(2))),-abc2 -dff, \
   $(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2, \
   $(if $(and $(filter 2 16,$(1)),$(filter full,$(2))),-abc2 -dff, \
-  $(if $(and $(filter 1 2 4 8,$(1)),$(filter min,$(2))),-abc2))))))
+  $(if $(and $(filter 2 4 8,$(1)),$(filter min,$(2))),-abc2))))))
 
 # Two serial /2 profiles have different area-best ABC settings on ECP5.
 tiny_ecp5_area_synth_opts = $(strip \

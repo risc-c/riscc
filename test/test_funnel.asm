@@ -1,5 +1,6 @@
-; RTL-only Tiny FSR1 prototype.
-; Reserved f5=10_010 encodes FSR1 until the experiment is kept or discarded.
+; RTL-only Tiny funnel-shift prototypes.
+; Reserved f5=10_000/10_010 encode FSL1/FSR1 until the experiment is kept or
+; discarded.
 ; This source intentionally uses a raw word so no assembler or architectural
 ; profile change is required.
 
@@ -11,6 +12,19 @@ start:
     LDI16 r3, 0x2468
     .word  0xEB92            ; FSR1 r5, r3, r2 -> 0x9234
     LDI16 r4, 0x9234
+    SUB   r0, r5, r4
+    BNEZ  fail
+
+    LDI16 r3, 0x89AB
+    LDI16 r2, 0x8000
+    .word  0xEB82            ; FSL1 r5, r3, r2 -> 0x1357
+    LDI16 r4, 0x1357
+    SUB   r0, r5, r4
+    BNEZ  fail
+
+    LDI   r2, 1
+    .word  0xEB82            ; FSL1 r5, r3, r2 -> 0x1356
+    LDI16 r4, 0x1356
     SUB   r0, r5, r4
     BNEZ  fail
 

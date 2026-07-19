@@ -85,9 +85,12 @@ module riscc_tiny_min #(
     wire system_op = register_group & f5[4] & f5[3];
     wire register_alu_op = register_group & ~f5[3];
 
-    // Reserved 10_xxx aliases FSR1 in this RTL experiment.  This loose decode
-    // is intentional; 10_010 remains the canonical encoding under test.
-    wire funnel_right_op = register_alu_op & f5[4];
+    // Reserved 10_xxx aliases the funnel shifts in this RTL experiment.
+    // Keeping the decode loose makes 10_000/10_010 cheap canonical encodings
+    // for FSL1/FSR1; f5[1] selects the direction.
+    wire funnel_op = register_alu_op & f5[4];
+    wire funnel_right_op = funnel_op & f5[1];
+    wire funnel_left_op = funnel_op & ~f5[1];
 
     // FSR shares the normal two-source ALU schedule.
     wire slt_op = register_alu_op & ~f5[2] & f5[1];
@@ -112,7 +115,7 @@ module riscc_tiny_min #(
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
-    wire needs_init_pass = mem_op | slt_op;
+    wire needs_init_pass = mem_op | slt_op | funnel_left_op;
 
     // ------------------------------------------------------------------
     // Register file and read schedule
@@ -185,8 +188,10 @@ module riscc_tiny_min #(
     wire alu_a_enable =
         ~(immediate_group & ~aaa[2] & ~aaa[1]);
     wire alu_b_zero = system_op | register_store_op;
+    // Logic operations ignore the adder, so their low function bits may
+    // alias this control without decoding f5[2].
     wire alu_subtract =
-        (register_alu_op & ~f5[2] & (f5[1] | f5[0])) | cmpi_op;
+        (register_alu_op & (f5[1] | f5[0])) | cmpi_op;
     wire slt_execute = slt_op & in_execute;
 
     wire [W-1:0] alu_a =
@@ -210,12 +215,14 @@ module riscc_tiny_min #(
         ~(alu_b_raw[W-1] & signed_compare) ^ alu_sum_ext[W];
 
     always @(posedge clk)
-        alu_carry_q <= (slt_op & in_init & last_slice) ?
-            less_than_result :
+        alu_carry_q <= (register_alu_op & in_init & last_slice) ?
+            (f5[1] ? less_than_result : data_stream_q[W-1]) :
             alu_active ? alu_sum_ext[W] : alu_subtract;
 
     // INIT2 has staged rb in data_stream_q when INIT begins.  Preserve its
     // low bit while INIT streams ra; this is the only extra FSR1 storage.
+    // On INIT's last slice, data_stream_q still exposes rb[15], allowing FSL1
+    // to seed the existing ALU carry without another saved bit.
     always @(posedge clk)
         if (in_init & first_slice)
             funnel_bit_q <= data_stream_q[0];
