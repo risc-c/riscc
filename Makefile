@@ -55,10 +55,13 @@ VERILATOR_MAKEFLAGS_ARG = $(if $(strip $(VERILATOR_MAKEFLAGS)),-MAKEFLAGS "$(VER
 TINY_WIDTHS := 1 2 4 8 16
 SERIAL_WIDTHS := 1 2 4 8
 
-tiny_rtl = $(if $(filter 16,$(1)),rtl/riscc_tiny16.v,rtl/riscc_tiny.v)
-tiny_top = $(if $(filter 16,$(1)),riscc_tiny16,riscc_tiny)
+tiny_rtl = $(if $(filter 16,$(1)),rtl/riscc_tiny16.v,\
+  $(if $(filter min,$(2)),rtl/riscc_tiny_min.v,rtl/riscc_tiny.v))
+tiny_top = $(if $(filter 16,$(1)),riscc_tiny16,\
+  $(if $(filter min,$(2)),riscc_tiny_min,riscc_tiny))
 tiny_width_arg = $(if $(filter 16,$(1)),,-GW=$(1))
-tiny_yosys_width = $(if $(filter 16,$(1)),,chparam -set W $(1) riscc_tiny;)
+tiny_yosys_width = $(if $(filter 16,$(1)),,\
+  chparam -set W $(1) $(call tiny_top,$(1),$(2));)
 
 # ---- Naming helpers ---------------------------------------------------
 
@@ -69,6 +72,7 @@ comma_join = $(subst $(space),$(comma),$(strip $(1)))
 
 bench_bin = build/bin/riscc-bench.bin
 nano_bench_bin = build/bin/riscc-bench-nano.bin
+FUNNEL_MIN_BIN := build/bin/riscc-funnel-min.bin
 
 tiny_tb = build/tb/tiny$(1)-$(2)/tb
 tiny_matrix_tb = build/matrix/tb/tiny$(1)-$(2)/tb
@@ -156,7 +160,7 @@ ECP5_NANO_RF_SITES := 12
 # and fmax-<width>-<profile> for Tiny,
 # plus the fixed Nano, Fast, and Faster targets.  The aggregate area/Fmax
 # targets below are the supported way to regenerate published matrices.
-.PHONY: all test-all test-peripherals clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
+.PHONY: all test-all test-peripherals test-funnel-min clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
         icepi-zero-demo-bin icepi-zero-demo-iss icepi-zero-demo-iss-test icepi-zero-demo-rtlsim \
         icepi-zero-demo-json icepi-zero-demo-bit icepi-zero-video-test-bit \
         atum-a3-demo-bin atum-a3-demo-iss atum-a3-demo-rtlsim atum-a3-demo \
@@ -214,6 +218,10 @@ $(call tiny_bin,%): test/test_riscc.asm tools/riscc_asm.py
 $(call nano_bin,nano): test/test_riscc.asm tools/riscc_asm.py
 	@mkdir -p $(@D)
 	$(PYTHON) tools/riscc_asm.py --profile nano $< -o $@
+
+$(FUNNEL_MIN_BIN): test/test_funnel.asm tools/riscc_asm.py
+	@mkdir -p $(@D)
+	$(PYTHON) tools/riscc_asm.py --profile min $< -o $@
 
 $(call bench_bin): test/test_riscc_bench.asm tools/riscc_asm.py
 	@mkdir -p $(@D)
@@ -283,13 +291,13 @@ TRACE_CXXFLAGS = $(TB_CXXFLAGS) -DRISCC_TB_TRACE
 .PRECIOUS: $(foreach w,$(TINY_WIDTHS),build/trace/tiny$(w)-%/tb) build/trace/nano/tb
 
 define TINY_TRACE_TB_RULE
-$(call tiny_trace_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1)) $(TRACE_RTL) $(RISCC_RF_RTL)
+$(call tiny_trace_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1),$(2)) $(TRACE_RTL) $(RISCC_RF_RTL)
 	@mkdir -p $$(@D)
-	$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1)) \
+	$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1),$(2)) \
 	  $(call tiny_width_arg,$(1)) \
 	  --prefix Vriscc -Mdir $$(@D) -I$$(abspath rtl) -I$$(abspath rtl/test) -DRISCC_TRACE $(call tiny_cpp_defs,$(2)) \
 	  -CFLAGS "$$(TRACE_CXXFLAGS)" -o tb \
-	  $$(abspath $(call tiny_rtl,$(1))) $$(abspath $(TB_SRC))
+	  $$(abspath $(call tiny_rtl,$(1),$(2))) $$(abspath $(TB_SRC))
 endef
 
 define TINY_TRACE_TARGET_RULE
@@ -340,13 +348,13 @@ trace-fast-ice-dsp: $(call fast_trace_tb,ice-dsp) $(call tiny_bin,full)
 # ---- Verilator tests --------------------------------------------------
 
 define TINY_TB_RULE
-$(call tiny_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1)) $(RISCC_RF_RTL)
+$(call tiny_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1),$(2)) $(RISCC_RF_RTL)
 	@mkdir -p $$(@D)
-	$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1)) \
+	$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1),$(2)) \
 	  $(call tiny_width_arg,$(1)) \
 	  --prefix Vriscc -Mdir $$(@D) $(call tiny_cpp_defs,$(2)) \
 	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
-	  $$(abspath $(call tiny_rtl,$(1))) $$(abspath $(TB_SRC))
+	  $$(abspath $(call tiny_rtl,$(1),$(2))) $$(abspath $(TB_SRC))
 endef
 
 define TINY_TEST_RULE
@@ -359,6 +367,11 @@ $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(eval $(call TINY_TEST_R
 
 $(foreach w,$(TINY_WIDTHS),$(eval test-$(w): test-$(w)-sys))
 $(foreach w,$(TINY_WIDTHS),$(eval tb-$(w): $(call tiny_tb,$(w),sys)))
+
+test-funnel-min: $(foreach w,$(SERIAL_WIDTHS),$(call tiny_tb,$(w),min)) $(FUNNEL_MIN_BIN)
+	@for w in $(SERIAL_WIDTHS); do \
+	  build/tb/tiny$$w-min/tb $(FUNNEL_MIN_BIN) --max-cycles 2000 || exit; \
+	done
 
 define NANO_TB_RULE
 $(call nano_tb,$(1)): $(TB_SRC) rtl/riscc_nano1.v $(RISCC_RF_RTL)
@@ -433,13 +446,13 @@ BENCH_TARGETS := $(foreach c,$(BENCH_CORES),bench-$(c))
 bench: $(BENCH_TARGETS) bench-nano bench-fast bench-fast-dsp bench-fast-ice bench-fast-ice-dsp bench-faster bench-faster-soft
 
 define BENCH_TB_RULE
-build/tb/bench-tiny$(1)/tb: $(TB_SRC) $(call tiny_rtl,$(1)) $(RISCC_RF_RTL)
+build/tb/bench-tiny$(1)/tb: $(TB_SRC) $(call tiny_rtl,$(1),full) $(RISCC_RF_RTL)
 	@mkdir -p $$(@D)
 	@$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
-	  --top-module $(call tiny_top,$(1)) $(call tiny_width_arg,$(1)) \
+	  --top-module $(call tiny_top,$(1),full) $(call tiny_width_arg,$(1)) \
 	  --prefix Vriscc -Mdir $$(@D) -DRISCC_SYS -DRISCC_FULL \
 	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
-	  $$(abspath $(call tiny_rtl,$(1))) $$(abspath $(TB_SRC)) \
+	  $$(abspath $(call tiny_rtl,$(1),full)) $$(abspath $(TB_SRC)) \
 	  >/dev/null 2>&1
 endef
 
@@ -517,14 +530,14 @@ MATRIX_TINY_OK := $(foreach w,$(MATRIX_WIDTHS),$(foreach c,$(TINY_CONFIGS),build
 MATRIX_NANO_OK := $(foreach c,$(NANO_CONFIGS),$(call nano_matrix_ok,$(c)))
 
 define MATRIX_TINY_TB_RULE
-$(call tiny_matrix_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1)) $(RISCC_RF_RTL)
+$(call tiny_matrix_tb,$(1),$(2)): $(TB_SRC) $(call tiny_rtl,$(1),$(2)) $(RISCC_RF_RTL)
 	@mkdir -p $$(@D)
 	@log=$$@.build.log; \
-	if $$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1)) \
+	if $$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module $(call tiny_top,$(1),$(2)) \
 	    $(call tiny_width_arg,$(1)) \
 	    --prefix Vriscc -Mdir $$(@D) $(call tiny_cpp_defs,$(2)) \
 	    -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
-	    $$(abspath $(call tiny_rtl,$(1))) $$(abspath $(TB_SRC)) > $$$$log 2>&1; then \
+	    $$(abspath $(call tiny_rtl,$(1),$(2))) $$(abspath $(TB_SRC)) > $$$$log 2>&1; then \
 	  :; \
 	else \
 	  cat $$$$log; exit 1; \
@@ -821,14 +834,14 @@ ecp5_rf_def = $(if $(filter block,$(1)),-DRISCC_ECP5_BLOCK_RF)
 define ICE40_AREA_RULE
 $(call area_cell,ice40,$(1),$(2)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1)); $(call tiny_yosys_width,$(1)) synth_ice40 $(call tiny_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1)); stat" \
+	@$$(YOSYS) -p "read_verilog $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ice40 $(call tiny_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)); stat" \
 	  2>/dev/null | awk '$$$$1=="SB_LUT4"{v=$$$$2} END{print v+0}' > $$@
 endef
 
 define ECP5_AREA_RULE
 $(call area_cell,ecp5,$(1),$(2)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1)); $(call tiny_yosys_width,$(1)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1)) -nowidelut; stat" \
+	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)) -nowidelut; stat" \
 	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} END{print l+2*c}' > $$@
 endef
 
@@ -853,7 +866,7 @@ endef
 define ECP5_RF_AREA_RULE
 $(call ecp5_rf_area_cell,$(1),$(2),$(3)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call ecp5_rf_def,$(1)) $(call tiny_cpp_defs,$(3)) $(call tiny_rtl,$(2)); $(call tiny_yosys_width,$(2)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(2),$(3)) -top $(call tiny_top,$(2)) -nowidelut; stat" \
+	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call ecp5_rf_def,$(1)) $(call tiny_cpp_defs,$(3)) $(call tiny_rtl,$(2),$(3)); $(call tiny_yosys_width,$(2),$(3)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(2),$(3)) -top $(call tiny_top,$(2),$(3)) -nowidelut; stat" \
 	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} $$$$1=="TRELLIS_DPR16X4"{r=$$$$2} END{print l+2*c+6*r}' > $$@
 endef
 
@@ -917,16 +930,17 @@ check-fast-ice: $(call fast_area_cell,ice40,soft) $(call fast_area_cell,ice40,ds
 # ---- Routed core timing ----------------------------------------------
 
 FMAX_TOP := $(RTL_TEST_DIR)/riscc_fmax_top.v
-FMAX_RTL := $(FMAX_TOP) rtl/riscc_fast.v rtl/riscc_tiny.v rtl/riscc_tiny16.v \
+FMAX_RTL := $(FMAX_TOP) rtl/riscc_fast.v rtl/riscc_tiny.v rtl/riscc_tiny_min.v rtl/riscc_tiny16.v \
             rtl/riscc_nano1.v rtl/riscc_rf.vh Makefile
 
 ice40_tiny_fmax_defs = $(strip $(call tiny_cpp_defs,$(3)) \
-  $(if $(filter 16,$(2)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(2)))
+  $(if $(filter 16,$(2)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(2) \
+    $(if $(filter min,$(3)),-DRISCC_FMAX_MIN)))
 
 define ICE40_FMAX_RULE
 $(call ice40_fmax_cell,$(1),$(2),$(3)): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -q -p "read_verilog $(call ice40_tiny_fmax_defs,$(1),$(2),$(3)) $(call tiny_rtl,$(2)) $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(YOSYS) -q -p "read_verilog $(call ice40_tiny_fmax_defs,$(1),$(2),$(3)) $(call tiny_rtl,$(2),$(3)) $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $$(@:.mhz=.json)"
 	@$$(NEXTPNR_ICE40) --$(1) --package $(if $(filter up5k,$(1)),sg48,ct256) $(if $(filter hx8k,$(1)),--no-promote-globals,) --pcf-allow-unconstrained --freq 10 --seed $$(ICE40_FMAX_SEED) \
 	  --json $$(@:.mhz=.json) --asc $$(@:.mhz=.asc) >$$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
@@ -995,12 +1009,13 @@ build/fmax/ecp5/fast-soft.mhz: $(FMAX_RTL)
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 tiny_fmax_defs = $(strip -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) \
-  $(if $(filter 16,$(1)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(1)))
+  $(if $(filter 16,$(1)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(1) \
+    $(if $(filter min,$(2)),-DRISCC_FMAX_MIN)))
 
 define ECP5_FMAX_RULE
 $(call ecp5_fmax_cell,$(1),$(2)): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -q -p "read_verilog $(call tiny_fmax_defs,$(1),$(2)) $(call tiny_rtl,$(1)) $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(YOSYS) -q -p "read_verilog $(call tiny_fmax_defs,$(1),$(2)) $(call tiny_rtl,$(1),$(2)) $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $$(@:.mhz=.json)"
 	@$$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $$(ECP5_FMAX_SEED) \
 	  --json $$(@:.mhz=.json) --textcfg $$(@:.mhz=.config) >$$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@

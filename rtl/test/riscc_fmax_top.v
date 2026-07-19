@@ -31,7 +31,11 @@ module riscc_fmax_top (
     riscc_nano1 cpu (
         .mem_valid(mem_valid),
 `elsif RISCC_FMAX_TINY
+`ifdef RISCC_FMAX_MIN
+    riscc_tiny_min #(
+`else
     riscc_tiny #(
+`endif
         .W(`RISCC_FMAX_WIDTH)
     ) cpu (
 `else
