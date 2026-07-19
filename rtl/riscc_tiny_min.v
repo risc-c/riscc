@@ -85,15 +85,15 @@ module riscc_tiny_min #(
     wire system_op = register_group & f5[4] & f5[3];
     wire register_alu_op = register_group & ~f5[3];
 
-    // Reserved 10_xxx aliases the funnel shifts in this RTL experiment.
-    // Keeping the decode loose makes 10_000/10_010 cheap canonical encodings
-    // for FSL1/FSR1; f5[1] selects the direction.
+    // FSR1/FSL1 occupy adjacent encodings 10_010/10_011. Other reserved
+    // 10_xxx encodings may alias them to keep this decode small.
     wire funnel_op = register_alu_op & f5[4];
-    wire funnel_right_op = funnel_op & f5[1];
-    wire funnel_left_op = funnel_op & ~f5[1];
+    wire funnel_right_op = funnel_op & ~f5[0];
+    wire funnel_left_op = funnel_op & f5[0];
 
     // FSR shares the normal two-source ALU schedule.
-    wire slt_op = register_alu_op & ~f5[2] & f5[1];
+    wire ordinary_alu_op = register_alu_op & ~f5[4];
+    wire slt_op = ordinary_alu_op & ~f5[2] & f5[1];
     wire signed_compare = ~instr_q[3];
     wire right_shift_op =
         register_group & f_group_01 & f5[2] & ~f5[1];
@@ -115,7 +115,7 @@ module riscc_tiny_min #(
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
-    wire needs_init_pass = mem_op | slt_op | funnel_left_op;
+    wire needs_init_pass = mem_op | slt_op | funnel_op;
 
     // ------------------------------------------------------------------
     // Register file and read schedule
@@ -191,7 +191,7 @@ module riscc_tiny_min #(
     // Logic operations ignore the adder, so their low function bits may
     // alias this control without decoding f5[2].
     wire alu_subtract =
-        (register_alu_op & (f5[1] | f5[0])) | cmpi_op;
+        (ordinary_alu_op & (f5[1] | f5[0])) | cmpi_op;
     wire slt_execute = slt_op & in_execute;
 
     wire [W-1:0] alu_a =
@@ -216,7 +216,7 @@ module riscc_tiny_min #(
 
     always @(posedge clk)
         alu_carry_q <= (register_alu_op & in_init & last_slice) ?
-            (f5[1] ? less_than_result : data_stream_q[W-1]) :
+            (slt_op ? less_than_result : data_stream_q[W-1]) :
             alu_active ? alu_sum_ext[W] : alu_subtract;
 
     // INIT2 has staged rb in data_stream_q when INIT begins.  Preserve its
@@ -258,8 +258,8 @@ module riscc_tiny_min #(
     end
 
     wire right_shift_input = last_slice ?
-        (funnel_right_op ? funnel_bit_q :
-         (arithmetic_shift & data_stream_q[W-1])) :
+        (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
+         funnel_bit_q) :
         data_stream_q[W];
     wire [W-1:0] shift_result_slice =
         (data_stream_q[W-1:0] >> 1) |
@@ -313,15 +313,23 @@ module riscc_tiny_min #(
 
     always @(posedge clk)
         if (writes_r0) begin
-            r0_zero_so_far_q <=
-                (rf_wdata == {W{1'b0}}) &
-                (first_slice | r0_zero_so_far_q);
-            if (last_slice) begin
-                r0_zero_q <=
-                    (rf_wdata == {W{1'b0}}) & r0_zero_so_far_q;
+            if (W <= 2)
+                r0_zero_q <= (rf_wdata == {W{1'b0}}) &
+                             (first_slice | r0_zero_q);
+            else begin
+                r0_zero_so_far_q <=
+                    (rf_wdata == {W{1'b0}}) &
+                    (first_slice | r0_zero_so_far_q);
+                if (last_slice)
+                    r0_zero_q <=
+                        (rf_wdata == {W{1'b0}}) & r0_zero_so_far_q;
+            end
+
+            if (W == 1)
+                r0_negative_q <= rf_wdata[0];
+            else if (last_slice)
                 r0_negative_q <=
                     load_high_byte ? load_fill_q : rf_wdata[W-1];
-            end
         end
 
     wire branch_taken = branch_group & ~ddd[2] &

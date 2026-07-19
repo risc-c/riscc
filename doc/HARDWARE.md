@@ -8,13 +8,18 @@ and linker-layout guidance is in the [Programming manual](PROGRAMMING.md).
 ## 1. Implementation family
 
 RISC-C is implemented as several in-order cores sharing the ISA profiles
-defined by the [ISA specification](RISC-C-ISA.md). The implementation and profile
-are independent build choices.
+defined by the [ISA specification](RISC-C-ISA.md). Datapath width and profile
+are selected at build time; the area-critical serial Min profile has its own
+specialized RTL source.
 
 | Implementation | RTL | Organization | Profiles |
 |---|---|---|---|
-| RISC-C/1, /2, /4, /8 | [`rtl/riscc_tiny.v`](../rtl/riscc_tiny.v) | parameterized serial datapath, width `W = 1, 2, 4, 8` | `min`, `sys`, `full` |
-| RISC-C/16 | [`rtl/riscc_tiny16.v`](../rtl/riscc_tiny16.v) | 16-bit multi-cycle datapath | `min`, `sys`, `full` |
+| RISC-C/1, /2, /4, /8 Min | [`rtl/riscc_tiny_min.v`](../rtl/riscc_tiny_min.v) | Min-specialized serial datapath, width `W = 1, 2, 4, 8` | `min` |
+| RISC-C/1, /2, /4, /8 Sys | [`rtl/riscc_tiny_sys.v`](../rtl/riscc_tiny_sys.v) | serial datapath, width `W = 1, 2, 4, 8` | `sys` |
+| RISC-C/1, /2, /4, /8 Full | [`rtl/riscc_tiny_full.v`](../rtl/riscc_tiny_full.v) | serial datapath with hardware multiply, width `W = 1, 2, 4, 8` | `full` |
+| RISC-C/16 Min | [`rtl/riscc_tiny16_min.v`](../rtl/riscc_tiny16_min.v) | Min-specialized 16-bit multi-cycle datapath | `min` |
+| RISC-C/16 Sys | [`rtl/riscc_tiny16_sys.v`](../rtl/riscc_tiny16_sys.v) | 16-bit multi-cycle datapath | `sys` |
+| RISC-C/16 Full | [`rtl/riscc_tiny16_full.v`](../rtl/riscc_tiny16_full.v) | 16-bit multi-cycle datapath with hardware multiply | `full` |
 | RISC-C/nano | [`rtl/riscc_nano1.v`](../rtl/riscc_nano1.v) | fixed one-bit serial datapath | `nano` |
 | RISC-C/fast | [`rtl/riscc_fast.v`](../rtl/riscc_fast.v) | two-stage in-order pipeline | `full` |
 | RISC-C/faster | [`rtl/riscc_faster.v`](../rtl/riscc_faster.v) | three-stage interlocked pipeline | `full` |
@@ -25,26 +30,39 @@ experiment rather than a mainline width-ladder member.
 
 ### Serial Tiny cores
 
-Tiny is one parameterized multi-cycle design. It fetches from a synchronous
-unified memory port, then streams a 16-bit operand through a `W`-bit data path
-least-significant bits first. The same serial ALU path performs arithmetic,
-comparison, effective-address, and PC updates. A one-port register file holds
-`r0..r7` and `S0..S7`; a second source is staged before register-register
-operations. Loads, stores, shifts, and multiplication add the needed transfer
-or iteration passes rather than additional wide datapaths.
+The serial width ladder has three parameterized multi-cycle designs: an
+area-specialized Min implementation plus separately specialized Sys and Full
+implementations.
+Both fetch from a synchronous unified memory port, then stream a 16-bit
+operand through a `W`-bit data path least-significant bits first. The same
+serial ALU path performs arithmetic, comparison, effective-address, and PC
+updates. A one-port register file holds `r0..r7` and `S0..S7`; a second source
+is staged before register-register operations. Loads, stores, shifts, and
+multiplication add the needed transfer or iteration passes rather than
+additional wide datapaths.
+
+Store data is normally read from the one-port register file during the
+`MEM_XFER` pass. ECP5 Full `/4` and `/8` instead use a second `INIT2` pass
+because that schedule maps smaller there. This is an internal RF schedule;
+it does not change the ISA or external memory interface.
+
+The Min-baseline `FSL1` and `FSR1` instructions reuse that staged second
+source and the existing shift/ALU paths; they do not add a second wide
+datapath. Sys and Full inherit the instructions, while Nano omits them.
 
 ![Serial RISC-C microarchitecture](riscc_serial_microarch.svg)
 
-The four serial widths are elaborations of the same source. RISC-C/16 is
-deliberately separate: it retains a small multi-cycle control machine but uses
-a full 16-bit datapath and shared 17-bit result/adder path.
+Each serial source elaborates the four widths `/1`, `/2`, `/4`, and `/8`.
+RISC-C/16 is deliberately separate: it retains a small multi-cycle control
+machine but uses a full 16-bit datapath and shared 17-bit result/adder path.
 
 ### Nano and RISC-C/16
 
 Nano uses its own fixed one-bit register file, staging, and control structure;
-it omits the mainline S-register/system paths. RISC-C/16 uses one-hot
-multi-cycle control, synchronous unified memory, and a shared MDR stage for
-second operands, loads, byte lanes, and the second word of `JAL16`.
+it omits the mainline S-register/system paths. All RISC-C/16 sources use
+one-hot multi-cycle control, synchronous unified memory, and a shared MDR
+stage for second operands, loads, and byte lanes. The Sys and Full sources
+also use that path for `JAL16`; Full adds the multiply machinery.
 
 ![RISC-C/16 microarchitecture](riscc_tiny16_microarch.svg)
 
@@ -95,51 +113,54 @@ points. Cycle counts follow them as a reference for implementation work.
 
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 121 | 134 | 162 | 219 | 252 |
-| `sys` | 147 | 165 | 198 | 260 | 278 |
-| `full` | 169 | 189 | 228 | 296 | 329 |
+| `min` | 118 | 132 | 161 | 215 | 256 |
+| `sys` | 149 | 163 | 200 | 261 | 282 |
+| `full` | 173 | 193 | 231 | 300 | 334 |
 | nano | 93 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 479 / 439 |
+| Fast soft / DSP | — | — | — | — | 480 / 441 |
 
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 164 | 179 | 201 | 255 | 278 |
-| `sys` | 191 | 204 | 235 | 293 | 305 |
-| `full` | 212 | 232 | 263 | 328 | 361 |
+| `min` | 163 | 172 | 201 | 252 | 281 |
+| `sys` | 192 | 205 | 237 | 293 | 310 |
+| `full` | 213 | 235 | 265 | 331 | 359 |
 | nano | 114 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 498 / 450 |
+| Fast soft / DSP | — | — | — | — | 497 / 457 |
 
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 125 | 139 | 165 | 233 | 274 |
-| `sys` | 149 | 165 | 200 | 273 | 302 |
-| `full` | 171 | 189 | 228 | 309 | 355 |
+| `min` | 123 | 132 | 165 | 230 | 276 |
+| `sys` | 152 | 163 | 202 | 274 | 306 |
+| `full` | 172 | 194 | 230 | 312 | 354 |
 | nano | 93 | — | — | — | — |
 
-| Agilex 3 ALMs (RF included) | /1 | /2 | /4 | /8 | /16 |
+| Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 99.3 | 111.9 | 118.0 | 132.4 | 125.1 |
-| `sys` | 116.8 | 121.5 | 133.9 | 151.9 | 151.4 |
-| `full` | 131.9 | 144.6 | 151.4 | 170.4 | 218.6 |
+| `min` | 75.5 | 89.0 | 91.1 | 116.6 | 133.9 |
+| `sys` | 91.0 | 95.7 | 112.0 | 133.0 | 155.4 |
+| `full` | 102.0 | 106.8 | 142.0 | 171.1 | 169.0 |
 | nano | 90.2 | — | — | — | — |
 | Fast soft / DSP | — | — | — | — | 277.2 / 235.3 |
-| Faster DSP / soft | — | — | — | — | 310.4 / 328.7 |
+| Faster DSP / soft | — | — | — | — | 310.4 / 310.4 |
 
 | Fmax (MHz) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 33.07 | 30.99 | 28.14 | 25.23 | 24.55 | 31.56 | 24.88 | 21.24 | — | — |
-| iCE40 HX8K | 100.83 | 91.75 | 82.82 | 76.39 | 66.97 | 92.26 | 62.37 | — | — | — |
-| ECP5 LFE5U-25F | 108.37 | 109.23 | 85.70 | 81.07 | 85.16 | 104.07 | 72.96 | 68.00 | — | — |
-| Agilex 3 | 277.16 | 266.81 | 242.95 | 222.87 | 211.51 | 306.37 | 192.57 | 153.63 | 251.76 | 250.31 |
+| iCE40 UP5K | 35.07 | 30.19 | 27.32 | 26.13 | 26.19 | 31.56 | 23.17 | 21.27 | — | — |
+| ECP5 LFE5U-25F | 102.12 | 104.42 | 81.04 | 82.24 | 88.64 | 104.07 | 67.82 | 66.13 | — | — |
+| Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 217.34 | 306.37 | 192.57 | 153.63 | 251.76 | 247.71 |
 
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
 profile; Fast and Faster use `full`.
 
-The iCE40/ECP5 figures are reproducible open-FPGA results. Agilex results are
-Quartus Pro 26.1 post-fit characterizations for `A3CZ135BB18AE7S`; Fmax is a
-restricted-Fmax estimate, not closure at every listed clock. Run
-`make -j16 tables` to regenerate the open-FPGA area/Fmax matrices, benchmarks,
-and the published Agilex report. The Fast Agilex characterization defines
+The iCE40/ECP5 figures are reproducible v0.16 open-FPGA results. The Agilex
+area and Tiny Sys Fmax figures are current Quartus Pro 26.1 post-fit
+characterizations for `A3CZ135BB18AE7S`, using the latest Tiny Min and Tiny RTL.
+Faster soft is a current post-fit characterization. The other non-Tiny
+Agilex Fmax points remain the retained v0.15 characterizations.
+Agilex Fmax is a restricted-Fmax estimate, not closure at every listed clock.
+Run `make -j16 tables` to regenerate the open-FPGA area/Fmax matrices and
+benchmarks; the command prints the current Agilex characterization alongside
+them. The Fast Agilex characterization defines
 `RISCC_FAST_AGILEX` to select the equivalent control-selector copy that packs
 best on that family. The Fast and Faster points use a 4 ns target with Quartus
 High Performance Effort. Faster has validation and benchmark targets but no
@@ -152,18 +173,20 @@ Fast and Faster use their matching full-profile clocks.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 0.93 | 1.60 | 2.49 | 3.49 | 5.82 | 1.02 | 13.82 | 14.38 | — | — |
-| iCE40 HX8K | 2.83 | 4.73 | 7.33 | 10.58 | 15.89 | 2.97 | 34.64 | — | — | — |
-| ECP5 | 3.04 | 5.63 | 7.58 | 11.23 | 20.20 | 3.35 | 40.53 | 46.05 | — | — |
-| Agilex 3 | 7.77 | 13.75 | 21.50 | 30.86 | 50.18 | 9.88 | 106.96 | 104.03 | 119.77 | 104.95 |
+| iCE40 UP5K | 0.98 | 1.56 | 2.42 | 3.62 | 6.24 | 1.02 | 12.87 | 14.40 | — | — |
+| ECP5 | 2.86 | 5.38 | 7.17 | 11.39 | 21.13 | 3.35 | 37.67 | 44.78 | — | — |
+| Agilex 3 | 8.58 | 14.67 | 24.44 | 34.32 | 51.81 | 9.88 | 106.96 | 104.03 | 119.77 | 103.86 |
 
 | Benchmark MIPS/kLUT4 (kLE on Agilex) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 5.5 | 8.5 | 10.9 | 11.8 | 17.7 | 10.9 | 28.9 | 32.8 | — | — |
-| iCE40 HX8K | 16.7 | 25.0 | 32.1 | 35.7 | 48.3 | 32.0 | 72.3 | — | — | — |
-| ECP5 block RF | 17.8 | 29.8 | 33.3 | 36.3 | 56.9 | 36.1 | 81.4 | 102.3 | — | — |
-| ECP5 LUTRAM RF | 14.3 | 24.3 | 28.8 | 34.2 | 56.0 | 29.4 | 81.4 | 102.3 | — | — |
-| Agilex 3 (kLE) | 20.0 | 32.2 | 48.1 | 61.4 | 77.8 | 109.5 | 130.8 | 149.9 | 130.8 | 108.2 |
+| iCE40 UP5K | 6.6 | 9.5 | 12.1 | 13.9 | 22.1 | 10.9 | 26.8 | 32.7 | — | — |
+| ECP5 block RF | 18.8 | 33.0 | 35.5 | 41.6 | 69.1 | 36.1 | 75.8 | 98.0 | — | — |
+| ECP5 LUTRAM RF | 14.9 | 26.3 | 30.3 | 38.9 | 68.2 | 29.4 | 75.8 | 98.0 | — | — |
+| Agilex 3 (kLE) | 32.0 | 52.0 | 74.0 | 87.5 | 113.0 | 109.5 | 130.8 | 149.9 | 130.8 | 113.4 |
+
+The Agilex throughput and efficiency rows are derived from the current Tiny
+area and Fmax characterization; the other Agilex points retain their v0.15
+measurements.
 
 ### Cycle counts
 
@@ -172,14 +195,14 @@ Faster implement `full` only; Nano runs its separate profile.
 
 | Validation cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `min` | 5516 | 3076 | 1856 | 1246 | 737 | — | — | — | — | — |
+| `min` | 5516 | 3076 | 1856 | 1246 | 732 | — | — | — | — | — |
 | `sys` | 9011 | 4971 | 2967 | 1965 | 1194 | — | — | — | — | — |
-| `full` | 10973 | 6013 | 3541 | 2297 | 1381 | — | 558 | 478 | 685 | 755 |
+| `full` | 10973 | 6013 | 3541 | 2297 | 1376 | — | 558 | 478 | 685 | 755 |
 | `nano` | — | — | — | — | — | 3659 | — | — | — | — |
 
 | Common benchmark cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13340 | 261136 | 5698 | 4674 | 6653 | 7549 |
+| `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13276 | 261136 | 5698 | 4674 | 6653 | 7549 |
 
 ## 4. FPGA toolchain
 
@@ -374,6 +397,7 @@ make test-<width>-<profile>   # Tiny width 1/2/4/8/16
 make test-nano
 make test-fast
 make test-faster
+make test-funnel
 make test-all
 make sim-all
 make fuzz-all

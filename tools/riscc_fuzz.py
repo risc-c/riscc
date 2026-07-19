@@ -896,13 +896,21 @@ def build_tb(core, family, config, outdir):
     else:
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
         width = int(core.removeprefix("tiny"))
-        if width == 16:
-            top = "riscc_tiny16"
-            rtl = os.path.join(RTL, "riscc_tiny16.v")
+        if width == 16 and config == "min":
+            top = "riscc_tiny16_min"
+            rtl = os.path.join(RTL, "riscc_tiny16_min.v")
             width_args = []
+        elif width == 16:
+            top = "riscc_tiny16"
+            rtl = os.path.join(RTL, "riscc_tiny16_full.v" if config == "full" else "riscc_tiny16_sys.v")
+            width_args = []
+        elif config == "min":
+            top = "riscc_tiny_min"
+            rtl = os.path.join(RTL, "riscc_tiny_min.v")
+            width_args = ["-GW=%d" % width]
         else:
             top = "riscc_tiny"
-            rtl = os.path.join(RTL, "riscc_tiny.v")
+            rtl = os.path.join(RTL, "riscc_tiny_full.v" if config == "full" else "riscc_tiny_sys.v")
             width_args = ["-GW=%d" % width]
         defs = config_defs(config).split()
         defs += width_args

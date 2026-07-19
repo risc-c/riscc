@@ -55,9 +55,11 @@ VERILATOR_MAKEFLAGS_ARG = $(if $(strip $(VERILATOR_MAKEFLAGS)),-MAKEFLAGS "$(VER
 TINY_WIDTHS := 1 2 4 8 16
 SERIAL_WIDTHS := 1 2 4 8
 
-tiny_rtl = $(if $(filter 16,$(1)),rtl/riscc_tiny16.v,\
-  $(if $(filter min,$(2)),rtl/riscc_tiny_min.v,rtl/riscc_tiny.v))
-tiny_top = $(if $(filter 16,$(1)),riscc_tiny16,\
+tiny_rtl = $(if $(filter 16,$(1)),\
+  $(if $(filter min,$(2)),rtl/riscc_tiny16_min.v,$(if $(filter full,$(2)),rtl/riscc_tiny16_full.v,rtl/riscc_tiny16_sys.v)),\
+  $(if $(filter min,$(2)),rtl/riscc_tiny_min.v,$(if $(filter full,$(2)),rtl/riscc_tiny_full.v,rtl/riscc_tiny_sys.v)))
+tiny_top = $(if $(filter 16,$(1)),\
+  $(if $(filter min,$(2)),riscc_tiny16_min,riscc_tiny16),\
   $(if $(filter min,$(2)),riscc_tiny_min,riscc_tiny))
 tiny_width_arg = $(if $(filter 16,$(1)),,-GW=$(1))
 tiny_yosys_width = $(if $(filter 16,$(1)),,\
@@ -72,7 +74,7 @@ comma_join = $(subst $(space),$(comma),$(strip $(1)))
 
 bench_bin = build/bin/riscc-bench.bin
 nano_bench_bin = build/bin/riscc-bench-nano.bin
-FUNNEL_MIN_BIN := build/bin/riscc-funnel-min.bin
+FUNNEL_BIN := build/bin/riscc-funnel.bin
 
 tiny_tb = build/tb/tiny$(1)-$(2)/tb
 tiny_matrix_tb = build/matrix/tb/tiny$(1)-$(2)/tb
@@ -106,13 +108,11 @@ fast_area_cell = build/area/$(1)/fast/$(2).cells
 faster_tb = build/tb/faster/tb
 ecp5_fmax_cell = build/fmax/ecp5/tiny$(1)-$(2).mhz
 ecp5_nano_fmax_cell = build/fmax/ecp5/nano.mhz
-ice40_fmax_cell = build/fmax/ice40/$(1)/tiny$(2)-$(3).mhz
-ice40_nano_fmax_cell = build/fmax/ice40/$(1)/nano.mhz
+up5k_fmax_cell = build/fmax/ice40/up5k/tiny$(1)-$(2).mhz
+up5k_nano_fmax_cell = build/fmax/ice40/up5k/nano.mhz
 
 tiny_cpp_defs = $(strip \
-  $(if $(filter min,$(1)),-DRISCC_MIN) \
-  $(if $(filter sys full,$(1)),-DRISCC_SYS) \
-  $(if $(filter full,$(1)),-DRISCC_FULL))
+  $(if $(filter min,$(1)),-DRISCC_MIN))
 
 tiny_sim_opts = $(strip \
   $(if $(filter min,$(1)),--min) \
@@ -122,17 +122,24 @@ tiny_sim_opts = $(strip \
 # uses two-pass ABC; selected /16, Sys /1, and Full /2 builds also benefit
 # from flip-flop-aware mapping.
 tiny_area_synth_opts = $(strip \
-  $(if $(and $(filter 16,$(1)),$(filter min,$(2))),-dff, \
-  $(if $(and $(filter 1,$(1)),$(filter sys,$(2))),-abc2 -dff, \
-  $(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2, \
-  $(if $(and $(filter 2 16,$(1)),$(filter full,$(2))),-abc2 -dff, \
-  $(if $(and $(filter 2 4 8,$(1)),$(filter min,$(2))),-abc2))))))
+  $(if $(and $(filter 16,$(1)),$(filter min full,$(2))),-dff) \
+  $(if $(and $(filter 1,$(1)),$(filter sys,$(2))),-abc2 -dff) \
+  $(if $(and $(filter 4,$(1)),$(filter sys,$(2))),-dff) \
+  $(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2) \
+  $(if $(and $(filter 2 4 8,$(1)),$(filter min,$(2))),-abc2))
+
+# Tiny16 Full benefits from ABC2 followed by FF-aware mapping on iCE40; the
+# ECP5 alternatives below retain their independently measured choices.
+tiny_ice40_area_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-abc2 -dff,$(call tiny_area_synth_opts,$(1),$(2)))
 
 # Two serial /2 profiles have different area-best ABC settings on ECP5.
 tiny_ecp5_area_synth_opts = $(strip \
   $(if $(and $(filter 2,$(1)),$(filter min,$(2))),-abc2 -dff, \
   $(if $(and $(filter 2,$(1)),$(filter full,$(2))),-abc2, \
   $(call tiny_area_synth_opts,$(1),$(2)))))
+
+tiny_ecp5_lutram_area_synth_opts = $(if $(and $(filter 1,$(1)),$(filter full,$(2))),-abc2,$(call tiny_ecp5_area_synth_opts,$(1),$(2)))
+tiny_ecp5_block_area_synth_opts = $(if $(and $(filter 8,$(1)),$(filter full,$(2))),-dff,$(call tiny_ecp5_area_synth_opts,$(1),$(2)))
 
 TINY_BINS := $(foreach c,$(TINY_CONFIGS),$(call tiny_bin,$(c)))
 NANO_BINS := $(foreach c,$(NANO_CONFIGS),$(call nano_bin,$(c)))
@@ -149,10 +156,9 @@ TINY_AREA_TARGETS := $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),area
 NANO_AREA_TARGETS := $(foreach c,$(NANO_CONFIGS),$(call nano_area_target,$(c)))
 ECP5_FMAX_CELLS := $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(call ecp5_fmax_cell,$(w),$(c)))) \
                    $(ecp5_nano_fmax_cell)
-ICE40_FMAX_CELLS := $(foreach d,up5k hx8k, \
-                      $(foreach w,$(TINY_WIDTHS), \
-                        $(foreach c,$(TINY_CONFIGS),$(call ice40_fmax_cell,$(d),$(w),$(c)))) \
-                      $(call ice40_nano_fmax_cell,$(d)))
+UP5K_FMAX_CELLS := $(foreach w,$(TINY_WIDTHS), \
+                      $(foreach c,$(TINY_CONFIGS),$(call up5k_fmax_cell,$(w),$(c)))) \
+                    $(up5k_nano_fmax_cell)
 ECP5_MAINLINE_RF_SITES := 24
 ECP5_NANO_RF_SITES := 12
 
@@ -160,7 +166,7 @@ ECP5_NANO_RF_SITES := 12
 # and fmax-<width>-<profile> for Tiny,
 # plus the fixed Nano, Fast, and Faster targets.  The aggregate area/Fmax
 # targets below are the supported way to regenerate published matrices.
-.PHONY: all test-all test-peripherals test-funnel-min clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
+.PHONY: all test-all test-peripherals test-funnel clean FORCE version check-version asm asm-tiny asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
         icepi-zero-demo-bin icepi-zero-demo-iss icepi-zero-demo-iss-test icepi-zero-demo-rtlsim \
         icepi-zero-demo-json icepi-zero-demo-bit icepi-zero-video-test-bit \
         atum-a3-demo-bin atum-a3-demo-iss atum-a3-demo-rtlsim atum-a3-demo \
@@ -187,7 +193,7 @@ version:
 check-version:
 	@test "$$(sed -n 's/^Version: `\([^`]*\)`\.$$/\1/p' doc/RISC-C-ISA.md)" = "$(RISCC_VERSION)"
 
-test-all: test-peripherals test-matrix test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp test-faster test-faster-soft
+test-all: test-peripherals test-matrix test-funnel test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp test-faster test-faster-soft
 
 $(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
 	@mkdir -p $(@D)
@@ -219,7 +225,7 @@ $(call nano_bin,nano): test/test_riscc.asm tools/riscc_asm.py
 	@mkdir -p $(@D)
 	$(PYTHON) tools/riscc_asm.py --profile nano $< -o $@
 
-$(FUNNEL_MIN_BIN): test/test_funnel.asm tools/riscc_asm.py
+$(FUNNEL_BIN): test/test_funnel.asm tools/riscc_asm.py
 	@mkdir -p $(@D)
 	$(PYTHON) tools/riscc_asm.py --profile min $< -o $@
 
@@ -368,10 +374,31 @@ $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(eval $(call TINY_TEST_R
 $(foreach w,$(TINY_WIDTHS),$(eval test-$(w): test-$(w)-sys))
 $(foreach w,$(TINY_WIDTHS),$(eval tb-$(w): $(call tiny_tb,$(w),sys)))
 
-test-funnel-min: $(foreach w,$(SERIAL_WIDTHS),$(call tiny_tb,$(w),min)) $(FUNNEL_MIN_BIN)
-	@for w in $(SERIAL_WIDTHS); do \
-	  build/tb/tiny$$w-min/tb $(FUNNEL_MIN_BIN) --max-cycles 2000 || exit; \
+test-funnel: $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(call tiny_tb,$(w),$(c)))) \
+             $(call fast_tb,) \
+             $(foreach v,dsp ice ice-dsp,$(call fast_tb,$(v))) \
+             $(faster_tb) build/tb/faster-soft/tb $(FUNNEL_BIN) $(RISCC_SIM)
+	@for c in $(TINY_CONFIGS); do \
+	  for w in $(TINY_WIDTHS); do \
+	    build/tb/tiny$$w-$$c/tb $(FUNNEL_BIN) --max-cycles 5000 || exit; \
+	  done; \
 	done
+	@for core in fast fast-dsp fast-ice fast-ice-dsp faster faster-soft; do \
+	  build/tb/$$core/tb $(FUNNEL_BIN) --max-cycles 5000 || exit; \
+	done
+	@for profile in min sys full; do \
+	  opts=""; \
+	  test "$$profile" = min && opts=--min; \
+	  test "$$profile" = full && opts=--full; \
+	  $(RISCC_SIM) $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
+	  $(PYTHON) tools/riscc_sim.py $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
+	done
+	@if $(RISCC_SIM) $(FUNNEL_BIN) --nano --max-insns 5000 >/dev/null 2>&1; then \
+	  echo "C++ ISS accepted FSL1/FSR1 in Nano"; exit 1; \
+	fi
+	@if $(PYTHON) tools/riscc_sim.py $(FUNNEL_BIN) --nano --max-insns 5000 >/dev/null 2>&1; then \
+	  echo "Python ISS accepted FSL1/FSR1 in Nano"; exit 1; \
+	fi
 
 define NANO_TB_RULE
 $(call nano_tb,$(1)): $(TB_SRC) rtl/riscc_nano1.v $(RISCC_RF_RTL)
@@ -450,7 +477,7 @@ build/tb/bench-tiny$(1)/tb: $(TB_SRC) $(call tiny_rtl,$(1),full) $(RISCC_RF_RTL)
 	@mkdir -p $$(@D)
 	@$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module $(call tiny_top,$(1),full) $(call tiny_width_arg,$(1)) \
-	  --prefix Vriscc -Mdir $$(@D) -DRISCC_SYS -DRISCC_FULL \
+	  --prefix Vriscc -Mdir $$(@D) \
 	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
 	  $$(abspath $(call tiny_rtl,$(1),full)) $$(abspath $(TB_SRC)) \
 	  >/dev/null 2>&1
@@ -795,12 +822,12 @@ atum-a3-demo: $(ATUM_SOF)
 
 # ---- Area -------------------------------------------------------------
 
-# Published Quartus Pro core characterization for Agilex 3.  These values are
+# Current Quartus Pro core characterization for Agilex 3.  These values are
 # included in the per-core reports and aggregate table; the open-FPGA area
 # recipes above remain reproducible locally.
-AGILEX_AREA_MIN := 99.3 111.9 118.0 132.4 125.1
-AGILEX_AREA_SYS := 116.8 121.5 133.9 151.9 151.4
-AGILEX_AREA_FULL := 131.9 144.6 151.4 170.4 218.6
+AGILEX_AREA_MIN := 75.5 89.0 91.1 116.6 133.9
+AGILEX_AREA_SYS := 91.0 95.7 112.0 133.0 155.4
+AGILEX_AREA_FULL := 102.0 106.8 142.0 171.1 169.0
 AGILEX_AREA_min := $(AGILEX_AREA_MIN)
 AGILEX_AREA_sys := $(AGILEX_AREA_SYS)
 AGILEX_AREA_full := $(AGILEX_AREA_FULL)
@@ -808,13 +835,13 @@ AGILEX_AREA_NANO := 90.2
 AGILEX_AREA_FAST_SOFT := 277.2
 AGILEX_AREA_FAST_DSP := 235.3
 AGILEX_AREA_FASTER_DSP := 310.4
-AGILEX_AREA_FASTER_SOFT := 328.7
-AGILEX_FMAX_SYS := 277.16 266.81 242.95 222.87 211.51
+AGILEX_AREA_FASTER_SOFT := 310.4
+AGILEX_FMAX_SYS := 305.9 284.5 276.17 247.83 217.34
 AGILEX_FMAX_NANO := 306.37
 AGILEX_FMAX_FAST_SOFT := 192.57
 AGILEX_FMAX_FAST_DSP := 153.63
 AGILEX_FMAX_FASTER_DSP := 251.76
-AGILEX_FMAX_FASTER_SOFT := 250.31
+AGILEX_FMAX_FASTER_SOFT := 247.71
 
 agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
 agilex_tiny_area = $(word $(call agilex_area_index,$(1)),$(AGILEX_AREA_$(2)))
@@ -834,14 +861,14 @@ ecp5_rf_def = $(if $(filter block,$(1)),-DRISCC_ECP5_BLOCK_RF)
 define ICE40_AREA_RULE
 $(call area_cell,ice40,$(1),$(2)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ice40 $(call tiny_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)); stat" \
+	@$$(YOSYS) -p "read_verilog $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ice40 $(call tiny_ice40_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)); stat" \
 	  2>/dev/null | awk '$$$$1=="SB_LUT4"{v=$$$$2} END{print v+0}' > $$@
 endef
 
 define ECP5_AREA_RULE
 $(call area_cell,ecp5,$(1),$(2)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)) -nowidelut; stat" \
+	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) $(call tiny_rtl,$(1),$(2)); $(call tiny_yosys_width,$(1),$(2)) synth_ecp5 $(call tiny_ecp5_lutram_area_synth_opts,$(1),$(2)) -top $(call tiny_top,$(1),$(2)) -nowidelut; stat" \
 	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} END{print l+2*c}' > $$@
 endef
 
@@ -866,7 +893,7 @@ endef
 define ECP5_RF_AREA_RULE
 $(call ecp5_rf_area_cell,$(1),$(2),$(3)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call ecp5_rf_def,$(1)) $(call tiny_cpp_defs,$(3)) $(call tiny_rtl,$(2),$(3)); $(call tiny_yosys_width,$(2),$(3)) synth_ecp5 $(call tiny_ecp5_area_synth_opts,$(2),$(3)) -top $(call tiny_top,$(2),$(3)) -nowidelut; stat" \
+	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call ecp5_rf_def,$(1)) $(call tiny_cpp_defs,$(3)) $(call tiny_rtl,$(2),$(3)); $(call tiny_yosys_width,$(2),$(3)) synth_ecp5 $(if $(filter lutram,$(1)),$(call tiny_ecp5_lutram_area_synth_opts,$(2),$(3)),$(call tiny_ecp5_block_area_synth_opts,$(2),$(3))) -top $(call tiny_top,$(2),$(3)) -nowidelut; stat" \
 	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} $$$$1=="TRELLIS_DPR16X4"{r=$$$$2} END{print l+2*c+6*r}' > $$@
 endef
 
@@ -919,77 +946,67 @@ area-fast: $(call fast_area_cell,ice40,soft) $(call fast_area_cell,ice40,dsp) \
 	@printf 'faster soft: Agilex %s ALM/%s DSP\n' "$(AGILEX_AREA_FASTER_SOFT)" 0
 
 check-fast-dsp: $(call fast_area_cell,ecp5,dsp)
-	@set -- $$(cat $(call fast_area_cell,ecp5,dsp)); test "$$1" -lt 460 -a "$$6" = 1 -a "$$7" = 8
-	@echo "fast ECP5 mapping PASS (<460 occupied LUT sites including RF, one DSP)"
+	@set -- $$(cat $(call fast_area_cell,ecp5,dsp)); test "$$1" -lt 459 -a "$$6" = 1 -a "$$7" = 8
+	@echo "fast ECP5 mapping PASS (<459 occupied LUT sites including RF, one DSP)"
 
 check-fast-ice: $(call fast_area_cell,ice40,soft) $(call fast_area_cell,ice40,dsp)
-	@set -- $$(cat $(call fast_area_cell,ice40,soft)); test "$$1" -lt 490 -a "$$2" = 0 -a "$$3" = 2
-	@set -- $$(cat $(call fast_area_cell,ice40,dsp)); test "$$1" -lt 450 -a "$$2" = 1 -a "$$3" = 2
-	@echo "fast iCE40 mapping PASS (two RF EBRs; soft <490 LUT4, DSP <450 LUT4)"
+	@set -- $$(cat $(call fast_area_cell,ice40,soft)); test "$$1" -lt 482 -a "$$2" = 0 -a "$$3" = 2
+	@set -- $$(cat $(call fast_area_cell,ice40,dsp)); test "$$1" -lt 443 -a "$$2" = 1 -a "$$3" = 2
+	@echo "fast iCE40 mapping PASS (two RF EBRs; soft <482 LUT4, DSP <443 LUT4)"
 
 # ---- Routed core timing ----------------------------------------------
 
 FMAX_TOP := $(RTL_TEST_DIR)/riscc_fmax_top.v
-FMAX_RTL := $(FMAX_TOP) rtl/riscc_fast.v rtl/riscc_tiny.v rtl/riscc_tiny_min.v rtl/riscc_tiny16.v \
+FMAX_RTL := $(FMAX_TOP) rtl/riscc_fast.v rtl/riscc_tiny_sys.v rtl/riscc_tiny_full.v rtl/riscc_tiny_min.v \
+            rtl/riscc_tiny16_sys.v rtl/riscc_tiny16_full.v rtl/riscc_tiny16_min.v \
             rtl/riscc_nano1.v rtl/riscc_rf.vh Makefile
 
-ice40_tiny_fmax_defs = $(strip $(call tiny_cpp_defs,$(3)) \
-  $(if $(filter 16,$(2)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(2) \
-    $(if $(filter min,$(3)),-DRISCC_FMAX_MIN)))
+up5k_tiny_fmax_defs = $(strip $(call tiny_cpp_defs,$(2)) \
+  $(if $(and $(filter 16,$(1)),$(filter min,$(2))),-DRISCC_FMAX_TINY16_MIN, \
+  $(if $(filter 16,$(1)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(1) \
+    $(if $(filter min,$(2)),-DRISCC_FMAX_MIN))))
 
-define ICE40_FMAX_RULE
-$(call ice40_fmax_cell,$(1),$(2),$(3)): $$(FMAX_RTL)
+# Tiny16 Sys maps both smaller and faster with two-pass ABC. Tiny16 Full's
+# compact multiply counter has distinct timing-optimal mappings on iCE40 and
+# ECP5. Keep these choices local to avoid perturbing the rest of the ladder.
+tiny_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2))
+tiny_ecp5_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(call tiny_fmax_synth_opts,$(1),$(2)))
+
+define UP5K_FMAX_RULE
+$(call up5k_fmax_cell,$(1),$(2)): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -q -p "read_verilog $(call ice40_tiny_fmax_defs,$(1),$(2),$(3)) $(call tiny_rtl,$(2),$(3)) $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $$(@:.mhz=.json)"
-	@$$(NEXTPNR_ICE40) --$(1) --package $(if $(filter up5k,$(1)),sg48,ct256) $(if $(filter hx8k,$(1)),--no-promote-globals,) --pcf-allow-unconstrained --freq 10 --seed $$(ICE40_FMAX_SEED) \
+	@$$(YOSYS) -q -p "read_verilog $(call up5k_tiny_fmax_defs,$(1),$(2)) $(call tiny_rtl,$(1),$(2)) $(FMAX_TOP); synth_ice40 $(call tiny_fmax_synth_opts,$(1),$(2)) -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $$(ICE40_FMAX_SEED) \
 	  --json $$(@:.mhz=.json) --asc $$(@:.mhz=.asc) >$$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
 endef
 
-$(foreach d,up5k hx8k,$(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(eval $(call ICE40_FMAX_RULE,$(d),$(w),$(c))))))
+$(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(eval $(call UP5K_FMAX_RULE,$(w),$(c)))))
 
-define ICE40_NANO_FMAX_RULE
-$(call ice40_nano_fmax_cell,$(1)): $$(FMAX_RTL)
-	@mkdir -p $$(@D)
-	@$$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_NANO rtl/riscc_nano1.v $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $$(@:.mhz=.json)"
-	@$$(NEXTPNR_ICE40) --$(1) --package $(if $(filter up5k,$(1)),sg48,ct256) $(if $(filter hx8k,$(1)),--no-promote-globals,) --pcf-allow-unconstrained --freq 10 --seed $$(ICE40_FMAX_SEED) \
-	  --json $$(@:.mhz=.json) --asc $$(@:.mhz=.asc) >$$(@:.mhz=.log) 2>&1
-	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
-endef
-
-$(foreach d,up5k hx8k,$(eval $(call ICE40_NANO_FMAX_RULE,$(d))))
-
-build/fmax/ice40/tiny16.mhz: $(FMAX_RTL)
+$(up5k_nano_fmax_cell): $(FMAX_RTL)
 	@mkdir -p $(@D)
-	@$(YOSYS) -q -p "read_verilog -DRISCC_SYS -DRISCC_FULL rtl/riscc_tiny16.v $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ICE40) --hx8k --package ct256 --pcf-allow-unconstrained --freq 50 \
-	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
-	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
-
-build/fmax/ice40/fast.mhz: $(FMAX_RTL)
-	@mkdir -p $(@D)
-	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_FAST -DRISCC_FAST_SYNC_RF rtl/riscc_fast.v $(FMAX_TOP); synth_ice40 -abc2 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ICE40) --hx8k --package ct256 --pcf-allow-unconstrained --freq 40 \
+	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_NANO rtl/riscc_nano1.v $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 build/fmax/ice40/fast-dsp.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_FAST -DRISCC_FAST_SYNC_RF -DRISCC_FAST_DSP rtl/riscc_fast.v $(FMAX_TOP); synth_ice40 -dsp -abc2 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 \
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 build/fmax/ice40/fast-soft-up5k.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_FAST -DRISCC_FAST_SYNC_RF rtl/riscc_fast.v $(FMAX_TOP); synth_ice40 -abc2 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 \
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 build/fmax/ecp5/tiny16.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
-	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_SYS -DRISCC_FULL rtl/riscc_tiny16.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc_tiny16_full.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
 	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 \
 	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
@@ -997,25 +1014,26 @@ build/fmax/ecp5/tiny16.mhz: $(FMAX_RTL)
 build/fmax/ecp5/fast-dsp.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_FAST -DRISCC_FAST_DSP rtl/riscc_fast.v $(FMAX_TOP); synth_ecp5 -nowidelut -abc2 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 \
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 --seed $(ECP5_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 build/fmax/ecp5/fast-soft.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_FAST rtl/riscc_fast.v $(FMAX_TOP); synth_ecp5 -nowidelut -abc2 -top riscc_fmax_top -json $(@:.mhz=.json)"
-	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 \
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 --seed $(ECP5_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 tiny_fmax_defs = $(strip -DRISCC_ECP5 $(call tiny_cpp_defs,$(2)) \
+  $(if $(and $(filter 16,$(1)),$(filter min,$(2))),-DRISCC_FMAX_TINY16_MIN, \
   $(if $(filter 16,$(1)),,-DRISCC_FMAX_TINY -DRISCC_FMAX_WIDTH=$(1) \
-    $(if $(filter min,$(2)),-DRISCC_FMAX_MIN)))
+    $(if $(filter min,$(2)),-DRISCC_FMAX_MIN))))
 
 define ECP5_FMAX_RULE
 $(call ecp5_fmax_cell,$(1),$(2)): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -q -p "read_verilog $(call tiny_fmax_defs,$(1),$(2)) $(call tiny_rtl,$(1),$(2)) $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(YOSYS) -q -p "read_verilog $(call tiny_fmax_defs,$(1),$(2)) $(call tiny_rtl,$(1),$(2)) $(FMAX_TOP); synth_ecp5 $(call tiny_ecp5_fmax_synth_opts,$(1),$(2)) -nowidelut -top riscc_fmax_top -json $$(@:.mhz=.json)"
 	@$$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $$(ECP5_FMAX_SEED) \
 	  --json $$(@:.mhz=.json) --textcfg $$(@:.mhz=.config) >$$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
@@ -1031,11 +1049,9 @@ $(ecp5_nano_fmax_cell): $(FMAX_RTL)
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 fmax-fast: build/fmax/ice40/fast-soft-up5k.mhz build/fmax/ice40/fast-dsp.mhz \
-           build/fmax/ice40/fast.mhz \
            build/fmax/ecp5/fast-soft.mhz build/fmax/ecp5/fast-dsp.mhz
-	@printf 'fast soft: UP5K %s MHz; HX8K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
+	@printf 'fast soft: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
 	  "$$(cat build/fmax/ice40/fast-soft-up5k.mhz)" \
-	  "$$(cat build/fmax/ice40/fast.mhz)" \
 	  "$$(cat build/fmax/ecp5/fast-soft.mhz)" \
 	  "$(AGILEX_FMAX_FAST_SOFT)"
 	@printf 'fast DSP:  UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
@@ -1053,40 +1069,31 @@ fmax-ecp5: $(ECP5_FMAX_CELLS)
 	@printf '%-24s %7s\n' nano "$$(cat $(ecp5_nano_fmax_cell))"
 
 define TINY_FMAX_TARGET_RULE
-fmax-$(1)-$(2): $(call ice40_fmax_cell,up5k,$(1),$(2)) \
-                $(call ice40_fmax_cell,hx8k,$(1),$(2)) \
+fmax-$(1)-$(2): $(call up5k_fmax_cell,$(1),$(2)) \
                 $(call ecp5_fmax_cell,$(1),$(2))
-	@printf 'tiny%-2s %-5s: UP5K %s MHz; HX8K %s MHz; ECP5 %s MHz\n' \
+	@printf 'tiny%-2s %-5s: UP5K %s MHz; ECP5 %s MHz\n' \
 	  $(1) $(2) \
-	  "$$$$(cat $(call ice40_fmax_cell,up5k,$(1),$(2)))" \
-	  "$$$$(cat $(call ice40_fmax_cell,hx8k,$(1),$(2)))" \
+	  "$$$$(cat $(call up5k_fmax_cell,$(1),$(2)))" \
 	  "$$$$(cat $(call ecp5_fmax_cell,$(1),$(2)))"
 endef
 
 $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(eval $(call TINY_FMAX_TARGET_RULE,$(w),$(c)))))
 
-fmax-nano: $(call ice40_nano_fmax_cell,up5k) \
-           $(call ice40_nano_fmax_cell,hx8k) \
+fmax-nano: $(up5k_nano_fmax_cell) \
            $(ecp5_nano_fmax_cell)
-	@printf 'nano: UP5K %s MHz; HX8K %s MHz; ECP5 %s MHz\n' \
-	  "$$(cat $(call ice40_nano_fmax_cell,up5k))" \
-	  "$$(cat $(call ice40_nano_fmax_cell,hx8k))" \
+	@printf 'nano: UP5K %s MHz; ECP5 %s MHz\n' \
+	  "$$(cat $(up5k_nano_fmax_cell))" \
 	  "$$(cat $(ecp5_nano_fmax_cell))"
 
-define ICE40_FMAX_PRINT
-	@echo "$(1) iCE40, nextpnr seed $(ICE40_FMAX_SEED)"
+fmax-ice40: $(UP5K_FMAX_CELLS)
+	@echo "UP5K iCE40, nextpnr seed $(ICE40_FMAX_SEED)"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@for t in $(TINY_CONFIGS); do printf '%-24s' $$t; \
-	  for w in $(TINY_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/$(1)/tiny$$w-$$t.mhz)"; done; echo; done
-	@printf '%-24s %7s\n' nano "$$(cat $(call ice40_nano_fmax_cell,$(1)))"
-endef
-
-fmax-ice40: $(ICE40_FMAX_CELLS)
-	$(call ICE40_FMAX_PRINT,up5k)
-	$(call ICE40_FMAX_PRINT,hx8k)
+	  for w in $(TINY_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/tiny$$w-$$t.mhz)"; done; echo; done
+	@printf '%-24s %7s\n' nano "$$(cat $(up5k_nano_fmax_cell))"
 
 define FMAX_AGILEX_PRINT
-	@echo "Agilex 3 Fmax (MHz; published Quartus core characterization)"
+	@echo "Agilex 3 Fmax (MHz; current Quartus core characterization)"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@printf '%-24s %7s %7s %7s %7s %7s\n' sys $(AGILEX_FMAX_SYS)
 	@printf '%-24s %7s\n' nano $(AGILEX_FMAX_NANO)
@@ -1147,7 +1154,7 @@ define AREA_PRINT
 endef
 
 define AREA_AGILEX_PRINT
-	@echo "Agilex 3 ALMs (published Quartus core characterization)"
+	@echo "Agilex 3 ALMs (current Quartus core characterization)"
 	@printf '%-32s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@printf '%-32s %7s %7s %7s %7s %7s\n' min $(AGILEX_AREA_MIN)
 	@printf '%-32s %7s %7s %7s %7s %7s\n' sys $(AGILEX_AREA_SYS)

@@ -152,7 +152,10 @@ def main() -> int:
                         emit_label(label)
 
             # Three-register ALU and indexed-load formats.
-            for op in ("ADD", "SUB", "SLT", "SLTU", "AND", "OR", "XOR", "MUL"):
+            for op in (
+                "ADD", "SUB", "SLT", "SLTU", "AND", "OR", "XOR", "MUL",
+                "FSL1", "FSR1",
+            ):
                 for rd in range(8):
                     for ra in range(8):
                         for rb in range(8):

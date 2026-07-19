@@ -55,6 +55,8 @@ struct CycleTable
     uint64_t reg_alu;
     uint64_t slt;
     uint64_t count1_shift;
+    uint64_t funnel_left;
+    uint64_t funnel_right;
     uint64_t ldw_imm;
     uint64_t stw_imm;
     uint64_t index_load;
@@ -83,6 +85,8 @@ constexpr CycleTable TINY16_CYCLES =
     4,  // register ALU
     5,  // SLT/SLTU
     3,  // count-1 SHRI/SARI in min/sys builds
+    5,  // FSL1 stages its result through MDR writeback
+    4,  // FSR1 follows the normal two-source execute path
     6,  // LDW rd, [ra+simm8]
     5,  // STW rd, [ra+simm8]
     7,  // LDWX/LDB/LDBS
@@ -105,6 +109,8 @@ CycleTable cycle_table_for_fast(bool dsp)
         1,              // register ALU
         1,              // SLT/SLTU
         1,              // count-one shift completes directly in execute
+        1,              // FSL1
+        1,              // FSR1
         2,              // one load-response stall; younger fetch is retained
         2,              // immediate store consumes one fetch slot
         2,              // one load-response stall; younger fetch is retained
@@ -141,6 +147,8 @@ CycleTable cycle_table_for_tiny_width(int width)
     t.reg_alu = 3 + 2 * pass;
     t.slt = 3 + 3 * pass;
     t.count1_shift = 3 + 2 * pass;
+    t.funnel_left = 3 + 3 * pass;
+    t.funnel_right = 3 + 3 * pass;
     t.ldw_imm = 4 + 3 * pass;
     t.stw_imm = 3 + 3 * pass;
     t.index_load = 4 + 4 * pass;
@@ -713,6 +721,23 @@ struct Sim
                     throw std::runtime_error("SHLI is not in the min profile");
                 r[rd] = static_cast<uint16_t>(r[ra] << (rb + 1));
                 instr_cycles = cycle.variable_shift(static_cast<int>(rb + 1));
+            }
+            else if (func == 0x12 || func == 0x13)
+            {
+                if (opts.nano)
+                    throw std::runtime_error("funnel shift in nano");
+                uint16_t a = r[ra];
+                uint16_t b = r[rb];
+                if (func == 0x13)
+                {
+                    r[rd] = static_cast<uint16_t>((a << 1) | (b >> 15));
+                    instr_cycles = cycle.funnel_left;
+                }
+                else
+                {
+                    r[rd] = static_cast<uint16_t>((a >> 1) | (b << 15));
+                    instr_cycles = cycle.funnel_right;
+                }
             }
             else if (func == 0x0b)
             {

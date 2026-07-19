@@ -186,6 +186,9 @@ exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, `__RISCC_MIN__`, or
 uses register-target calls and jumps where a profile lacks `JAL16`. Nano has
 no S-register bank or TLS and receives a call link in allocatable `r6`; see the
 [C and object ABI](RISC-C-ABI.md#nano-register-variant).
+On the mainline profiles, one-bit LLVM funnel shifts and the corresponding
+limb patterns in 32-bit shifts select `FSL1`/`FSR1`; Nano expands the same
+operations using its base instruction set.
 
 The compiler supports C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS
 objects, stack frames, aggregate calls and returns, function pointers,

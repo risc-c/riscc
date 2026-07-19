@@ -63,6 +63,8 @@ R_FUNC = {
     "SARI": 0x0D,
     "LDBS": 0x0E,
     "SHLI": 0x0F,
+    "FSL1": 0x13,
+    "FSR1": 0x12,
     "SYS": 0x1F,
 }
 
@@ -525,7 +527,10 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         ra = reg(operands[1])
         return encode_word(enc_r(rd, ra, R_FUNC["ADD"], ra))
 
-    if op in ("ADD", "SUB", "AND", "OR", "XOR", "SLT", "SLTU", "MUL"):
+    if op in (
+        "ADD", "SUB", "AND", "OR", "XOR", "SLT", "SLTU", "MUL",
+        "FSL1", "FSR1",
+    ):
         n_ops(3, f"{op} rd, ra, rb")
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]), R_FUNC[op], reg(operands[2])))
 

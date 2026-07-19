@@ -1,16 +1,14 @@
-// riscc_tiny.v : parameterized serial RISC-C core (W=1, 2, 4, or 8).
+// riscc_tiny_sys.v : parameterized serial RISC-C Sys core (W=1, 2, 4, or 8).
 //
-// Shared serial microarchitecture: doc/HARDWARE.md 'Implementation family' (branch
+// Serial microarchitecture: doc/HARDWARE.md 'Implementation family' (branch
 // shadow, one PC adder, address/data streams, and the INIT2 staging lap).
-// W must be 1, 2, 4, or 8.  This is the canonical implementation of all
-// four serial datapath widths.
+// W must be 1, 2, 4, or 8; Min uses riscc_tiny_min.v.
 
-`ifndef RISCC_TINY_V
-`define RISCC_TINY_V
+`ifndef RISCC_TINY_SYS_V
+`define RISCC_TINY_SYS_V
 `default_nettype none
 
-// Every tiny profile has SLT and LDBS.  sys adds variable shifts; full adds
-// MUL, whose pass loop rides the shift machinery.
+// Sys is the baseline profile.
 
 module riscc_tiny #(
     parameter integer W = 4,
@@ -40,45 +38,6 @@ module riscc_tiny #(
     // State and serial-slice counter
     // ------------------------------------------------------------------
     // The encoding is area-tuned: state_q[2] enables all counted states.
-`ifndef RISCC_SYS
-    localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 : 3'd2;
-    localparam [2:0] ST_FETCH_CAPTURE = 3'd1;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 : 3'd0;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd0 : 3'd3;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd5 : 3'd4;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd6 : 3'd5;
-    localparam [2:0] ST_INIT          = (W == 1) ? 3'd7 : 3'd6;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd4 : 3'd7;
-`elsif RISCC_FULL
-`ifdef RISCC_ECP5
-    // ECP5 full-profile state codes are tuned independently for W=1, W=2,
-    // and the wide pair; this reduces both block-RF and LUTRAM mappings.
-    localparam [2:0] ST_FETCH_WAIT    = 3'd0;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd1 : 3'd3;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd3 : 3'd1;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 : 3'd2;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd5 : 3'd6;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd7 : 3'd5;
-    localparam [2:0] ST_INIT          = 3'd4;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 : 3'd7;
-`else
-    localparam [2:0] ST_FETCH_WAIT    = (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd3 : 3'd0;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd0 : 3'd1;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd2 :
-                                               (W == 4) ? 3'd1 : 3'd3;
-    localparam [2:0] ST_MEM_WAIT      = (W <= 2) ? 3'd1 : 3'd2;
-    localparam [2:0] ST_EXECUTE       = (W <= 2) ? 3'd5 : 3'd6;
-    localparam [2:0] ST_MEM_XFER      = (W <= 2) ? 3'd7 : 3'd5;
-    localparam [2:0] ST_INIT          = 3'd4;
-    localparam [2:0] ST_INIT2         = (W <= 2) ? 3'd6 : 3'd7;
-`endif
-`else
 `ifdef RISCC_ECP5
     // The area-minimum /4 encoding costs substantial ECP5 timing for one
     // site. Use the timing-tuned 200-site encoding instead.
@@ -105,7 +64,6 @@ module riscc_tiny #(
     localparam [2:0] ST_INIT2         = (W == 1) ? 3'd4 :
                                                (W == 2) ? 3'd6 :
                         ECP5_SYS_W4_TIMING ? 3'd6 : 3'd5;
-`endif
 
     reg  [2:0] state_q;
     reg  [SLICE_BITS-1:0] slice_idx_q;
@@ -142,155 +100,98 @@ module riscc_tiny #(
     wire register_group  = op_class[1] &  op_class[0];    // 11 register
 
     wire branch_group = immediate_group & (aaa == 3'b111) & ~trap_active;
-    wire immediate_alu_op = immediate_group & ~branch_group;
+    // A preempted branch is still not an ALU operation; trap writeback and
+    // the IRQ PC path override its normal result. This broader W=1 form maps
+    // smaller than routing trap_active through the branch decoder.
+    wire immediate_alu_op = immediate_group &
+        ((W == 1) ? ~(&aaa) : ~branch_group);
     wire add_immediate_op = immediate_group & (aaa == 3'b010);
-    wire cmpi_op = immediate_group & (aaa == 3'b011);
+    // Branches share aaa[1:0] with CMPI, but never consume the ALU result.
+    wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-`ifdef RISCC_SYS
     wire jal16_op = system_op & bbb[2] & ~bbb[1] & bbb[0];
-`else
-    // JAL16 is in the sys profile; min makes far calls with LDI16 + JAL.
-    wire jal16_op = 1'b0;
-`endif
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_00 = ~f5[4] & ~f5[3];
     wire f_group_01 = ~f5[4] &  f5[3];
-`ifdef RISCC_FULL
-    // At W>1 the reserved 10_xxx plane may alias system operations.
-    wire f_group_11 = f5[4] & (f5[3] | (W != 1));
-`else
+    // FSL1/FSR1 occupy 10_010/10_011. Undefined encodings in the reserved
+    // 10_xxx plane may alias them where that makes the decode smaller.
     wire f_group_11 = f5[4] & f5[3];
-`endif
     wire system_op = register_group & f_group_11;
 
-    wire slt_op = register_alu_op & ~f5[2] & f5[1];
+    wire slt_op =
+        ((W == 1) ? (register_group & ~f5[3]) : register_alu_op) &
+        ~f5[2] & f5[1];
     wire signed_compare = ~instr_q[3];
-    // SHRI/SARI (01_100/101) shift by one in min. In sys/full EXECUTE repeats
-    // bbb+1 times; SHLI occupies 01_111.
-    wire right_shift_op = register_group & f_group_01 & f5[2] & ~f5[1];
-`ifdef RISCC_FULL
-    // MUL rd, ra, rb takes 16 EXECUTE passes.  The product accumulates in rd
-    // via the RF read-old/write-new path, ra doubles through data_stream_q's
-    // SHLI recycle path, and rb parks in address_stream_q.  mul_bit_buffer_q
-    // emits one bit per pass and reloads W bits at each W-pass boundary.
-    // The final pass refills the fetch address stream.
-    reg  [W-1:0] mul_bit_buffer_q;
-    wire mul_bit = mul_bit_buffer_q[0];
-    wire multiply_op = register_group & f_group_00 & (&f5[2:0]);
-`else
+    // SHRI/SARI (01_100/101) and SHLI (01_111) repeat EXECUTE bbb+1
+    // times.
+    wire right_shift_op =
+        register_group & f_group_01 & f5[2] & ~f5[1];
     wire mul_bit = 1'b0;
     wire multiply_op = 1'b0;
-`endif
-`ifdef RISCC_SYS
     wire left_shift_op = register_group & f_group_01 &
                          f5[2] & f5[1] & f5[0];
     wire variable_shift_op = right_shift_op | left_shift_op;
     wire arithmetic_shift = f5[0];
-    wire use_left_shift_path = left_shift_op | multiply_op;
+    // SHLI and FSL1 share f5[1:0]=11; FSR1 has f5[1:0]=10.
+    wire use_left_shift_path = f5[1] & f5[0];
     // Previous slice's MSB, used as the SHLI carry-in.
     reg left_shift_carry_q;
-`ifdef RISCC_FULL
-    reg  [3:0] repeat_pass_idx_q;
-    localparam [3:0] MUL_RELOAD_MASK =
-        (W == 1) ? 4'h0 : (W == 2) ? 4'h1 :
-        (W == 4) ? 4'h3 : 4'h7;
-    wire mul_reload_boundary =
-        (repeat_pass_idx_q & MUL_RELOAD_MASK) == MUL_RELOAD_MASK;
-    // ~trap_active: a preempted shift/MUL must not drive the pass loop -- the
-    // looping trap EXECUTE re-parks pc_carry_q and corrupts EPC.
-    wire repeat_exec = (variable_shift_op | multiply_op) & ~trap_active &
-                       (repeat_pass_idx_q != 4'hF);
-    // Pass zero starts with a cleared product.
-    wire mul_clear_product = multiply_op & in_execute &
-                             (repeat_pass_idx_q == 4'd0);
-`else
     reg  [2:0] repeat_pass_idx_q;
     // ~trap_active: see the FULL branch note -- preempted shifts must not loop
     wire repeat_exec = variable_shift_op & ~trap_active &
                        (repeat_pass_idx_q != 3'h7);
     wire mul_clear_product = 1'b0;
-`endif
-`else
-    // Min: SHRI/SARI count-one only; immediate shifts are undefined.
-    wire variable_shift_op = 1'b0;
-    wire arithmetic_shift = f5[0];
-    wire repeat_exec = 1'b0;
-    wire mul_clear_product = 1'b0;
-`endif
-`ifndef RISCC_SYS
-    // SHLI is undefined in min and may alias ordinary logic.
-    wire register_alu_op = register_group & f_group_00;
-`else
-    wire register_alu_op = register_group & f_group_00 & ~(&f5[2:0]);
-`endif
-    wire any_shift_op = right_shift_op | variable_shift_op;
+    // Sys has no MUL. At /2 and /8, letting its reserved selector alias the
+    // ALU/funnel planes removes the low-function comparator; /1 and /4 map
+    // smaller with the selector excluded.
+    wire register_alu_op =
+        register_group &
+        ((W == 1) ? f_group_00 : ~f5[3]) &
+        (((W == 2) | (W == 8)) ? 1'b1 : ~(&f5[2:0]));
+    wire funnel_writeback_op =
+        (W == 1) ? (slt_op & f5[4]) : (register_alu_op & f5[4]);
+    wire shift_writeback_op = variable_shift_op | funnel_writeback_op;
 
     // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB.
     // This placement makes every byte operation share f5[1].
     wire register_memory_plane = register_group & f_group_01;
     wire register_store_op = register_memory_plane & ~f5[2] &
                              f5[1] & f5[0];
-`ifdef RISCC_FULL
-    // The reserved 01_001 slot may alias an indexed load.  Factoring the
-    // broad memory plane before removing STB maps smaller in full builds.
-    wire register_memory_op = register_memory_plane &
-                              (~f5[2] | (f5[1] & ~f5[0]));
-    wire indexed_mem_op = register_memory_op & ~register_store_op;
-`else
     wire indexed_mem_op = register_memory_plane & ~f5[0] &
-                          (~f5[2] | f5[1]);
-`endif
+        ((W == 1) ? (~f5[2] | f5[1]) : ~right_shift_op);
 
     // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
     // selectors are 000/111, so any ccc bit is the new IE value.
-`ifdef RISCC_SYS
 `ifdef RISCC_ECP5
     // The architectural selectors are 000/111, so these are equivalent
     // constant bit choices.  Keep the copy that routes best for each width.
-`ifdef RISCC_FULL
-    localparam integer CONTROL_IE_BIT = (W == 1) ? 2 :
-                                          (W <= 4) ? 1 : 0;
-`else
     localparam integer CONTROL_IE_BIT = (W <= 2) ? 1 :
                                           (W == 4) ? 2 : 0;
-`endif
-`else
-`ifdef RISCC_FULL
-    localparam integer CONTROL_IE_BIT = (W == 1) ? 0 :
-                                 ((W == 2) || (W == 8)) ? 1 : 2;
 `else
     localparam integer CONTROL_IE_BIT = ((W == 2) || (W == 8)) ? 1 : 2;
 `endif
-`endif
     wire control_ie_value = ddd[CONTROL_IE_BIT];
     wire return_sets_ie = return_op & control_ie_value;
-`endif
     wire return_op = system_op & ~bbb[1] & ~bbb[0];
     wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-`ifdef RISCC_SYS
     wire link_context = register_jal_op | jal16_target_phase_q;
     wire register_target_op = system_op & ~bbb[1] & ~(bbb[2] & bbb[0]);
-`else
-    // Min implements only the bbb[2]=0 plane; sys-only slots alias freely.
-    wire link_context = system_op & ~bbb[1] & bbb[0];
-    wire register_target_op = system_op & ~bbb[1];
-`endif
 
     wire store_op = (imm_mem_group & op_class[0]) | register_store_op;
     wire load_op = (imm_mem_group & ~op_class[0]) | indexed_mem_op;
     wire mem_op = store_op | load_op;
     wire byte_access = register_group & f5[1];
     wire sign_extend_byte = f5[2];
-    wire needs_rb_pass = register_alu_op | indexed_mem_op;
+    wire alu_uses_rb_stream = register_alu_op | indexed_mem_op;
+    wire needs_rb_pass = alu_uses_rb_stream | ((W == 1) & slt_op);
     wire needs_init_pass = mem_op | slt_op | multiply_op;
 
     // ------------------------------------------------------------------
     // System profile
     // ------------------------------------------------------------------
-`ifdef RISCC_SYS
     reg ie_q;
     reg trap_q;
     wire ie_control_op = system_op & bbb[2] & bbb[1];
@@ -300,20 +201,12 @@ module riscc_tiny #(
     // through FETCH_WAIT/FETCH_CAPTURE, so no decode occurs mid-JAL16.
     wire take_irq = ie_q & irq;
     wire trap_active = trap_q;
-`else
-    wire take_irq = 1'b0;
-    wire trap_active = 1'b0;
-`endif
 
     // ------------------------------------------------------------------
     // Two-word JAL16/JMP16 sequencing.  The flag is set after the first-word
     // pass and spans the target-word fetch plus its jump/link pass.
     // ------------------------------------------------------------------
-`ifdef RISCC_SYS
     reg jal16_target_phase_q;
-`else
-    wire jal16_target_phase_q = 1'b0;
-`endif
 
     // ------------------------------------------------------------------
     // Register file: 16 regs x 16 bits in one synchronous RAM (one EBR),
@@ -322,27 +215,38 @@ module riscc_tiny #(
     // Read schedule (one stream at a time):
     //   INIT2 first lap : rb  -> data_stream_q        (reg-reg ALU, indexed memory)
     //   INIT            : rs1 -> ALU        (alu_b_raw = imm or rotating data_stream_q)
-    //   store-data lap  : rd  -> data_stream_q        (second INIT2 or
-    //                                                   MEM_XFER by mapping)
+    //   store-data lap  : rd  -> data_stream_q        (MEM_XFER normally;
+    //                                                   second INIT2 for
+    //                                                   wide ECP5 Full)
     //   EXECUTE         : rs1 -> ALU / pc_q   (single-stage ops)
     // ------------------------------------------------------------------
-`ifndef RISCC_SYS
-`define RISCC_TINY_STORE_INIT2
-`elsif RISCC_FULL
-`ifndef RISCC_ECP5
-`define RISCC_TINY_STORE_MEM_XFER
-`endif
-`else
-`define RISCC_TINY_STORE_MEM_XFER
-`endif
-`ifndef RISCC_TINY_STORE_MEM_XFER
-    // Min and wide ECP5 full builds retain the second INIT2 store-data lap.
+    // This private define compile-removes the alternate scheduler everywhere
+    // except the one mapping that benefits from it; it is not a build option.
+`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
+    // A second INIT2 store-data lap maps smaller for ECP5 Full /4 and /8.
+    // /1 and /2 keep the normal MEM_XFER lap.
+    localparam STORE_DATA_IN_SECOND_INIT2 = (W >= 4);
     reg init_pass_done_q;
-`endif
-`ifdef RISCC_FULL
-`ifdef RISCC_ECP5
-    localparam STORE_DATA_IN_MEM_XFER = (W <= 2);
-`endif
+    wire init2_operand_pass =
+        in_init2 &
+        (~STORE_DATA_IN_SECOND_INIT2 | ~init_pass_done_q);
+    wire store_data_init2_pass =
+        in_init2 & STORE_DATA_IN_SECOND_INIT2 & init_pass_done_q;
+    wire store_data_mem_pass =
+        in_mem_xfer & ~STORE_DATA_IN_SECOND_INIT2 & store_op;
+    wire memory_stream_pass =
+        in_mem_xfer & (STORE_DATA_IN_SECOND_INIT2 | ~store_op);
+    wire init_after_init2 =
+        needs_init_pass &
+        (~STORE_DATA_IN_SECOND_INIT2 | ~init_pass_done_q);
+`else
+    localparam STORE_DATA_IN_SECOND_INIT2 = 1'b0;
+    wire init_pass_done_q = 1'b0;
+    wire init2_operand_pass = in_init2;
+    wire store_data_init2_pass = 1'b0;
+    wire store_data_mem_pass = in_mem_xfer & store_op;
+    wire memory_stream_pass = in_mem_xfer & ~store_op;
+    wire init_after_init2 = needs_init_pass;
 `endif
     // bbb[0] is the bank-select bit: 0 reads S[aaa], 1 writes S[ddd]
     // (links share MTS's write path; CLI/STI have no RF traffic).
@@ -354,26 +258,12 @@ module riscc_tiny #(
 
     wire rf_read_rb =
         (needs_rb_pass &
-`ifdef RISCC_TINY_STORE_INIT2
-         (in_decode | (in_init2 & ~init_pass_done_q & ~last_slice))) |
-`elsif RISCC_TINY_STORE_MEM_XFER
-         (in_decode | (in_init2 & ~last_slice))) |
-`else
-         (in_decode | (in_init2 &
-          (STORE_DATA_IN_MEM_XFER | ~init_pass_done_q) & ~last_slice))) |
-`endif
+         (in_decode | (init2_operand_pass & ~last_slice))) |
         (multiply_op & ((in_init2 & last_slice) |
                         (in_init & ~last_slice)));
     wire rf_read_rd = (in_init & last_slice & (store_op | multiply_op)) |
-`ifdef RISCC_TINY_STORE_INIT2
-                      (in_init2 & init_pass_done_q) |
-`elsif RISCC_TINY_STORE_MEM_XFER
-                      (in_mem_xfer & store_op) |
-`else
-                      (in_init2 & ~STORE_DATA_IN_MEM_XFER &
-                       init_pass_done_q) |
-                      (in_mem_xfer & STORE_DATA_IN_MEM_XFER & store_op) |
-`endif
+                      store_data_init2_pass |
+                      store_data_mem_pass |
                       (in_execute & multiply_op);
     wire [3:0] rf_read_reg = rf_read_rb ? {1'b0, bbb} :
                                  rf_read_rd ? {1'b0, ddd} : rf_src_reg;
@@ -382,15 +272,8 @@ module riscc_tiny #(
     // byte lands in data_stream_q[15:8], avoiding a byte-duplication mux.
     wire store_high_byte = byte_access & store_op;
     wire rf_read_lane_flip =
-`ifdef RISCC_TINY_STORE_INIT2
-        (in_init2 & init_pass_done_q & store_high_byte & address_stream_q[0]) |
-`elsif RISCC_TINY_STORE_MEM_XFER
-        (in_mem_xfer & store_op & store_high_byte & address_stream_q[0]) |
-`else
-        (((in_init2 & ~STORE_DATA_IN_MEM_XFER & init_pass_done_q) |
-          (in_mem_xfer & STORE_DATA_IN_MEM_XFER & store_op)) &
+        ((store_data_init2_pass | store_data_mem_pass) &
          store_high_byte & address_stream_q[0]) |
-`endif
         (in_init & last_slice & store_high_byte & address_stream_q[W]);
     wire [SLICE_BITS-1:0] byte_lane_offset =
         {rf_read_lane_flip, {(SLICE_BITS-1){1'b0}}};
@@ -399,11 +282,9 @@ module riscc_tiny #(
         byte_lane_offset;
 
     wire writes_rd = immediate_alu_op | register_alu_op | load_op |
-                     any_shift_op | multiply_op | system_move_op |
+                     shift_writeback_op | multiply_op | system_move_op |
                      (link_dest_nonzero & link_context);
-`ifdef RISCC_FULL
-    wire rf_we = in_execute & (trap_active | writes_rd);
-`elsif RISCC_ECP5
+`ifdef RISCC_ECP5
     // The direct form keeps the faster ECP5 writeback placement.
     wire rf_we = in_execute & (trap_active | writes_rd);
 `else
@@ -437,7 +318,12 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     // LUI rotates the zero-extended imm8 stream by one byte.  Since SLICES is
     // a power of two, flipping the counter MSB performs that rotation.
-    wire sign_extend_imm = imm_mem_group | add_immediate_op | cmpi_op | branch_group;
+    // ADDI/CMPI and branches sign-extend. Their selectors factor as
+    // 01x and 111; the remaining immediate ALU operations zero-extend.
+    wire sign_extend_imm = (W == 1) ?
+        (imm_mem_group | add_immediate_op | cmpi_op | branch_group) :
+        (imm_mem_group |
+         (immediate_group & aaa[1] & (~aaa[2] | aaa[0])));
     wire lui_op = immediate_group & (aaa == 3'b001);
     wire [SLICE_BITS-1:0] immediate_slice_index =
         slice_idx_q ^ {lui_op, {(SLICE_BITS-1){1'b0}}};
@@ -450,26 +336,18 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     // Serial ALU (also generates the memory address)
     // ------------------------------------------------------------------
-    // The smaller store schedule trades one extra pass for one LUT4 only in
-    // sys /1 and full /4,/8. Min retains its original direct-store path.
-`ifdef RISCC_SYS
-`ifdef RISCC_FULL
-    wire slow_direct_store = (W == 4) | (W == 8);
-`else
+    // The smaller store schedule trades one extra pass for less logic in
+    // Sys /1 and Full /4,/8.
     wire slow_direct_store = (W == 1);
-`endif
     wire direct_store_stream_base = register_store_op & slow_direct_store;
-`endif
-`ifndef RISCC_SYS
-    wire alu_a_enable = ~(immediate_group & ~aaa[2] & ~aaa[1]);
-    wire alu_b_zero = system_op | register_store_op;
-`else
     wire alu_a_enable =
         ~(immediate_group & ~aaa[2] & ~aaa[1]) & ~direct_store_stream_base;
     wire alu_b_zero = system_op |
                      ((W != 1) & register_store_op & ~slow_direct_store);
-`endif
-    wire alu_subtract = (register_alu_op & ~f5[2] & (f5[1] | f5[0])) | cmpi_op;
+    // Logic operations ignore the adder, so their low function bits may
+    // alias this control without decoding f5[2].
+    wire alu_subtract =
+        (register_alu_op & (f5[1] | f5[0])) | cmpi_op;
 
     // During SLT EXECUTE, force both operands (and alu_b_raw inversion) to
     // zero so the comparison result rides the parked carry into result bit 0.
@@ -478,12 +356,8 @@ module riscc_tiny #(
     wire [W-1:0] alu_a =
         rf_rdata & {W{alu_a_enable & ~slt_execute & ~mul_clear_product}};
     wire [W-1:0] alu_b_raw =
-`ifndef RISCC_SYS
-        ((needs_rb_pass | multiply_op) ? data_stream_q[W-1:0] : imm_slice) &
-`else
         ((needs_rb_pass | multiply_op | direct_store_stream_base) ?
          data_stream_q[W-1:0] : imm_slice) &
-`endif
                        {W{~(alu_b_zero | slt_execute) &
                           (~multiply_op | (in_execute & mul_bit))}};
     wire [W-1:0] alu_b = alu_b_raw ^ {W{alu_subtract & ~slt_execute}};
@@ -500,15 +374,9 @@ module riscc_tiny #(
         (rf_rdata[W-1] & signed_compare) ^
         ~(alu_b_raw[W-1] & signed_compare) ^ alu_sum_ext[W];
 
-`ifdef RISCC_FULL
-    always @(posedge clk)   // each MUL pass adds afresh: clear between passes
-        alu_carry_q <= (slt_op & in_init & last_slice) ? less_than_result :
-                    alu_active ? (alu_sum_ext[W] & ~(last_slice & repeat_exec)) : alu_subtract;
-`else
     always @(posedge clk)
         alu_carry_q <= (slt_op & in_init & last_slice) ? less_than_result :
                     alu_active                     ? alu_sum_ext[W] : alu_subtract;
-`endif
 
     wire logic_op = (immediate_alu_op & aaa[2]) | (register_alu_op & f5[2]);
     // 00 AND, 01 OR, 10 XOR.
@@ -532,56 +400,34 @@ module riscc_tiny #(
         pc_msb_q <= in_execute ? next_pc_slice[W-1] : 1'b0;
         if (rst)
             address_stream_q <= {RESET_PC[14:0], 1'b0};
-`ifdef RISCC_FULL
-        // During MUL, address_stream_q parks the multiplier.  Rotate one
-        // slice at each W-pass boundary; the final pass refills the fetch
-        // address stream.
-        else if (in_init | (in_execute & (~(multiply_op & repeat_exec) |
-                                       (last_slice & mul_reload_boundary))))
-            address_stream_q <= {
-                in_init ?
-`ifndef RISCC_SYS
-                          alu_sum :
-`else
-                          (((W == 1) & register_store_op &
-                            ~slow_direct_store) ? rf_rdata : alu_sum) :
-`endif
-                (multiply_op & repeat_exec) ? address_stream_q[W-1:0] :
-                next_fetch_address_slice,
-                address_stream_q[15:W]};
-`else
         else if (in_init | in_execute)
             address_stream_q <= {
                 in_init ?
-`ifndef RISCC_SYS
-                          alu_sum :
-`else
                           (((W == 1) & register_store_op &
                             ~slow_direct_store) ? rf_rdata : alu_sum) :
-`endif
                           next_fetch_address_slice,
                 address_stream_q[15:W]};
-`endif
     end
 
-    // Shift operations stream rs1 into data_stream_q during INIT2.  As that
-    // stream rotates, result slice k is data_stream_q[W:1].
-    wire right_shift_input =
-        last_slice ? (arithmetic_shift & data_stream_q[W-1]) :
-                     data_stream_q[W];
+    // Shift and funnel operations stream ra into data_stream_q. Funnels also
+    // retain one boundary bit from the rb stream without widening the
+    // datapath.
+    reg funnel_bit_q;
+    wire right_shift_input = last_slice ?
+        (f5[4] ? funnel_bit_q :
+                 (arithmetic_shift & data_stream_q[W-1])) :
+        data_stream_q[W];
     wire [W-1:0] right_shift_slice =
         (data_stream_q[W-1:0] >> 1) |
         ({{(W-1){1'b0}}, right_shift_input} << (W - 1));
-`ifdef RISCC_SYS
-    // A left shift appends the previous slice's delayed MSB.
-    wire left_shift_input = ~first_slice & left_shift_carry_q;
+    // A left shift appends the previous slice's delayed MSB. FSL1 inserts
+    // rb[15] in the first result slice instead.
+    wire left_shift_input = first_slice ?
+        (f5[4] & left_shift_carry_q) : left_shift_carry_q;
     wire [W-1:0] shift_result_slice = use_left_shift_path ?
         ((data_stream_q[W-1:0] << 1) |
          {{(W-1){1'b0}}, left_shift_input}) :
         right_shift_slice;
-`else
-    wire [W-1:0] shift_result_slice = right_shift_slice;
-`endif
 
     // ------------------------------------------------------------------
     // Data stream: operands, stores, loads, and JAL16 targets
@@ -612,63 +458,27 @@ module riscc_tiny #(
     always @(posedge clk) begin
         // MUL holds A in data_stream_q during INIT.
         if (slice_count_en & ~(in_init & multiply_op))
-`ifdef RISCC_SYS
             // Repeated shift/MUL passes recycle the stream's shifted output.
             data_stream_q <= {
-`ifdef RISCC_TINY_STORE_MEM_XFER
-                (in_mem_xfer & ~store_op) ? load_stream_slice :
-`else
-                (in_mem_xfer &
-                 (~STORE_DATA_IN_MEM_XFER | ~store_op)) ? load_stream_slice :
-`endif
+                memory_stream_pass ? load_stream_slice :
                 (in_execute & (variable_shift_op | multiply_op)) ?
                     shift_result_slice : rf_rdata,
                 data_stream_q[15:W]};
-`else
-            data_stream_q <= {
-                in_mem_xfer ? load_stream_slice : rf_rdata,
-                data_stream_q[15:W]};
-`endif
         if (in_mem_xfer) begin
             memory_lane_q <= address_stream_q[0];
             load_fill_q <= sign_extend_byte &
                            (address_stream_q[0] ?
                                 mem_rdata[15] : mem_rdata[7]);
         end
-`ifdef RISCC_SYS
+        if (in_init & first_slice)
+            funnel_bit_q <= data_stream_q[0];
         left_shift_carry_q <= data_stream_q[W-1];
         if (in_decode)
-`ifdef RISCC_FULL
-            repeat_pass_idx_q <= multiply_op ? 4'd0 : {1'b1, ~bbb};
-`else
             repeat_pass_idx_q <= ~bbb;  // count to 7: bbb+1 passes
-`endif
         else if (in_execute & last_slice & repeat_exec)
             repeat_pass_idx_q <= repeat_pass_idx_q + 1'b1;
-`endif
     end
 
-`ifdef RISCC_FULL
-    generate
-        // At W=1 the multiplier consumes a new bit every pass, so no
-        // shiftable refill buffer is needed.
-        if (W == 1) begin : g_w1_mul_bit
-            always @(posedge clk)
-                if ((in_init & last_slice & multiply_op) |
-                    (in_execute & last_slice & repeat_exec & multiply_op))
-                    mul_bit_buffer_q <= address_stream_q[1];
-        end else begin : g_wide_mul_bits
-            always @(posedge clk) begin
-                if ((in_init & last_slice & multiply_op) |
-                    (in_execute & last_slice & repeat_exec & multiply_op &
-                     mul_reload_boundary))
-                    mul_bit_buffer_q <= address_stream_q[(2*W)-1:W];
-                else if (in_execute & last_slice & repeat_exec & multiply_op)
-                    mul_bit_buffer_q <= mul_bit_buffer_q >> 1;
-            end
-        end
-    endgenerate
-`endif
 
     // ------------------------------------------------------------------
     // Branch shadow: r0 zero/negative flags, updated on every r0 write
@@ -677,16 +487,30 @@ module riscc_tiny #(
     reg r0_negative_q;
     reg r0_zero_so_far_q;
     wire writes_r0 = rf_we & ~(|rf_dst_reg);
+
+    // Keeping the architectural zero flag stable until the final /4 slice
+    // maps one LUT smaller. Other widths can accumulate directly in the flag
+    // because no following instruction observes an intermediate serial value.
     always @(posedge clk)
         if (writes_r0) begin
-            r0_zero_so_far_q <=
-                (rf_wdata == {W{1'b0}}) &
-                (first_slice | r0_zero_so_far_q);
-            if (last_slice) begin
-                r0_zero_q <= (rf_wdata == {W{1'b0}}) & r0_zero_so_far_q;
-                // High-lane byte loads write the fill at slice_idx_q zero.
-                r0_negative_q <= load_high_byte ? load_fill_q : rf_wdata[W-1];
-            end
+            if (W == 4) begin
+                r0_zero_so_far_q <=
+                    (rf_wdata == {W{1'b0}}) &
+                    (first_slice | r0_zero_so_far_q);
+                if (last_slice)
+                    r0_zero_q <=
+                        (rf_wdata == {W{1'b0}}) & r0_zero_so_far_q;
+            end else
+                r0_zero_q <= (rf_wdata == {W{1'b0}}) &
+                             (first_slice | r0_zero_q);
+
+            if (W == 1)
+                // Intermediate serial bits are unobservable; the final write
+                // leaves bit 15 or a byte-load fill in the flag.
+                r0_negative_q <= rf_wdata[0];
+            else if (last_slice)
+                r0_negative_q <=
+                    load_high_byte ? load_fill_q : rf_wdata[W-1];
         end
 
     wire branch_taken = branch_group & ~ddd[2] &
@@ -738,13 +562,12 @@ module riscc_tiny #(
     assign rf_wdata =
         (trap_active | (system_op & ~bbb[1])) ? link_slice :
         load_op ? load_slice :
-        any_shift_op ? shift_result_slice :
+        shift_writeback_op ? shift_result_slice :
         alu_result;  // MUL passes write the sum
 
     // ------------------------------------------------------------------
     // System profile state
     // ------------------------------------------------------------------
-`ifdef RISCC_SYS
 `ifdef RISCC_ECP5
     // A direct execute-boundary block maps smaller on ECP5 than the same
     // logic nested under a constant generate branch.
@@ -804,7 +627,6 @@ module riscc_tiny #(
         end
     endgenerate
 `endif
-`endif
 
     // ------------------------------------------------------------------
     // Sequencer
@@ -818,36 +640,18 @@ module riscc_tiny #(
             ST_DECODE:
                 state_q <= take_irq ? ST_EXECUTE :
                     (needs_rb_pass |
-`ifdef RISCC_SYS
                      direct_store_stream_base |
-`endif
                      pc_from_register |
-                     any_shift_op | multiply_op) ? ST_INIT2 :
+                     variable_shift_op | multiply_op) ? ST_INIT2 :
                     needs_init_pass ? ST_INIT : ST_EXECUTE;
             ST_INIT2:
                 if (last_slice)
-`ifdef RISCC_TINY_STORE_INIT2
-                    state_q <= (needs_init_pass & ~init_pass_done_q) ?
-                               ST_INIT : ST_EXECUTE;
-`elsif RISCC_TINY_STORE_MEM_XFER
-                    state_q <= needs_init_pass ? ST_INIT : ST_EXECUTE;
-`else
-                    state_q <= (needs_init_pass &
-                                (STORE_DATA_IN_MEM_XFER |
-                                 ~init_pass_done_q)) ?
-                               ST_INIT : ST_EXECUTE;
-`endif
+                    state_q <= init_after_init2 ? ST_INIT : ST_EXECUTE;
             ST_INIT:
                 if (last_slice)
-`ifdef RISCC_TINY_STORE_INIT2
-                    state_q <= store_op ? ST_INIT2 :
-`elsif RISCC_TINY_STORE_MEM_XFER
-                    state_q <= store_op ? ST_MEM_XFER :
-`else
                     state_q <= store_op ?
-                               (STORE_DATA_IN_MEM_XFER ? ST_MEM_XFER :
-                                                         ST_INIT2) :
-`endif
+                               (STORE_DATA_IN_SECOND_INIT2 ? ST_INIT2 :
+                                                             ST_MEM_XFER) :
                                mem_op   ? ST_MEM_WAIT : ST_EXECUTE;
             // Loads and JAL16 target words observe one memory-wait cycle.
             ST_MEM_WAIT:
@@ -866,7 +670,7 @@ module riscc_tiny #(
         if (rst)
             state_q <= ST_FETCH_WAIT;
 
-`ifndef RISCC_TINY_STORE_MEM_XFER
+`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
         if (in_fetch_capture)
             init_pass_done_q <= 1'b0;
         if (in_init & last_slice)
@@ -879,13 +683,11 @@ module riscc_tiny #(
         if (in_fetch_capture)
             instr_q <= mem_rdata;
 
-`ifdef RISCC_SYS
         if (in_execute & last_slice)
             jal16_target_phase_q <= jal16_op & ~jal16_target_phase_q &
                                   ~trap_active;
         if (rst)
             jal16_target_phase_q <= 1'b0;
-`endif
 
     end
 
@@ -909,11 +711,7 @@ module riscc_tiny #(
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
     wire [14:0] tr_pc_i = pc_q[14:0];
     wire [15:0] tr_ir_i = instr_q;
-`ifdef RISCC_SYS
     wire        tr_ie_i = ie_q;
-`else
-    wire        tr_ie_i = 1'b0;
-`endif
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_dst_reg[3];
     wire [2:0]  tr_rf_reg_i = rf_dst_reg[2:0];
@@ -922,11 +720,8 @@ module riscc_tiny #(
 `include "riscc_trace_state.vh"
 `endif
 
-`ifdef RISCC_TINY_STORE_INIT2
-`undef RISCC_TINY_STORE_INIT2
-`endif
-`ifdef RISCC_TINY_STORE_MEM_XFER
-`undef RISCC_TINY_STORE_MEM_XFER
+`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
+`undef RISCC_TINY_SPLIT_STORE_SCHEDULE
 `endif
 
 endmodule

@@ -9,11 +9,12 @@ self-checking programs behave identically here and under
 riscc_test.cpp.
 
 Profile model mirrors the three RTL builds:
-    --min           SLT/LDBS, count-one shifts, no sys profile
+    --min           SLT/LDBS, count-one and funnel shifts, no sys profile
     sys (default)   min + IRQ/ERET + CALL16/JMP16 + variable shifts
     --full          sys + MUL
     --nano          nano ABI: no S-bank/sys profile/CMPI/JAL16, JAL links to rd
-In min, SHRI/SARI shift by exactly 1 and SHLI/MUL are undefined.
+In min, SHRI/SARI shift by exactly 1, FSL1/FSR1 are defined, and SHLI/MUL
+are undefined.
 
 Usage: riscc_sim.py image.bin [--min] [--full]
                        [--nano]
@@ -368,6 +369,14 @@ class Sim:
                 if self.nano or not self.shifts:
                     raise Undefined("SHLI is not in the min profile")
                 self.r[ddd] = (self.r[aaa] << (bbb + 1)) & 0xFFFF
+            elif f5 in (0x12, 0x13):                    # FSR1 / FSL1
+                if self.nano:
+                    raise Undefined("funnel shift in nano")
+                a, b = self.r[aaa], self.r[bbb]
+                if f5 == 0x13:
+                    self.r[ddd] = ((a << 1) | (b >> 15)) & 0xFFFF
+                else:
+                    self.r[ddd] = (a >> 1) | ((b & 1) << 15)
             elif f5 == 0x0B:                            # STB rd, [ra]
                 if bbb != 0:
                     raise Undefined("STB sub-op reserved")

@@ -13,7 +13,7 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.15.0`.
+Version: `v0.16.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
@@ -312,7 +312,9 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `01_101` | `SARI rd, ra, imm` | `R[d] = signed16(R[a]) >>> (bbb + 1)` |
 | `01_110` | `LDBS rd, [ra+rb]` | `R[d] = sx8(M8[R[a] + R[b]])` |
 | `01_111` | `SHLI rd, ra, imm` | `R[d] = R[a] << (bbb + 1)` |
-| `10_000..11_110` | reserved | undefined |
+| `10_010` | `FSR1 rd, ra, rb` | `R[d] = (R[a] >> 1) \| (R[b][0] << 15)` |
+| `10_011` | `FSL1 rd, ra, rb` | `R[d] = (R[a] << 1) \| R[b][15]` |
+| `10_000..10_001`, `10_100..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
 `ADD` adds the two source registers and writes the low 16 bits of the result
@@ -327,6 +329,11 @@ it writes zero.
 
 `AND`, `OR`, and `XOR` perform the corresponding bitwise operation on `ra`
 and `rb`, then write the result to `rd`.
+
+`FSL1` and `FSR1` are one-bit funnel shifts. `FSL1` shifts `ra` left and
+inserts bit 15 of `rb` at bit 0. `FSR1` shifts `ra` right and inserts bit 0 of
+`rb` at bit 15. Both source registers are read before `rd` is written, so
+`rd` may name either source register.
 
 `SHLI` and `SHRI` shift `ra` left and right, respectively, inserting zeros
 into the vacated bits. Their shift count is `bbb+1`.
@@ -474,6 +481,8 @@ the mainline profiles.
 | `AND rd, ra, rb` | X | X | X | X |
 | `OR rd, ra, rb` | X | X | X | X |
 | `XOR rd, ra, rb` | X | X | X | X |
+| `FSL1 rd, ra, rb` | X | X | X |  |
+| `FSR1 rd, ra, rb` | X | X | X |  |
 | `SHLI rd, ra, 1..8` |  | X | X |  |
 | `SHRI rd, ra, 1` | X | X | X | X |
 | `SHRI rd, ra, 2..8` |  | X | X |  |

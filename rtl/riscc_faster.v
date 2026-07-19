@@ -73,6 +73,8 @@ module riscc_faster #(
     wire d_reg_store = d_reg_mem & ~d_f5[2] & d_f5[1] & d_f5[0];
     wire d_multiply = d_reg_alu_group & (&d_f5[2:0]);
     wire d_reg_alu = d_reg_alu_group & ~d_multiply;
+    wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
+                    ~d_f5[2] & d_f5[1];
     wire d_shift_right = d_reg_mem & d_f5[2] & ~d_f5[1];
     wire d_shift_left = d_reg_mem & (&d_f5[2:0]);
     wire d_shift = d_shift_right | d_shift_left;
@@ -100,7 +102,7 @@ module riscc_faster #(
     // They can cause harmless extra stalls for reserved encodings.
     wire d_uses_a = ~d_class[1] | d_register |
         (d_immediate & (d_aaa[1] | d_aaa[2]));
-    wire d_uses_b = d_imm_store | d_reg_store | d_reg_alu_group |
+    wire d_uses_b = d_imm_store | d_reg_store | d_reg_alu_group | d_funnel |
                     d_indexed_memory;
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
@@ -110,7 +112,8 @@ module riscc_faster #(
     wire [3:0] d_src_b = {1'b0,
         d_src_b_is_ddd ? d_ddd : d_bbb};
 
-    wire d_result_we = d_imm_alu | d_shift | d_reg_alu | d_multiply |
+    wire d_result_we = d_imm_alu | d_shift | d_funnel |
+                       d_reg_alu | d_multiply |
                        d_move | (d_link_jump & (|d_ddd));
     wire d_we = d_load | d_result_we;
     wire d_result_system = d_system & d_bbb[0];
@@ -145,6 +148,7 @@ module riscc_faster #(
     reg x_multiply_q;
     reg x_shift_q;
     reg x_shift_left_q;
+    reg x_funnel_q;
 `ifndef RISCC_FASTER_SOFT_MUL
     reg x_indexed_memory_q;
 `endif
@@ -188,7 +192,16 @@ module riscc_faster #(
 `endif
     wire x_multiply = x_multiply_q;
     wire x_shift = x_shift_q;
+`ifdef RISCC_FASTER_SOFT_MUL
+    // Preserve the registered direction on the fabric multiplier's shared
+    // shift path. Its fitter mapping is smaller than re-decoding the field.
     wire x_shift_left = x_shift_left_q;
+`else
+    // SHLI and FSL1 share f3[1:0]=11, so the DSP build needs no direction
+    // register: the retained instruction carries it through the side state.
+    wire x_shift_left = &x_f3[1:0];
+`endif
+    wire x_funnel = x_funnel_q;
 `ifndef RISCC_FASTER_SOFT_MUL
     wire x_indexed_memory = x_indexed_memory_q;
 `endif
@@ -230,21 +243,24 @@ module riscc_faster #(
     reg        load_lane_q;
 
 `ifdef RISCC_FASTER_SOFT_MUL
-    // X shift, ST_SHIFT, and the multiplier's accumulator-left shift share
-    // one source/direction mux.  MUL has a separate carry chain so its
-    // recurrence does not lengthen the normal Execute result path.
-    wire side_shift_active = in_shift | in_mul;
+    // X and ST_SHIFT share this shifter.  Keep the multiplier's wiring-only
+    // accumulator shift separate so funnel selection stays off its RF
+    // feedback path.
+    wire side_shift_active = in_shift;
     wire [15:0] side_shift_source = side_shift_active ? side_data_q : rf_a;
-    wire side_shift_left = in_mul | x_shift_left;
+    wire side_shift_left = x_shift_left | (x_funnel & x_f3[0]);
     wire [15:0] side_shift_step = side_shift_left ?
-        {side_shift_source[14:0], 1'b0} :
-        {x_f3[0] & side_shift_source[15], side_shift_source[15:1]};
+        {side_shift_source[14:0], x_funnel & rf_b[15]} :
+        {(x_funnel & rf_b[0]) |
+         (x_f3[0] & side_shift_source[15]),
+         side_shift_source[15:1]};
     wire [15:0] x_shift_step = side_shift_step;
     wire [15:0] shift_step = side_shift_step;
 `else
     wire [15:0] x_shift_step = x_shift_left ?
-        {rf_a[14:0], 1'b0} :
-        {x_f3[0] & rf_a[15], rf_a[15:1]};
+        {rf_a[14:0], x_funnel & rf_b[15]} :
+        {(x_instr_q[7] & rf_b[0]) |
+         (x_f3[0] & rf_a[15]), rf_a[15:1]};
     wire [15:0] shift_step = x_shift_left ?
         {side_data_q[14:0], 1'b0} :
         {x_f3[0] & side_data_q[15], side_data_q[15:1]};
@@ -257,7 +273,8 @@ module riscc_faster #(
     wire [3:0] mul_count = {load_lane_q, side_count_q};
     wire mul_finish = in_mul & (mul_count == 4'd0);
     wire [15:0] mul_addend = rf_b[mul_count] ? rf_a : 16'h0000;
-    wire [15:0] mul_step = side_shift_step + mul_addend;
+    wire [15:0] mul_step =
+        {side_data_q[14:0], 1'b0} + mul_addend;
 `else
     // The register on side_data_q is the multiplier output boundary.  Only
     // the low product word is architectural, allowing one 16x16 DSP block.
@@ -298,7 +315,7 @@ module riscc_faster #(
         run_rf_b ? rf_b :
         run_short_imm ? immediate_result :
         x_move ? rf_a :
-        x_shift ? x_shift_step :
+        (x_shift | x_funnel) ? x_shift_step :
         x_jal16 ? 16'h0001 : 16'h0000;
 
     wire alu_subtract = normal_x &
@@ -445,6 +462,7 @@ module riscc_faster #(
             x_multiply_q <= d_multiply;
             x_shift_q <= d_shift;
             x_shift_left_q <= d_shift_left;
+            x_funnel_q <= d_funnel;
 `ifndef RISCC_FASTER_SOFT_MUL
             x_indexed_memory_q <= d_indexed_memory;
 `endif

@@ -98,6 +98,10 @@ module riscc_fast #(
     wire x_system = x_high_group;
     wire x_multiply = x_reg_alu_group & (&x_f5[2:0]);
     wire x_shift_left = x_reg_mem & (&x_f5[2:0]);
+    // FSL1/FSR1 occupy the reserved 10_xxx plane. Undefined selectors in
+    // that plane may alias them; x_f5[0] still selects left versus right.
+    wire x_funnel =
+        x_register & x_f5[4] & ~x_f5[3] & x_f5[1];
     wire x_reg_alu = x_reg_alu_group & ~x_multiply;
     wire x_shift_right = x_reg_mem & x_f5[2] & ~x_f5[1];
     wire x_shift = x_shift_right | x_shift_left;
@@ -166,21 +170,18 @@ module riscc_fast #(
     wire [2:0] d_aaa = mem_rdata[10:8];
     wire [4:0] d_f5 = mem_rdata[7:3];
     wire [2:0] d_bbb = mem_rdata[2:0];
-    wire d_imm_store = ~d_class[1] & d_class[0];
     wire d_immediate = d_class[1] & ~d_class[0];
     wire d_register = &d_class;
-    wire d_reg_alu_group = d_register & (d_f5[4:3] == 2'b00);
-    wire d_reg_mem = d_register & (d_f5[4:3] == 2'b01);
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
-    wire d_reg_store = d_reg_mem & ~d_f5[2] & d_f5[1] & d_f5[0];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
     wire d_uses_a = ~d_class[1] | d_register |
         (d_immediate & (d_aaa[1] | d_aaa[2]));
-    wire d_indexed_memory = d_reg_mem & ~d_f5[0] &
-                            (~d_f5[2] | d_f5[1]);
-    wire d_uses_b = d_imm_store | d_reg_store | d_reg_alu_group |
-                    d_indexed_memory;
+    // Immediate stores and every non-system register plane may read rb.
+    // The deliberately broad register term also covers funnel shifts and
+    // only adds harmless stalls for undefined selectors.
+    wire d_uses_b = d_class[0] &
+        (~d_class[1] | ~d_f5[4] | ~d_f5[3]);
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
         d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
@@ -222,9 +223,18 @@ module riscc_fast #(
         {8{saved_load_signed & load_byte_sign}} : mem_rdata[15:8];
     wire [15:0] load_value = {load_high_byte, load_low_byte};
 
-    wire [15:0] x_shift_step = x_shift_left ?
-        {rf_a[14:0], 1'b0} :
-        {x_shift_right & x_f5[0] & rf_a[15], rf_a[15:1]};
+    wire x_shift_step_left = x_shift_left | (x_funnel & x_f5[0]);
+`ifdef RISCC_FAST_SYNC_RF
+    // The broader term packs with the EBR read path; the asynchronous RF
+    // mapping below benefits from retaining the operation qualifier.
+    wire x_funnel_left_bit = x_f5[4] & rf_b[15];
+`else
+    wire x_funnel_left_bit = x_funnel & rf_b[15];
+`endif
+    wire [15:0] x_shift_step = x_shift_step_left ?
+        {rf_a[14:0], x_funnel_left_bit} :
+        {(x_f5[4] & rf_b[0]) |
+         (x_f5[0] & rf_a[15]), rf_a[15:1]};
     wire saved_shift_left = side_aux_q[3];
     wire saved_shift_arithmetic = side_aux_q[4];
     wire [15:0] shift_step = saved_shift_left ?
@@ -286,12 +296,23 @@ module riscc_fast #(
                      (x_reg_alu & x_f5[2]);
     wire run_rf_b = x_reg_arithmetic | x_indexed_memory;
     wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
+`ifdef RISCC_FAST_DSP
+`ifdef RISCC_ECP5
+    // LDBS wins in the preceding run_rf_b arm, so its selector can join the
+    // shift/funnel result plane. This form removes two LUT sites on ECP5.
+    wire x_bit_result = x_funnel | (x_reg_mem & x_f5[2]);
+`else
+    wire x_bit_result = x_shift | x_funnel;
+`endif
+`else
+    wire x_bit_result = x_shift | x_funnel;
+`endif
     wire [15:0] run_result = run_logic ? x_logic_result :
         run_imm_s ? x_imm_s :
         run_rf_b ? rf_b :
         run_short_imm ? immediate_result :
         x_move ? rf_a :
-        x_shift ? x_shift_step :
+        x_bit_result ? x_shift_step :
         x_jal16 ? 16'h0001 : 16'h0000;
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
@@ -353,7 +374,7 @@ module riscc_fast #(
     // ------------------------------------------------------------------
     // Commit, hazards, and RF writeback
     // ------------------------------------------------------------------
-    wire x_result_we = x_imm_alu | x_shift |
+    wire x_result_we = x_imm_alu | x_shift | x_funnel |
 `ifdef RISCC_FAST_DSP
         x_reg_alu | x_multiply |
 `else
