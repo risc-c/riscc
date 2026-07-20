@@ -19,7 +19,9 @@ specialized RTL source.
 | RISC-C/1, /2, /4, /8 Full | [`rtl/riscc_tiny_full.v`](../rtl/riscc_tiny_full.v) | serial datapath with hardware multiply, width `W = 1, 2, 4, 8` | `full` |
 | RISC-C/16 Min | [`rtl/riscc_tiny16_min.v`](../rtl/riscc_tiny16_min.v) | Min-specialized 16-bit multi-cycle datapath | `min` |
 | RISC-C/16 Sys | [`rtl/riscc_tiny16_sys.v`](../rtl/riscc_tiny16_sys.v) | 16-bit multi-cycle datapath | `sys` |
-| RISC-C/16 Full | [`rtl/riscc_tiny16_full.v`](../rtl/riscc_tiny16_full.v) | 16-bit multi-cycle datapath with hardware multiply | `full` |
+| RISC-C/16 Full | [`rtl/riscc_tiny16_full.v`](../rtl/riscc_tiny16_full.v) | 16-bit multi-cycle datapath with `MUL` | `full` |
+| RISC-C/16 Full MulH | [`rtl/riscc_tiny16_full_mulh.v`](../rtl/riscc_tiny16_full_mulh.v) | cost experiment with `MUL`/`MULHU` but no `DIVU` | `full` plus a partial optional extension |
+| RISC-C/16 Full MulDiv | [`rtl/riscc_tiny16_full_muldiv.v`](../rtl/riscc_tiny16_full_muldiv.v) | cost experiment with `MUL`/`MULHU`/`DIVU` | `full` plus optional `mdu` |
 | RISC-C/nano | [`rtl/riscc_nano1.v`](../rtl/riscc_nano1.v) | fixed one-bit serial datapath | `nano` |
 | RISC-C/fast | [`rtl/riscc_fast.v`](../rtl/riscc_fast.v) | two-stage in-order pipeline | `full` |
 | RISC-C/faster | [`rtl/riscc_faster.v`](../rtl/riscc_faster.v) | three-stage interlocked pipeline | `full` |
@@ -139,24 +141,46 @@ points. Cycle counts follow them as a reference for implementation work.
 | `min` | 75.5 | 89.0 | 91.1 | 116.6 | 133.9 |
 | `sys` | 91.0 | 95.7 | 112.0 | 133.0 | 155.4 |
 | `full` | 102.0 | 106.8 | 142.0 | 171.1 | 169.0 |
-| nano | 90.2 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 277.2 / 235.3 |
-| Faster DSP / soft | — | — | — | — | 310.4 / 310.4 |
+| nano | 75.5 | — | — | — | — |
+| Fast soft / DSP | — | — | — | — | 285.0 / 261.0 |
+| Faster DSP / soft | — | — | — | — | 349.0 / 339.0 |
+
+### Full multiply/divide experiments
+
+The normal `full` sources retain low-half `MUL` only. Optional-`mdu`
+experiments are provided by the separate `/16` multi-cycle sources.
+
+| Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
+|---|---:|---:|---:|
+| Full (`MUL`) | 334 | 359 | 354 |
+| Full MulH (`MUL` + `MULHU`) | 342 | 372 | 366 |
+| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 387 | 415 | 411 |
+
+| Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
+|---|---:|---:|
+| Full (`MUL`) | 23.06 | 79.37 |
+| Full MulH (`MUL` + `MULHU`) | 22.61 | 75.23 |
+| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 19.04 | 72.87 |
+
+These optional-`mdu` timing measurements use the same core-only routed
+harness and seed one as the open-FPGA Fmax results elsewhere in this manual.
+Use `make fmax-16-mulh` or `make fmax-16-muldiv` to reproduce them.
+
+### Mainline clock rate and throughput
 
 | Fmax (MHz) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | iCE40 UP5K | 35.07 | 30.19 | 27.32 | 26.13 | 26.19 | 31.56 | 23.17 | 21.27 | — | — |
 | ECP5 LFE5U-25F | 102.12 | 104.42 | 81.04 | 82.24 | 88.64 | 104.07 | 67.82 | 66.13 | — | — |
-| Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 217.34 | 306.37 | 192.57 | 153.63 | 251.76 | 247.71 |
+| Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 217.34 | 306.37 | 195.73 | 152.46 | 251.45 | 247.71 |
 
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
 profile; Fast and Faster use `full`.
 
 The iCE40/ECP5 figures are reproducible v0.16 open-FPGA results. The Agilex
-area and Tiny Sys Fmax figures are current Quartus Pro 26.1 post-fit
-characterizations for `A3CZ135BB18AE7S`, using the latest Tiny Min and Tiny RTL.
-Faster soft is a current post-fit characterization. The other non-Tiny
-Agilex Fmax points remain the retained v0.15 characterizations.
+area and Fmax figures are Quartus Pro 26.1 post-fit characterizations for
+`A3CZ135BB18AE7S`. Tiny uses the latest Tiny Min and Tiny RTL; Fast and Faster
+were refreshed against their current RTL on 2026-07-20.
 Agilex Fmax is a restricted-Fmax estimate, not closure at every listed clock.
 Run `make -j16 tables` to regenerate the open-FPGA area/Fmax matrices and
 benchmarks; the command prints the current Agilex characterization alongside
@@ -175,18 +199,17 @@ Fast and Faster use their matching full-profile clocks.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | iCE40 UP5K | 0.98 | 1.56 | 2.42 | 3.62 | 6.24 | 1.02 | 12.87 | 14.40 | — | — |
 | ECP5 | 2.86 | 5.38 | 7.17 | 11.39 | 21.13 | 3.35 | 37.67 | 44.78 | — | — |
-| Agilex 3 | 8.58 | 14.67 | 24.44 | 34.32 | 51.81 | 9.88 | 106.96 | 104.03 | 119.77 | 103.86 |
+| Agilex 3 | 8.58 | 14.67 | 24.44 | 34.32 | 51.81 | 9.88 | 108.72 | 103.24 | 119.62 | 103.86 |
 
 | Benchmark MIPS/kLUT4 (kLE on Agilex) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | iCE40 UP5K | 6.6 | 9.5 | 12.1 | 13.9 | 22.1 | 10.9 | 26.8 | 32.7 | — | — |
 | ECP5 block RF | 18.8 | 33.0 | 35.5 | 41.6 | 69.1 | 36.1 | 75.8 | 98.0 | — | — |
 | ECP5 LUTRAM RF | 14.9 | 26.3 | 30.3 | 38.9 | 68.2 | 29.4 | 75.8 | 98.0 | — | — |
-| Agilex 3 (kLE) | 32.0 | 52.0 | 74.0 | 87.5 | 113.0 | 109.5 | 130.8 | 149.9 | 130.8 | 113.4 |
+| Agilex 3 (kLE) | 32.0 | 52.0 | 74.0 | 87.5 | 113.0 | 44.4 | 129.3 | 134.1 | 116.2 | 103.8 |
 
-The Agilex throughput and efficiency rows are derived from the current Tiny
-area and Fmax characterization; the other Agilex points retain their v0.15
-measurements.
+The Agilex throughput and efficiency rows are derived from the post-fit area
+and Fmax characterizations above.
 
 ### Cycle counts
 

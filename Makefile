@@ -831,16 +831,16 @@ AGILEX_AREA_FULL := 102.0 106.8 142.0 171.1 169.0
 AGILEX_AREA_min := $(AGILEX_AREA_MIN)
 AGILEX_AREA_sys := $(AGILEX_AREA_SYS)
 AGILEX_AREA_full := $(AGILEX_AREA_FULL)
-AGILEX_AREA_NANO := 90.2
-AGILEX_AREA_FAST_SOFT := 277.2
-AGILEX_AREA_FAST_DSP := 235.3
-AGILEX_AREA_FASTER_DSP := 310.4
-AGILEX_AREA_FASTER_SOFT := 310.4
+AGILEX_AREA_NANO := 75.5
+AGILEX_AREA_FAST_SOFT := 285.0
+AGILEX_AREA_FAST_DSP := 261.0
+AGILEX_AREA_FASTER_DSP := 349.0
+AGILEX_AREA_FASTER_SOFT := 339.0
 AGILEX_FMAX_SYS := 305.9 284.5 276.17 247.83 217.34
 AGILEX_FMAX_NANO := 306.37
-AGILEX_FMAX_FAST_SOFT := 192.57
-AGILEX_FMAX_FAST_DSP := 153.63
-AGILEX_FMAX_FASTER_DSP := 251.76
+AGILEX_FMAX_FAST_SOFT := 195.73
+AGILEX_FMAX_FAST_DSP := 152.46
+AGILEX_FMAX_FASTER_DSP := 251.45
 AGILEX_FMAX_FASTER_SOFT := 247.71
 
 agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
@@ -971,6 +971,51 @@ up5k_tiny_fmax_defs = $(strip $(call tiny_cpp_defs,$(2)) \
 # ECP5. Keep these choices local to avoid perturbing the rest of the ladder.
 tiny_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2))
 tiny_ecp5_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(call tiny_fmax_synth_opts,$(1),$(2)))
+
+# The optional /16 MDU variants have independent timing-optimal mappings:
+# MulH benefits from -dff, while MulDiv is both smaller and faster without it.
+MULH16_FMAX_RTL := rtl/riscc_tiny16_full_mulh.v $(FMAX_TOP) rtl/riscc_rf.vh Makefile
+MULDIV16_FMAX_RTL := rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP) rtl/riscc_rf.vh Makefile
+
+build/fmax/ice40/up5k/tiny16-mulh.mhz: $(MULH16_FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog rtl/riscc_tiny16_full_mulh.v $(FMAX_TOP); synth_ice40 -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
+	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+build/fmax/ice40/up5k/tiny16-muldiv.mhz: $(MULDIV16_FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
+	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+build/fmax/ecp5/tiny16-mulh.mhz: $(MULH16_FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc_tiny16_full_mulh.v $(FMAX_TOP); synth_ecp5 -dff -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $(ECP5_FMAX_SEED) \
+	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+build/fmax/ecp5/tiny16-muldiv.mhz: $(MULDIV16_FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $(ECP5_FMAX_SEED) \
+	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+.PHONY: fmax-16-mulh fmax-16-muldiv
+
+fmax-16-mulh: build/fmax/ice40/up5k/tiny16-mulh.mhz build/fmax/ecp5/tiny16-mulh.mhz
+	@printf 'tiny16 MulH: UP5K %s MHz; ECP5 %s MHz\n' \
+	  "$$(cat build/fmax/ice40/up5k/tiny16-mulh.mhz)" \
+	  "$$(cat build/fmax/ecp5/tiny16-mulh.mhz)"
+
+fmax-16-muldiv: build/fmax/ice40/up5k/tiny16-muldiv.mhz build/fmax/ecp5/tiny16-muldiv.mhz
+	@printf 'tiny16 MulDiv: UP5K %s MHz; ECP5 %s MHz\n' \
+	  "$$(cat build/fmax/ice40/up5k/tiny16-muldiv.mhz)" \
+	  "$$(cat build/fmax/ecp5/tiny16-muldiv.mhz)"
 
 define UP5K_FMAX_RULE
 $(call up5k_fmax_cell,$(1),$(2)): $$(FMAX_RTL)
@@ -1400,7 +1445,7 @@ RISCC_COMPILER_FEATURE_MODULES := feature_main feature_language feature_integer 
 	feature_builtins feature_memory feature_abi feature_abi_callee \
 	feature_varargs feature_varargs_callee feature_tail
 RISCC_COMPILER_FLOAT_MODULES := float_main feature_float feature_float_callee
-RISCC_COMPILER_BENCHMARKS := int32 softfloat matrix structures
+RISCC_COMPILER_BENCHMARKS := int32 softfloat libm32 matrix structures
 .PRECIOUS: $(RISCC_COMPILER_BUILD)/benchmarks/%.o \
 	$(RISCC_COMPILER_BUILD)/benchmarks/%.elf
 RISCC_COMPILER_FEATURE_ASM_OBJECT := \

@@ -318,7 +318,7 @@ implements directly.
   and Full use whole-routine assembly and a shared IEEE packer for gradual
   underflow and round-to-nearest/ties-to-even. Sys and Full use their
   fixed-count shifts directly; Full computes the binary32 24-by-24
-  significand product from native byte products. The optional `MULH`
+  significand product from native byte products. The optional `mdu`
   extension is not required.
 - Compiler-rt supplies the binary32 subtraction wrapper and comparisons,
   binary32 integer and format conversions, and all binary64 arithmetic,

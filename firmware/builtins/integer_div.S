@@ -238,6 +238,43 @@ __udivmodsi4:
         JMP8    .Ludivsi_done
 
 .Ludivsi_nonzero:
+        /* Common divisions by one need no restoring-loop iterations. */
+        MOV     r0, r4
+        BNEZ    .Ludivsi_compare
+        MOV     r0, r3
+        ADDI    r0, -1
+        BNEZ    .Ludivsi_compare
+#ifdef __RISCC_NANO__
+        LDI     r3, 0
+        LDI     r4, 0
+#else
+        LDI     r5, 0
+        LDI     r6, 0
+#endif
+        JMP8    .Ludivsi_done
+
+.Ludivsi_compare:
+        /* If numerator < denominator, quotient is zero and remainder is n. */
+        SLTU    r0, r2, r4
+        BNEZ    .Ludivsi_numerator_small
+        SUB     r0, r2, r4
+        BNEZ    .Ludivsi_loop_setup
+        SLTU    r0, r1, r3
+        BEQZ    .Ludivsi_loop_setup
+
+.Ludivsi_numerator_small:
+#ifdef __RISCC_NANO__
+        MOV     r3, r1
+        MOV     r4, r2
+#else
+        MOV     r5, r1
+        MOV     r6, r2
+#endif
+        LDI     r1, 0
+        LDI     r2, 0
+        JMP8    .Ludivsi_done
+
+.Ludivsi_loop_setup:
 #ifdef __RISCC_NANO__
         LDI     r3, 0                   /* remainder low */
         LDI     r4, 0                   /* remainder high */
@@ -359,6 +396,142 @@ __udivmodsi4:
         .size __udivsi3, . - __udivsi3
         .size __umodsi3, . - __umodsi3
         .size __udivmodsi4, . - __udivmodsi4
+
+/*
+ * Signed 32-bit adapters.
+ *
+ * These live in a separate archive section, so unsigned-only programs do not
+ * pay for sign handling.  They use fixed scratch below the unchanged incoming
+ * r7 and call the shared unsigned loop with magnitude operands.
+ */
+
+        .macro NEGATE32 low, high, scratch
+        LDI     r0, 0
+        SLTU    \scratch, r0, \low
+        SUB     \low, r0, \low
+        SUB     \high, r0, \high
+        SUB     \high, \high, \scratch
+        .endm
+
+        .macro CALL_UNSIGNED name
+#ifdef __RISCC_NANO__
+        LI      r0, code(\name)
+        JAL     r6, r0
+#elif defined(__RISCC_MIN__)
+        LI      r0, code(\name)
+        JAL     s7, r0
+#else
+        JAL16   s7, \name
+#endif
+        .endm
+
+        .section .text.__divsi3,"ax",@progbits
+        .p2align 1
+        .global __divsi3
+        .hidden __divsi3
+        .type __divsi3,@function
+__divsi3:
+        LDI     r0, 0                   /* signed quotient */
+        JMP8    .Ldivsi_entry
+
+        .global __modsi3
+        .hidden __modsi3
+        .type __modsi3,@function
+__modsi3:
+        LDI     r0, 1                   /* signed remainder */
+        JMP8    .Ldivsi_entry
+
+        .global __divmodsi4
+        .hidden __divmodsi4
+        .type __divmodsi4,@function
+__divmodsi4:
+        LDI     r0, 2                   /* signed quotient and remainder */
+
+.Ldivsi_entry:
+        STW     r5, [r7 - 18]
+        STW     r0, [r7 - 20]           /* result selection */
+#ifdef __RISCC_NANO__
+        STW     r6, [r7 - 14]           /* incoming link */
+#else
+        MFS     r0, s7
+        STW     r0, [r7 - 14]           /* incoming link */
+#endif
+
+        /* bit 0: negate quotient; bit 1: negate remainder */
+        SIGN_BIT r2
+        MOV     r5, r0
+        ADD     r5, r5, r5
+        OR      r5, r5, r0
+        SIGN_BIT r4
+        XOR     r5, r5, r0
+        STW     r5, [r7 - 16]
+
+        MOV     r0, r2
+        BLTZ    .Ldivsi_negate_numerator
+.Ldivsi_denominator_sign:
+        MOV     r0, r4
+        BLTZ    .Ldivsi_negate_denominator
+        JMP8    .Ldivsi_call
+.Ldivsi_negate_numerator:
+        NEGATE32 r1, r2, r5
+        JMP8    .Ldivsi_denominator_sign
+.Ldivsi_negate_denominator:
+        NEGATE32 r3, r4, r5
+
+.Ldivsi_call:
+        LDW     r0, [r7 - 20]
+        ADDI    r0, -1
+        BEQZ    .Ldivsi_call_remainder
+        BLTZ    .Ldivsi_call_quotient
+        CALL_UNSIGNED __udivmodsi4
+        JMP8    .Ldivsi_fix_stored_remainder
+.Ldivsi_call_remainder:
+        CALL_UNSIGNED __umodsi3
+        JMP8    .Ldivsi_fix_remainder
+.Ldivsi_call_quotient:
+        CALL_UNSIGNED __udivsi3
+        JMP8    .Ldivsi_fix_quotient
+
+.Ldivsi_fix_stored_remainder:
+        LDW     r0, [r7 - 16]
+        ANDI    r0, 2
+        BEQZ    .Ldivsi_fix_quotient
+        LDW     r0, [r7 + 0]
+        BEQZ    .Ldivsi_fix_quotient
+        LDW     r3, [r0 + 0]
+        LDW     r4, [r0 + 2]
+        NEGATE32 r3, r4, r5
+        LDW     r0, [r7 + 0]
+        STW     r3, [r0 + 0]
+        STW     r4, [r0 + 2]
+        JMP8    .Ldivsi_fix_quotient
+
+.Ldivsi_fix_remainder:
+        LDW     r0, [r7 - 16]
+        ANDI    r0, 2
+        BEQZ    .Ldivsi_return
+        NEGATE32 r1, r2, r5
+        JMP8    .Ldivsi_return
+
+.Ldivsi_fix_quotient:
+        LDW     r0, [r7 - 16]
+        ANDI    r0, 1
+        BEQZ    .Ldivsi_return
+        NEGATE32 r1, r2, r5
+
+.Ldivsi_return:
+        LDW     r5, [r7 - 18]
+#ifdef __RISCC_NANO__
+        LDW     r6, [r7 - 14]
+        RET     r6
+#else
+        LDW     r0, [r7 - 14]
+        MTS     s7, r0
+        RETS
+#endif
+        .size __divsi3, . - __divsi3
+        .size __modsi3, . - __modsi3
+        .size __divmodsi4, . - __divmodsi4
 
 /*
  * Shared unsigned 64-bit quotient/remainder core.

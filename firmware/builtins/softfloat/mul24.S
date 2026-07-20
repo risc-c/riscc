@@ -1,10 +1,10 @@
 /*
  * Full-profile unsigned 24x24 -> 48 significand multiply.
  *
- * MULH is an optional extension and is not enabled by any standard profile.
- * This routine therefore decomposes the two normalized significands into
- * bytes, uses Full's low-half MUL for the nine byte products, and accumulates
- * them into three 16-bit result limbs.
+ * The MULHU instruction belongs to the optional mdu extension and is not
+ * enabled by any standard profile. This routine therefore decomposes the two
+ * normalized significands into bytes, uses Full's low-half MUL for the nine
+ * byte products, and accumulates them into three 16-bit result limbs.
  *
  * Arguments: r1:r2, r3:r4 (high limbs contain only eight significant bits)
  * Result:    r1:r2:r3

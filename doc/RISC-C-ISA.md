@@ -305,16 +305,18 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `00_110` | `XOR rd, ra, rb` | `R[d] = R[a] ^ R[b]` |
 | `00_111` | `MUL rd, ra, rb` | `R[d] = (R[a] * R[b])[15:0]` |
 | `01_000` | `LDWX rd, [ra+rb]` | `R[d] = M16[R[a] + R[b]]` |
-| `01_001` | `MULH rd, ra, rb` | `R[d] = (signed16(R[a]) * signed16(R[b]))[31:16]` |
+| `01_001` | reserved | undefined |
 | `01_010` | `LDB rd, [ra+rb]` | `R[d] = zx8(M8[R[a] + R[b]])` |
 | `01_011` | `STB rs, [ra]` | `M8[R[a]] = R[s][7:0]` |
 | `01_100` | `SHRI rd, ra, imm` | `R[d] = R[a] >> (bbb + 1)` |
 | `01_101` | `SARI rd, ra, imm` | `R[d] = signed16(R[a]) >>> (bbb + 1)` |
 | `01_110` | `LDBS rd, [ra+rb]` | `R[d] = sx8(M8[R[a] + R[b]])` |
 | `01_111` | `SHLI rd, ra, imm` | `R[d] = R[a] << (bbb + 1)` |
+| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 4.1 |
 | `10_010` | `FSR1 rd, ra, rb` | `R[d] = (R[a] >> 1) \| (R[b][0] << 15)` |
 | `10_011` | `FSL1 rd, ra, rb` | `R[d] = (R[a] << 1) \| R[b][15]` |
-| `10_000..10_001`, `10_100..11_110` | reserved | undefined |
+| `10_100` | `MULHU rd, ra, rb` | `R[d] = (R[a] * R[b])[31:16]` |
+| `10_001`, `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
 `ADD` adds the two source registers and writes the low 16 bits of the result
@@ -344,13 +346,41 @@ bits. Its shift count is `bbb+1`.
 `MUL` writes the low 16 bits of the product of `ra` and `rb` to `rd`. The low
 half is the same for signed and unsigned multiplication.
 
-`MULH` multiplies `ra` and `rb` as signed two's-complement integers and
-writes bits `[31:16]` of the 32-bit product to `rd`.
+`MULHU` writes the high 16 bits of the unsigned product of `ra` and `rb` to
+`rd`. Both sources are read before `rd` is written, so the destination may
+name either source register.
 
 `SHLI`, `SHRI`, and `SARI` encode shift counts from 1 through 8. In the
 `min` profile, `SHRI` and `SARI` always shift by one and their `bbb` field
 must be zero; `SHLI` is undefined. `MUL` returns the low 16 bits of the
 product and is available only in the `full` profile.
+
+### 4.1 Multiply-Divide Extension
+
+The optional `mdu` extension adds two unsigned primitives in otherwise
+reserved three-register slots:
+
+```text
+MULHU  rd, ra, rb
+DIVU rr, rq, rb
+```
+
+`DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
+pair `rr:rq` as a two-word unsigned partial dividend. More precisely, using
+the input register values:
+
+```text
+N       = (R[rr] << 16) | R[rq]
+divisor = R[rb]
+R[rq]   = N / divisor
+R[rr]   = N % divisor
+```
+
+`rr`, `rq`, and `rb` must name different registers. `divisor` must be
+nonzero, and `R[rr] < divisor` is required on entry; this guarantees that the
+quotient fits in 16 bits. If any of these requirements is not met, the result
+is undefined. These operand restrictions are an exception to the general
+source-before-destination ordering rule.
 
 ## 5. Control Transfer and S-Register Instructions
 
@@ -489,7 +519,8 @@ the mainline profiles.
 | `SARI rd, ra, 1` | X | X | X | X |
 | `SARI rd, ra, 2..8` |  | X | X |  |
 | `MUL rd, ra, rb` |  |  | X |  |
-| `MULH rd, ra, rb` |  |  |  |  |
+| `MULHU rd, ra, rb` |  |  |  |  |
+| `DIVU rr, rq, rb` |  |  |  |  |
 | `RET Sa` | X | X | X |  |
 | `JAL Sd, ra` | X | X | X |  |
 | `JAL rd, ra` ‡ |  |  |  | X |
@@ -506,8 +537,8 @@ state differ from the mainline profiles and are defined in section 8.
 ‡ `JAL rd, ra` is Nano's incompatible general-register link encoding; its
 semantics are defined in section 8.
 
-`MULH` is an optional extension. It is not part of the `min`, `sys`, `full`,
-or `nano` profile.
+The `mdu` extension is optional. It is not required by the `min`, `sys`,
+`full`, or `nano` profile.
 
 An unaligned word access has undefined behavior unless another architectural
 extension defines it.

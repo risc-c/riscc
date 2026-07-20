@@ -75,43 +75,6 @@ static u32_words neg32(u32_words value)
     return result;
 }
 
-u32 __udivmodsi4(u32 numerator, u32 denominator, u32 *remainder);
-
-s32 __divmodsi4(s32 numerator, s32 denominator, s32 *remainder)
-{
-    u32_words left = words32((u32)numerator);
-    u32_words right = words32((u32)denominator);
-    u16 left_negative = (u16)(left.word[1] >> 15);
-    u16 right_negative = (u16)(right.word[1] >> 15);
-    u32_words rem;
-    u32_words quotient;
-
-    if (left_negative)
-        left = neg32(left);
-    if (right_negative)
-        right = neg32(right);
-    quotient.all = __udivmodsi4(left.all, right.all, &rem.all);
-    if (left_negative != right_negative)
-        quotient = neg32(quotient);
-    if (left_negative)
-        rem = neg32(rem);
-    if (remainder)
-        *remainder = (s32)rem.all;
-    return (s32)quotient.all;
-}
-
-s32 __divsi3(s32 numerator, s32 denominator)
-{
-    return __divmodsi4(numerator, denominator, (s32 *)0);
-}
-
-s32 __modsi3(s32 numerator, s32 denominator)
-{
-    s32 remainder;
-    (void)__divmodsi4(numerator, denominator, &remainder);
-    return remainder;
-}
-
 s32 __negsi2(s32 value)
 {
     return (s32)neg32(words32((u32)value)).all;

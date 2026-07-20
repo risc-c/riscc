@@ -109,12 +109,23 @@ u16 feature_test_builtins(void)
         __udivsi3(value32, 0) != 0 ||
         __umodsi3(value32, 0) != value32 ||
         __udivmodsi4(value32, 12345, &remainder32) != 0x60a4ul ||
-        remainder32 != 0x11f4ul)
+        remainder32 != 0x11f4ul ||
+        __udivmodsi4(value32, 12345, (u32 *)0) != 0x60a4ul)
         return 4;
     if (__divsi3(signed32, 300) != -333l ||
         __modsi3(signed32, 300) != -100l ||
         __divmodsi4(signed32, 300, &signed_remainder32) != -333l ||
-        signed_remainder32 != -100l || __negsi2(signed32) != 100000l)
+        signed_remainder32 != -100l ||
+        __divsi3(100000l, -300) != -333l ||
+        __modsi3(100000l, -300) != 100l ||
+        __divsi3(-100000l, -300) != 333l ||
+        __modsi3(-100000l, -300) != -100l ||
+        __divsi3(-5l, 300) != 0 ||
+        __modsi3(-5l, 300) != -5l ||
+        __divsi3(signed32, 0) != 0 ||
+        __modsi3(signed32, 0) != signed32 ||
+        __divmodsi4(signed32, 300, (s32 *)0) != -333l ||
+        __negsi2(signed32) != 100000l)
         return 5;
 
     if ((u64)__muldi3((s64)value64, 3) != 0x369d0369d0369cd0ull ||
