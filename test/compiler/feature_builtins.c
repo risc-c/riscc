@@ -3,6 +3,7 @@
 u16 __udivhi3(u16, u16);
 u16 __umodhi3(u16, u16);
 u16 __udivmodhi4(u16, u16, u16 *);
+u16 __mulhi3(u16, u16);
 s16 __divhi3(s16, s16);
 s16 __modhi3(s16, s16);
 s16 __divmodhi4(s16, s16, s16 *);
@@ -39,6 +40,8 @@ static volatile u32 builtin_u32 = 0x12345678ul;
 static volatile s32 builtin_s32 = -100000l;
 static volatile u64 builtin_u64 = 0x123456789abcdef0ull;
 static volatile s64 builtin_s64 = -100000ll;
+static volatile u32 builtin_shift_u32 = 0x80010001ul;
+static volatile u64 builtin_shift_u64 = 0x8001000200040001ull;
 
 u16 feature_test_builtins(void)
 {
@@ -54,8 +57,20 @@ u16 feature_test_builtins(void)
     s32 signed32 = builtin_s32;
     u64 value64 = builtin_u64;
     s64 signed64 = builtin_s64;
+    u32 shift32 = builtin_shift_u32;
+    u64 shift64 = builtin_shift_u64;
 
-    if (__udivhi3(value16, 37) != 27 || __umodhi3(value16, 37) != 1 ||
+    if (__mulhi3(value16, 37) != 37000 ||
+        __mulhi3(0xffffu, 0xffffu) != 1 ||
+        __udivhi3(value16, 37) != 27 || __umodhi3(value16, 37) != 1 ||
+        __udivhi3(0xffffu, 0x8001u) != 1 ||
+        __umodhi3(0xffffu, 0x8001u) != 0x7ffeu ||
+        __udivhi3(0x8000u, 0xffffu) != 0 ||
+        __umodhi3(0x8000u, 0xffffu) != 0x8000u ||
+        __udivhi3(0xffffu, 1) != 0xffffu ||
+        __umodhi3(0xffffu, 1) != 0 ||
+        __udivhi3(value16, 0) != 0 ||
+        __umodhi3(value16, 0) != value16 ||
         __udivmodhi4(value16, 37, &remainder16) != 27 || remainder16 != 1)
         return 1;
     if (__divhi3(signed16, 37) != -27 || __modhi3(signed16, 37) != -1 ||
@@ -64,12 +79,35 @@ u16 feature_test_builtins(void)
         return 2;
 
     if (__mulsi3(value32, 37) != 0xa1907f58ul ||
+        __mulsi3(0xfffffffful, 0xfffffffful) != 1 ||
+        __mulsi3(0x00010001ul, 0x00010001ul) != 0x00020001ul ||
+        __mulsi3(0x89abcdeful, 0x76543210ul) != 0xe5618cf0ul ||
+        __mulsi3(0xffff0001ul, 0x0001fffful) != 0x0002fffful ||
         (u32)__ashlsi3((s32)value32, 4) != 0x23456780ul ||
         __lshrsi3(value32, 4) != 0x01234567ul ||
         (u32)__ashrsi3((s32)0x87654321ul, 4) != 0xf8765432ul)
         return 3;
+    if ((u32)__ashlsi3((s32)shift32, 0) != 0x80010001ul ||
+        (u32)__ashlsi3((s32)shift32, 1) != 0x00020002ul ||
+        (u32)__ashlsi3((s32)shift32, 16) != 0x00010000ul ||
+        (u32)__ashlsi3((s32)shift32, 31) != 0x80000000ul ||
+        __lshrsi3(shift32, 1) != 0x40008000ul ||
+        __lshrsi3(shift32, 16) != 0x00008001ul ||
+        __lshrsi3(shift32, 31) != 1 ||
+        (u32)__ashrsi3((s32)shift32, 1) != 0xc0008000ul ||
+        (u32)__ashrsi3((s32)shift32, 16) != 0xffff8001ul ||
+        (u32)__ashrsi3((s32)shift32, 31) != 0xfffffffful)
+        return 10;
     if (__udivsi3(value32, 12345) != 0x60a4ul ||
         __umodsi3(value32, 12345) != 0x11f4ul ||
+        __udivsi3(0xfffffffful, 0x80000001ul) != 1 ||
+        __umodsi3(0xfffffffful, 0x80000001ul) != 0x7ffffffeul ||
+        __udivsi3(0x80000000ul, 0xfffffffful) != 0 ||
+        __umodsi3(0x80000000ul, 0xfffffffful) != 0x80000000ul ||
+        __udivsi3(0xfffffffful, 1) != 0xfffffffful ||
+        __umodsi3(0xfffffffful, 1) != 0 ||
+        __udivsi3(value32, 0) != 0 ||
+        __umodsi3(value32, 0) != value32 ||
         __udivmodsi4(value32, 12345, &remainder32) != 0x60a4ul ||
         remainder32 != 0x11f4ul)
         return 4;
@@ -85,8 +123,30 @@ u16 feature_test_builtins(void)
         __lshrdi3(0x8000000000000001ull, 4) != 0x0800000000000000ull ||
         __ashrdi3(-0x100000000ll, 4) != -0x10000000ll)
         return 6;
+    if ((u64)__ashldi3((s64)shift64, 0) != 0x8001000200040001ull ||
+        (u64)__ashldi3((s64)shift64, 1) != 0x0002000400080002ull ||
+        (u64)__ashldi3((s64)shift64, 16) != 0x0002000400010000ull ||
+        (u64)__ashldi3((s64)shift64, 63) != 0x8000000000000000ull ||
+        __lshrdi3(shift64, 1) != 0x4000800100020000ull ||
+        __lshrdi3(shift64, 16) != 0x0000800100020004ull ||
+        __lshrdi3(shift64, 63) != 1 ||
+        (u64)__ashrdi3((s64)shift64, 1) != 0xc000800100020000ull ||
+        (u64)__ashrdi3((s64)shift64, 16) !=
+        0xffff800100020004ull ||
+        (u64)__ashrdi3((s64)shift64, 63) != 0xffffffffffffffffull)
+        return 11;
     if (__udivdi3(value64, 65537) != 0x0000123444445678ull ||
         __umoddi3(value64, 65537) != 0x8878ull ||
+        __udivdi3(0xffffffffffffffffull, 0x8000000000000001ull) != 1 ||
+        __umoddi3(0xffffffffffffffffull, 0x8000000000000001ull) !=
+        0x7ffffffffffffffeull ||
+        __udivdi3(0x8000000000000000ull, 0xffffffffffffffffull) != 0 ||
+        __umoddi3(0x8000000000000000ull, 0xffffffffffffffffull) !=
+        0x8000000000000000ull ||
+        __udivdi3(0xffffffffffffffffull, 1) != 0xffffffffffffffffull ||
+        __umoddi3(0xffffffffffffffffull, 1) != 0 ||
+        __udivdi3(value64, 0) != 0 ||
+        __umoddi3(value64, 0) != value64 ||
         __udivmoddi4(value64, 65537, &remainder64) !=
         0x0000123444445678ull ||
         remainder64 != 0x8878ull)

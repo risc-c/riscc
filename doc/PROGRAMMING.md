@@ -304,12 +304,22 @@ implements directly.
 
 - The RISC-C integer runtime supplies 16-, 32-, and 64-bit multiply,
   divide/remainder, wide shift, negate, and 64-bit comparison helpers. Its
-  wide algorithms operate on little-endian 16-bit limbs.
+  wide algorithms operate on little-endian 16-bit limbs. Hot 16-/32-/64-bit
+  multiply and divide/remainder plus 32-/64-bit shift entry points are
+  profile-tuned assembly; quotient, remainder, and combined
+  quotient/remainder entry points share the wide restoring-divider cores.
+  Full uses `MUL`, mainline uses `FSL1`/`FSR1`, and Nano has reduced-register
+  base-ISA loops.
 - Min and Nano can use shared fixed-count shift entry points when a call is
   smaller than repeating the instruction at each call site.
 - RISC-C-specific binary32 addition, multiplication, and division use
   explicit 16-bit limbs. They avoid recursively calling the wide integer
-  helpers and let leaf functions use the mainline S-register cache.
+  helpers and let leaf functions use the mainline S-register cache. Min, Sys,
+  and Full use whole-routine assembly and a shared IEEE packer for gradual
+  underflow and round-to-nearest/ties-to-even. Sys and Full use their
+  fixed-count shifts directly; Full computes the binary32 24-by-24
+  significand product from native byte products. The optional `MULH`
+  extension is not required.
 - Compiler-rt supplies the binary32 subtraction wrapper and comparisons,
   binary32 integer and format conversions, and all binary64 arithmetic,
   comparison, and conversion helpers.
@@ -318,6 +328,13 @@ Soft-float arithmetic and format conversion use round-to-nearest,
 ties-to-even. Conversion to an integer truncates toward zero as required by C.
 `long double` is the same binary64 format as `double`. There is no hardware
 floating-point ABI, floating-point environment, or alternate rounding mode.
+Nano's size-tuned binary32 add/subtract, multiply, and divide entry points are
+the deliberate exception: they support finite normal arithmetic with
+round-to-nearest/ties-to-even and treat exponent-zero operands as signed zero.
+A finite-normal numerator divided by an exponent-zero denominator produces
+signed infinity. NaNs, infinities, zero divided by zero, gradual underflow, and
+result exponent overflow are otherwise outside the Nano arithmetic contract.
+Min, Sys, and Full retain the complete binary32 behavior.
 
 ### 3.3 Public headers and `libc.a`
 
@@ -400,10 +417,11 @@ forms; `long double` reuses the binary64 implementation.
 | Representation | `nextafter`, `nexttoward`, `nan` |
 | Arithmetic | `sqrt`, `fmod` |
 
-`sqrt` is correctly rounded to nearest with ties to even. Scaling uses exact
-powers of two and the compiler-rt multiply helpers to preserve IEEE rounding
-at subnormal boundaries. Wide bit operations use explicit little-endian
-16-bit limbs instead of expanded 64-bit compiler helpers.
+`sqrt` is correctly rounded to nearest with ties to even. Outside Nano's
+reduced multiply contract, scaling uses exact powers of two and the
+compiler-rt multiply helpers to preserve IEEE rounding at subnormal
+boundaries. Wide bit operations use explicit little-endian 16-bit limbs
+instead of expanded 64-bit compiler helpers.
 
 The library neither sets `errno` nor exposes floating exceptions;
 `math_errhandling` is zero. Transcendentals, `fma`, alternate-rounding-mode
@@ -564,6 +582,11 @@ compiler-managed `S3..S7`, not a full task context. It never assumes the
 interrupted `r7` is a stack pointer: it saves that state in a 22-byte prefix
 immediately below `S2`, then runs the C handler on one 64-byte global
 downward-growing IRQ stack. `r5` and `r6` are ordinary callee-saved registers.
+Consequently, the hand-written runtime's leaf routines can use fixed negative
+offsets from their incoming `r7` for short-lived scratch without moving the
+stack pointer. Known internal caller/callee pairs reserve non-overlapping
+scratch words. This is an implementation convention inside the supplied
+runtime, not an ABI red zone available to arbitrary C code.
 
 The wrapper keeps interrupts disabled and cannot support nesting because the
 architecture has one EPC register. A handler must not execute `STI`, `RETI`,
@@ -592,10 +615,12 @@ zero-length cases. Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
 The separate `compiler-float-iss` matrix covers binary32/binary64 arithmetic,
 comparisons and NaNs, signed and unsigned 32-/64-bit conversions, cross-file
 scalar and aggregate calls, `long double`, stack arguments, and variadic
-promotion. Its binary32 cases include signed zero, overflow, subnormal
-boundaries, and ties-to-even rounding. `compiler-libm-iss` runs two separately
-linked images that check archive extraction, classification, signed zero, NaNs
-and infinities, subnormal boundaries, and the public
+promotion. Mainline binary32 cases include signed zero, overflow, subnormal
+boundaries, and ties-to-even rounding; Nano instead exercises its documented
+finite-normal arithmetic and signed flush-to-zero contract.
+`compiler-libm-iss` runs two separately linked images that check archive
+extraction, classification, signed zero, NaNs and infinities, subnormal
+boundaries, and the public
 float/double/long-double functions at the same three optimization levels. The
 focused LLVM regression also checks the backend lowering for each supported
 math intrinsic.

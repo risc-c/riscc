@@ -95,6 +95,14 @@ int main(void)
             3);
     }
 
+#ifdef __RISCC_NANO__
+    CHECK(float_bits(scalbnf(fhalf, 4)) == UINT32_C(0x41000000) &&
+            double_bits(ldexp(dfive, -1)) ==
+                UINT64_C(0x4006000000000000) &&
+            double_bits(scalbn(done, -1074)) == UINT64_C(1) &&
+            isinf(scalbln(done, 1024)),
+        4);
+#else
     CHECK(float_bits(scalbnf(fhalf, 4)) == UINT32_C(0x41000000) &&
             double_bits(ldexp(dfive, -1)) ==
                 UINT64_C(0x4006000000000000) &&
@@ -103,6 +111,7 @@ int main(void)
             isinf(scalbnf(float_maximum.value, 1)) &&
             isinf(scalbln(done, 1024)),
         4);
+#endif
 
     CHECK(ilogbf(ffive) == 2 &&
             ilogbf(float_subnormal.value) == -149 &&

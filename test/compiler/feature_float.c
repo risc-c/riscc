@@ -32,6 +32,14 @@ static volatile u64 unsigned64 = 0x100000000ull;
 
 static volatile struct feature_float_case float_add_cases[] =
 {
+    {0x3f812345ul, 0x3fcabcdeul, 0x4025f012ul},
+    {0x3ffffffful, 0x3f800001ul, 0x40400000ul},
+    {0x41234567ul, 0xbedcba98ul, 0x411c5f92ul},
+    {0x3fabcdeful, 0xbf987654ul, 0x3e1abcd8ul},
+    {0x7eabcdeful, 0x00812345ul, 0x7eabcdeful},
+    {0x3f800001ul, 0x33800000ul, 0x3f800002ul},
+    {0x3f800000ul, 0x33800000ul, 0x3f800000ul},
+    {0x00812345ul, 0x00876543ul, 0x01044444ul},
     {0x00000001ul, 0x00000001ul, 0x00000002ul},
     {0x007ffffful, 0x00000001ul, 0x00800000ul},
     {0x3f800000ul, 0x33800000ul, 0x3f800000ul},
@@ -45,6 +53,14 @@ static volatile struct feature_float_case float_add_cases[] =
 
 static volatile struct feature_float_case float_multiply_cases[] =
 {
+    {0x3f812345ul, 0x3fcabcdeul, 0x3fcc8a35ul},
+    {0x3ffffffful, 0x3ffffffful, 0x407ffffeul},
+    {0x3f800001ul, 0x3f800001ul, 0x3f800002ul},
+    {0x41234567ul, 0x3edcba98ul, 0x408cc6a6ul},
+    {0x7eabcdeful, 0x00812345ul, 0x3fad54e2ul},
+    {0x00fffffful, 0x4efffffful, 0x107ffffeul},
+    {0x3fabcdeful, 0xbf987654ul, 0xbfcca35eul},
+    {0x00812345ul, 0x3f812345ul, 0x00824921ul},
     {0x00800000ul, 0x3f000000ul, 0x00400000ul},
     {0x00000001ul, 0x40000000ul, 0x00000002ul},
     {0x00000001ul, 0x3f000000ul, 0x00000000ul},
@@ -57,6 +73,11 @@ static volatile struct feature_float_case float_multiply_cases[] =
 
 static volatile struct feature_float_case float_divide_cases[] =
 {
+    {0x3f812345ul, 0x3fcabcdeul, 0x3f23106ful},
+    {0x3ffffffful, 0x3f800001ul, 0x3ffffffdul},
+    {0x41234567ul, 0x3edcba98ul, 0x41bd5c5ful},
+    {0x00812345ul, 0x3f812345ul, 0x00800000ul},
+    {0x3fabcdeful, 0xbf987654ul, 0xbf903d22ul},
     {0x3f800000ul, 0x40400000ul, 0x3eaaaaabul},
     {0x00800000ul, 0x40000000ul, 0x00400000ul},
     {0x00000001ul, 0x40000000ul, 0x00000000ul},
@@ -89,9 +110,25 @@ static float float_from_bits(u32 bits)
 static u16 test_float_edge_cases(void)
 {
     u16 index;
+#ifdef __RISCC_NANO__
+    /*
+     * Nano's size-tuned binary32 arithmetic contract covers finite normal
+     * results and signed flush-to-zero inputs.  The remaining profiles
+     * retain gradual underflow, overflow, infinity, and NaN arithmetic.
+     */
+    const u16 add_case_count = 8;
+    const u16 divide_case_count = 5;
+    const u16 multiply_case_count = 8;
+#else
+    const u16 add_case_count =
+        sizeof(float_add_cases) / sizeof(float_add_cases[0]);
+    const u16 multiply_case_count =
+        sizeof(float_multiply_cases) / sizeof(float_multiply_cases[0]);
+    const u16 divide_case_count =
+        sizeof(float_divide_cases) / sizeof(float_divide_cases[0]);
+#endif
 
-    for (index = 0; index !=
-        sizeof(float_add_cases) / sizeof(float_add_cases[0]); ++index)
+    for (index = 0; index != add_case_count; ++index)
     {
         float left = float_from_bits(float_add_cases[index].left);
         float right = float_from_bits(float_add_cases[index].right);
@@ -99,9 +136,7 @@ static u16 test_float_edge_cases(void)
         if (float_bits(left + right) != float_add_cases[index].expected)
             return 1;
     }
-    for (index = 0; index !=
-        sizeof(float_multiply_cases) /
-            sizeof(float_multiply_cases[0]); ++index)
+    for (index = 0; index != multiply_case_count; ++index)
     {
         float left = float_from_bits(float_multiply_cases[index].left);
         float right = float_from_bits(float_multiply_cases[index].right);
@@ -110,9 +145,7 @@ static u16 test_float_edge_cases(void)
             float_multiply_cases[index].expected)
             return 2;
     }
-    for (index = 0; index !=
-        sizeof(float_divide_cases) /
-            sizeof(float_divide_cases[0]); ++index)
+    for (index = 0; index != divide_case_count; ++index)
     {
         float left = float_from_bits(float_divide_cases[index].left);
         float right = float_from_bits(float_divide_cases[index].right);

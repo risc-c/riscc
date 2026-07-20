@@ -1302,6 +1302,9 @@ RISCC_FIRMWARE_IRQ_DEFAULT := $(RISCC_FIRMWARE_BUILD)/irq_default.o
 RISCC_FIRMWARE_IRQ_CONTROL := $(RISCC_FIRMWARE_BUILD)/irq_control.o
 RISCC_FIRMWARE_IRQ_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libirq.a
 RISCC_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer.o
+RISCC_INTEGER_DIV_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer_div.o
+RISCC_INTEGER_MUL_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer_mul.o
+RISCC_INTEGER_SHIFT_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/integer_shifts.o
 RISCC_SHIFT_BUILTINS_OBJECT := $(RISCC_FIRMWARE_BUILD)/builtins/shift.o
 RISCC_COMPILER_RT_BUILTINS := external/llvm-project/compiler-rt/lib/builtins
 RISCC_SOFT_FLOAT_MODULES := fp_mode \
@@ -1319,6 +1322,17 @@ RISCC_SOFT_FLOAT_OBJECTS := $(addprefix \
 RISCC_SOFT_FLOAT_OVERRIDE_OBJECTS := $(addprefix \
 	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/, \
 	$(addsuffix .o,$(RISCC_SOFT_FLOAT_OVERRIDES)))
+RISCC_SOFT_FLOAT_C_OVERRIDE_OBJECTS := $(if \
+	$(filter nano min sys full,$(RISCC_CPU)),, \
+	$(RISCC_SOFT_FLOAT_OVERRIDE_OBJECTS))
+RISCC_SOFT_FLOAT_MUL24_OBJECT := \
+	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/mul24.o
+RISCC_SOFT_FLOAT_OBJECTS += \
+	$(if $(filter full,$(RISCC_CPU)),$(RISCC_SOFT_FLOAT_MUL24_OBJECT))
+RISCC_SOFT_FLOAT_PACK_OBJECT := \
+	$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/pack_sf_min.o
+RISCC_SOFT_FLOAT_OBJECTS += \
+	$(if $(filter min sys full,$(RISCC_CPU)),$(RISCC_SOFT_FLOAT_PACK_OBJECT))
 RISCC_BUILTINS_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libbuiltins.a
 RISCC_BSP_DIR ?= firmware/bsp/demo
 RISCC_BSP_MODULES ?= console clock $(if $(filter-out nano,$(RISCC_CPU)),time)
@@ -1345,7 +1359,9 @@ RISCC_LIBM_OBJECTS := $(RISCC_FIRMWARE_BUILD)/libm/bits.o \
 	$(RISCC_FIRMWARE_BUILD)/libm/fmod.o \
 	$(RISCC_FIRMWARE_BUILD)/libm/next.o \
 	$(RISCC_FIRMWARE_BUILD)/libm/sqrt.o \
-	$(RISCC_FIRMWARE_BUILD)/libm/wide.o
+	$(RISCC_FIRMWARE_BUILD)/libm/wide.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/wide_arith.o \
+	$(RISCC_FIRMWARE_BUILD)/libm/wide_shift.o
 RISCC_LIBM_LIBRARY := $(RISCC_FIRMWARE_BUILD)/libm.a
 RISCC_FIRMWARE_LIBRARIES := $(RISCC_LIBC_LIBRARY) \
 	$(RISCC_LIBM_LIBRARY) \
@@ -1489,12 +1505,63 @@ $(RISCC_SHIFT_BUILTINS_OBJECT): firmware/builtins/shift.S $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
 
-$(RISCC_SOFT_FLOAT_OVERRIDE_OBJECTS): \
+$(RISCC_INTEGER_DIV_BUILTINS_OBJECT): firmware/builtins/integer_div.S $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_INTEGER_MUL_BUILTINS_OBJECT): firmware/builtins/integer_mul.S $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_INTEGER_SHIFT_BUILTINS_OBJECT): firmware/builtins/integer_shifts.S $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_SOFT_FLOAT_C_OVERRIDE_OBJECTS): \
 		$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 		firmware/builtins/softfloat/%.c \
 		firmware/builtins/softfloat/internal.h Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -c $< -o $@
+
+ifeq ($(RISCC_CPU),nano)
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/addsf3.o: \
+		firmware/builtins/softfloat/addsf3_nano.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/divsf3.o: \
+		firmware/builtins/softfloat/divsf3_nano.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/mulsf3.o: \
+		firmware/builtins/softfloat/mulsf3_nano.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+endif
+
+ifneq ($(filter min sys full,$(RISCC_CPU)),)
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/addsf3.o: \
+		firmware/builtins/softfloat/addsf3_mainline.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/divsf3.o: \
+		firmware/builtins/softfloat/divsf3_mainline.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_SOFT_FLOAT_PACK_OBJECT): \
+		firmware/builtins/softfloat/pack_sf_mainline.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/builtins/softfloat/mulsf3.o: \
+		firmware/builtins/softfloat/mulsf3_mainline.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+endif
 
 $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 		$(RISCC_COMPILER_RT_BUILTINS)/%.c \
@@ -1505,6 +1572,11 @@ $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) \
 	  -I$(RISCC_COMPILER_RT_BUILTINS) -c $< -o $@
 
+$(RISCC_SOFT_FLOAT_MUL24_OBJECT): \
+		firmware/builtins/softfloat/mul24.S $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
 $(RISCC_FIRMWARE_BUILD)/libc/%.o: firmware/libc/%.c $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
@@ -1513,6 +1585,14 @@ $(RISCC_FIRMWARE_BUILD)/libm/%.o: firmware/libm/%.c \
 		firmware/libm/internal.h $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/libm/wide_shift.o: firmware/libm/wide_shift.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/libm/wide_arith.o: firmware/libm/wide_arith.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o: firmware/libc/heap.S Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
@@ -1523,10 +1603,16 @@ $(RISCC_FIRMWARE_BUILD)/bsp/%.o: $(RISCC_BSP_DIR)/%.c $(RISCC_LIBC_HEADERS) Make
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
 
 $(RISCC_BUILTINS_LIBRARY): $(RISCC_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_DIV_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_MUL_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_SHIFT_BUILTINS_OBJECT) \
 		$(RISCC_SHIFT_BUILTINS_OBJECT) \
 		$(RISCC_SOFT_FLOAT_OBJECTS) $(RISCC_AR)
 	@mkdir -p $(@D)
 	$(RISCC_AR) rcs $@ $(RISCC_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_DIV_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_MUL_BUILTINS_OBJECT) \
+		$(RISCC_INTEGER_SHIFT_BUILTINS_OBJECT) \
 		$(RISCC_SHIFT_BUILTINS_OBJECT) $(RISCC_SOFT_FLOAT_OBJECTS)
 
 $(RISCC_LIBC_LIBRARY): $(RISCC_LIBC_OBJECTS) $(RISCC_AR)
