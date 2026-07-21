@@ -23,8 +23,7 @@ main:
         .global __riscc_irq_vector
         .type __riscc_irq_vector,@function
 __riscc_irq_vector:
-        LDI16   r0, 1
-        LDI16   r1, 0xfff8
-        STW     r0, [r1+0]        // Testbench IRQ acknowledge register.
+        LDI16   r1, 0xfffa
+        LDW     r0, [r1+0]        // Read acknowledges the testbench IRQ.
         RETI    S0
         .size __riscc_irq_vector, . - __riscc_irq_vector

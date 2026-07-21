@@ -10,10 +10,9 @@
 // I/O page: the top 16 bytes (0xFFF0..0xFFFF, words 0x7FF8..0x7FFF) are
 // word-wide I/O registers, out of reach of code/data that grow from 0.
 // Current map (mirrored by both ISSes):
-//   0xFFF0..0xFFF6         UART TX, RX, status, and control
-//   0xFFF8 (word 0x7FFC)  irq ack (store) / cause log
-//   0xFFFA (word 0x7FFD)  irq trigger (store raises the irq line)
-//   0xFFFC (word 0x7FFE)  suite scratch (ISR entry counter)
+//   0xFFF0                 UART data: write TX, read RX
+//   0xFFF2                 UART state: write enables, read status
+//   0xFFFA (word 0x7FFD)  test IRQ: write raises; read returns cause and acks
 //   0xFFFE (word 0x7FFF)  result word: 0x600D pass, anything else fail
 // Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N] [--trace] [--dump-written]
 // --irq-at asserts the irq line from cycle N (deterministic IRQ tests
@@ -156,6 +155,11 @@ int main(int argc, char **argv)
         top->eval();
 
         // Synchronous memory commits at the posedge
+        const int test_irq_read = !we && !top->rst && addr == 0x7FFD;
+        const uint16_t test_irq_cause = irq ? 1 : 0;
+        if (test_irq_read)
+            irq = 0;
+
         if (we && !top->rst)
         {
             uint16_t old = mem[addr];
@@ -165,7 +169,6 @@ int main(int argc, char **argv)
             mem[addr] = nw;
             mem_written[addr & 0x7FFF] = 1;
             if (addr == 0x7FFD) irq = 1;   // byte 0xFFFA: raise irq
-            if (addr == 0x7FFC) irq = 0;   // byte 0xFFF8: ack irq
             if (addr == 0x7FFF) done = 1;  // byte 0xFFFE: result word
         }
 #ifdef RISCC_TB_TRACE
@@ -176,7 +179,7 @@ int main(int argc, char **argv)
             trace_printed = 1;
 }
 #endif
-        rdata = mem[addr & 0x7FFF];
+        rdata = test_irq_read ? test_irq_cause : mem[addr & 0x7FFF];
 
         top->clk = 0;
         top->eval();

@@ -2,7 +2,8 @@ ENTRY(_start)
 
 MEMORY
 {
-  RAM (rwx) : ORIGIN = 0x0000, LENGTH = 0x8000
+  RAM (rwx) : ORIGIN = 0x0000,
+              LENGTH = DEFINED(__riscc_ram_length) ? __riscc_ram_length : 0x8000
 }
 
 SECTIONS

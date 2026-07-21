@@ -2,9 +2,9 @@
 """RISC-C instruction-set simulator (golden model).
 
 Executes a little-endian binary image with the same architectural
-semantics as the tiny RTL cores, including the reserved I/O page at
-the top of the address space (UART 0xFFF0..0xFFF6, irq ack 0xFFF8,
-irq trigger 0xFFFA, result word 0xFFFE) and the IRQ-at-instruction-boundary rule, so
+semantics as the tiny RTL cores, including the compact reserved I/O page at
+the top of the address space (UART 0xFFF0..0xFFF2, test IRQ 0xFFFA,
+result word 0xFFFE) and the IRQ-at-instruction-boundary rule, so
 self-checking programs behave identically here and under
 riscc_test.cpp.
 
@@ -30,14 +30,11 @@ import struct
 import sys
 import zlib
 
-# I/O page: top 16 bytes are word-wide registers (see riscc_test.cpp)
-UART_TX_W     = 0x7FF8    # byte 0xFFF0
-UART_RX_W     = 0x7FF9    # byte 0xFFF2
-UART_STATUS_W = 0x7FFA    # byte 0xFFF4
-UART_CTRL_W   = 0x7FFB    # byte 0xFFF6
-IRQ_ACK_W     = 0x7FFC    # byte 0xFFF8
-IRQ_RAISE_W   = 0x7FFD    # byte 0xFFFA
-RESULT_W      = 0x7FFF    # byte 0xFFFE
+# I/O page: compact test registers share the UART aperture (see riscc_test.cpp).
+UART_DATA_W  = 0x7FF8     # byte 0xFFF0: write TX, read RX
+UART_STATE_W = 0x7FF9     # byte 0xFFF2: read status, write IRQ enables
+TEST_IRQ_W   = 0x7FFD     # byte 0xFFFA: write raise, read acknowledge/cause
+RESULT_W     = 0x7FFF     # byte 0xFFFE: test result
 RESET_PC    = 0x0000
 
 FB_BASE_W = 0x4000        # byte 0x8000
@@ -202,29 +199,31 @@ class Sim:
     # -- memory helpers (byte addressing, word-aligned word access) -------
     def ldw(self, baddr):
         waddr = (baddr >> 1) & 0x7FFF
+        if waddr == TEST_IRQ_W:
+            cause = 1 if self.irq_line else 0
+            self.irq_line = 0
+            return cause
         if self.uart:
-            if waddr == UART_RX_W:
+            if waddr == UART_DATA_W:
                 val = self.uart_rx_data
                 self.uart_rx_ready = False
                 self.uart_rx_overflow = False
                 return val
-            if waddr == UART_STATUS_W:
+            if waddr == UART_STATE_W:
                 return ((4 if self.uart_rx_overflow else 0) |
                         (2 if self.uart_rx_ready else 0) |
                         (1 if self.uart_tx_ready else 0))
-            if waddr == UART_CTRL_W:
-                return self.uart_irq_en & 3
         val = self.mem[waddr]
         return val
 
     def stw(self, baddr, val, mask=3):
         w = (baddr >> 1) & 0x7FFF
-        if self.uart and w in (UART_TX_W, UART_CTRL_W):
+        if self.uart and w in (UART_DATA_W, UART_STATE_W):
             self.mem_written[w] = True
-            if w == UART_TX_W and (mask & 1):
+            if w == UART_DATA_W and (mask & 1):
                 self.uart_out.append(val & 0xFF)
                 self.uart_tx_ready = True
-            elif w == UART_CTRL_W and (mask & 1):
+            elif w == UART_STATE_W and (mask & 1):
                 self.uart_irq_en = val & 3
             return
         old = self.mem[w]
@@ -234,10 +233,8 @@ class Sim:
             old = (old & 0x00FF) | (val & 0xFF00)
         self.mem[w] = old
         self.mem_written[w] = True
-        if w == IRQ_RAISE_W:
+        if w == TEST_IRQ_W:
             self.irq_line = 1
-        if w == IRQ_ACK_W:
-            self.irq_line = 0
         if w == RESULT_W:
             self.done = True
 

@@ -13,14 +13,14 @@ module atum_a3_nano_soc #(
     output wire        uart_tx,
     output wire [3:0]  led,
     output wire        fb_we,
-    output wire [12:0] fb_addr,
+    output wire [14:0] fb_addr,
     output wire [1:0]  fb_wmask,
     output wire [15:0] fb_wdata,
     output wire [31:0] dbg_fb_writes,
     output wire [31:0] dbg_uart_tx_count,
     output wire [31:0] dbg_uart_rx_count
 );
-    localparam [14:0] LED_W = 15'h7ff4;     // byte 0xffe8
+    localparam [14:0] LED_W = 15'h7ffc;     // byte 0xfff8
     localparam [1:0] RSEL_RAM = 2'd0;
     localparam [1:0] RSEL_FB = 2'd1;
     localparam [1:0] RSEL_MMIO = 2'd2;
@@ -31,7 +31,8 @@ module atum_a3_nano_soc #(
     wire [1:0] cpu_wmask;
     wire cpu_we;
     wire cpu_irq;
-    (* ramstyle = "M20K" *) reg [15:0] ram [0:16383];
+    // The expanded framebuffer leaves a 24 KiB CPU-visible firmware window.
+    (* ramstyle = "M20K" *) reg [15:0] ram [0:12287];
     reg [15:0] ram_rdata_q;
     reg [15:0] mmio_rdata_q;
     reg [1:0] rsel_q;
@@ -40,11 +41,13 @@ module atum_a3_nano_soc #(
     reg [31:0] fb_writes_q;
 `endif
 
-    wire ram_sel = ~cpu_addr[14];
-    wire mmio_sel = cpu_addr[14] & cpu_addr[13];
+    // Firmware uses 0x0000..0x5fff; framebuffer and then MMIO fill the
+    // remaining CPU address space.
+    wire ram_sel = cpu_addr < 15'h3000;
+    wire fb_sel;
+    wire mmio_sel = !ram_sel && !fb_sel;
     wire mmio_we = cpu_we && mmio_sel;
     wire led_sel = mmio_sel && (cpu_addr[3:0] == LED_W[3:0]);
-    wire fb_sel;
     wire [15:0] uart_rdata;
     wire uart_irq;
     wire [15:0] timer_rdata;
@@ -62,9 +65,7 @@ module atum_a3_nano_soc #(
         .mem_wmask(cpu_wmask), .mem_we(cpu_we)
     );
 
-    riscc_framebuffer_mmio #(
-        .CHECK_RANGE(1), .WORDS(4800)
-    ) framebuffer_mmio (
+    riscc_framebuffer_mmio #(.WORDS(15'd14400)) framebuffer_mmio (
         .rst(rst), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
         .cpu_wmask(cpu_wmask), .cpu_wdata(cpu_wdata), .fb_sel(fb_sel),
         .fb_we(fb_we), .fb_addr(fb_addr), .fb_wmask(fb_wmask),
@@ -101,7 +102,7 @@ module atum_a3_nano_soc #(
 `endif
 
     always @(posedge clk) begin
-        ram_rdata_q <= ram[cpu_addr[13:0]];
+        ram_rdata_q <= ram_sel ? ram[cpu_addr[13:0]] : 16'h0000;
         if (!rst && cpu_we && ram_sel) begin
             if (cpu_wmask[0]) ram[cpu_addr[13:0]][7:0] <= cpu_wdata[7:0];
             if (cpu_wmask[1]) ram[cpu_addr[13:0]][15:8] <= cpu_wdata[15:8];

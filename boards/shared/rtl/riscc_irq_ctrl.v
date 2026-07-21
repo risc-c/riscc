@@ -4,7 +4,8 @@
 // Two-source level interrupt mask.  Source state belongs to its peripheral:
 // UART RX is consumed by a read and the one-shot timer is rearmed by a write.
 module riscc_irq_ctrl #(
-    parameter integer REGISTER_IRQ = 0
+    parameter integer REGISTER_IRQ = 0,
+    parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -15,23 +16,50 @@ module riscc_irq_ctrl #(
     input  wire [1:0]  sources,
     output wire        irq
 );
-    localparam [3:0] IRQ_PENDING_W = 4'h0; // byte 0xffe0
-    localparam [3:0] IRQ_ENABLE_W  = 4'h1; // byte 0xffe2
+    // Direction disambiguates the source state from its enable mask.
+    localparam [3:0] IRQ_STATE_W = 4'hb; // byte 0xfff6: read pending, write enables
 
     reg [1:0] enable_q;
-    wire enable_write = cpu_we && (cpu_addr == IRQ_ENABLE_W);
+    wire write_fire;
+    wire [3:0] write_addr;
+    wire [15:0] write_data;
+    generate
+        if (PIPELINE_WRITES != 0) begin : g_pipeline_writes
+            reg write_q;
+            reg [3:0] write_addr_q;
+            reg [15:0] write_data_q;
+            always @(posedge clk) begin
+                if (rst) begin
+                    write_q <= 1'b0;
+                    write_addr_q <= 4'h0;
+                    write_data_q <= 16'h0000;
+                end else begin
+                    write_q <= cpu_we;
+                    write_addr_q <= cpu_addr;
+                    write_data_q <= cpu_wdata;
+                end
+            end
+            assign write_fire = write_q;
+            assign write_addr = write_addr_q;
+            assign write_data = write_data_q;
+        end else begin : g_direct_writes
+            assign write_fire = cpu_we;
+            assign write_addr = cpu_addr;
+            assign write_data = cpu_wdata;
+        end
+    endgenerate
+    wire enable_write = write_fire && (write_addr == IRQ_STATE_W);
     wire irq_next = |(sources & enable_q);
 
     assign cpu_rdata =
-        (cpu_addr == IRQ_PENDING_W) ? {14'h0000, sources} :
-        (cpu_addr == IRQ_ENABLE_W) ? {14'h0000, enable_q} :
+        (cpu_addr == IRQ_STATE_W) ? {14'h0000, sources} :
         16'h0000;
 
     always @(posedge clk) begin
         if (rst)
             enable_q <= 2'b00;
         else if (enable_write)
-            enable_q <= cpu_wdata[1:0];
+            enable_q <= write_data[1:0];
     end
 
     generate

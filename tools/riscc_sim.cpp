@@ -28,25 +28,16 @@ namespace
 // The top sixteen words are permanently reserved for board I/O and test
 // control. The ISS models the shared board timer/IRQ subset as well as its
 // test-only control registers.
-constexpr uint16_t IRQ_PENDING_W = 0x7ff0; // byte 0xffe0
-constexpr uint16_t IRQ_ENABLE_W = 0x7ff1;  // byte 0xffe2
-constexpr uint16_t TIMER_COUNT_W = 0x7ff2; // byte 0xffe4
-constexpr uint16_t TICKS_W = 0x7ff3;       // byte 0xffe6
-constexpr uint16_t UART_TX_W = 0x7ff8;     // byte 0xfff0
-constexpr uint16_t UART_RX_W = 0x7ff9;     // byte 0xfff2
-constexpr uint16_t UART_STATUS_W = 0x7ffa; // byte 0xfff4
-constexpr uint16_t UART_CTRL_W = 0x7ffb;   // byte 0xfff6
-constexpr uint16_t IRQ_ACK_W = 0x7ffc;     // byte 0xfff8
-constexpr uint16_t IRQ_RAISE_W = 0x7ffd;   // byte 0xfffa
-constexpr uint16_t RESULT_W = 0x7fff;      // byte 0xfffe
+constexpr uint16_t TIMER_W = 0x7ffa;      // byte 0xfff4: read ticks, write delay
+constexpr uint16_t IRQ_STATE_W = 0x7ffb;  // byte 0xfff6: read pending, write enables
+constexpr uint16_t UART_DATA_W = 0x7ff8;  // byte 0xfff0: write TX, read RX
+constexpr uint16_t UART_STATE_W = 0x7ff9; // byte 0xfff2: read status, write IRQ enables
+constexpr uint16_t TEST_IRQ_W = 0x7ffd;   // byte 0xfffa: read ack, write raise
+constexpr uint16_t RESULT_W = 0x7fff;     // byte 0xfffe: test result
 constexpr uint16_t RESET_PC = 0x0000;
 constexpr uint64_t TIMER_TICK_HZ = 1000;
 constexpr double DEFAULT_TIMER_MHZ = 50.0;
 
-constexpr uint16_t FB_BASE_W = 0x4000;
-constexpr int FB_WIDTH = 160;
-constexpr int FB_HEIGHT = 120;
-constexpr int FB_PIXELS = FB_WIDTH * FB_HEIGHT;
 constexpr int FB_UPDATE_MS = 33;
 
 struct CycleTable
@@ -127,6 +118,13 @@ CycleTable cycle_table_for_fast(bool dsp)
     };
 }
 
+// Faster currently uses the same lightweight DSP timing estimate as Fast.
+// A cycle-accurate Faster pipeline model can be added independently later.
+CycleTable cycle_table_for_faster()
+{
+    return cycle_table_for_fast(true);
+}
+
 CycleTable cycle_table_for_tiny_width(int width)
 {
     if (width == 16)
@@ -170,6 +168,13 @@ struct Rgb
     uint8_t r;
     uint8_t g;
     uint8_t b;
+};
+
+struct FramebufferLayout
+{
+    uint16_t base_word;
+    int width;
+    int height;
 };
 
 constexpr std::array<Rgb, 16> FB_PALETTE = {{
@@ -223,6 +228,7 @@ struct Opts
     bool nano = false;
     bool fast = false;
     bool fast_dsp = false;
+    bool faster = false;
     int width = 16;
     uint64_t max_insns = 2000000;
     double mhz = 0.0;
@@ -244,19 +250,28 @@ struct Opts
 
     bool has_sys() const
     {
-        return fast || (!nano && !min);
+        return fast || faster || (!nano && !min);
     }
 
     bool has_shifts() const
     {
-        return fast || nano || !min;
+        return fast || faster || nano || !min;
     }
 
     bool has_full() const
     {
-        return fast || (full && !nano);
+        return fast || faster || (full && !nano);
     }
 };
+
+FramebufferLayout framebuffer_layout(const Opts &opts)
+{
+    if (opts.faster)
+        return {0x3000u, 320, 180};
+    if (opts.fast_dsp)
+        return {0x3000u, 320, 240};
+    return {0x4000u, 160, 120};
+}
 
 bool host_stdin_ready()
 {
@@ -308,11 +323,12 @@ struct Sim
 
     Sim(const std::vector<uint8_t> &image, const Opts &opts)
         : opts(opts), cycle(opts.fast ? cycle_table_for_fast(opts.fast_dsp) :
+            opts.faster ? cycle_table_for_faster() :
             cycle_table_for_tiny_width(opts.width))
     {
         // Sys /16 deliberately stages STB for one extra cycle; min/full
         // issue its address directly. Other width/profile timings are shared.
-        if (!opts.fast && !opts.nano && opts.width == 16 &&
+        if (!opts.fast && !opts.faster && !opts.nano && opts.width == 16 &&
             !opts.min && !opts.full)
             cycle.direct_store = 6;
         double timer_mhz = opts.mhz > 0.0 ? opts.mhz : DEFAULT_TIMER_MHZ;
@@ -397,31 +413,31 @@ struct Sim
     uint16_t load_word(uint16_t baddr)
     {
         uint16_t waddr = (baddr >> 1) & 0x7fff;
-        if (waddr == IRQ_PENDING_W)
-            return peripheral_pending();
-        if (waddr == IRQ_ENABLE_W)
-            return irq_enable;
-        if (waddr == TIMER_COUNT_W)
-            return timer_count;
-        if (waddr == TICKS_W)
+        if (waddr == TEST_IRQ_W)
+        {
+            const uint16_t cause = irq_line ? 1u : 0u;
+            irq_line = false;
+            return cause;
+        }
+        if (waddr == TIMER_W)
             return ticks;
+        if (waddr == IRQ_STATE_W)
+            return peripheral_pending();
         if (opts.uart_enabled())
         {
-            if (waddr == UART_RX_W)
+            if (waddr == UART_DATA_W)
             {
                 uint16_t val = uart_rx_data;
                 uart_rx_ready = false;
                 uart_rx_overflow = false;
                 return val;
             }
-            if (waddr == UART_STATUS_W)
+            if (waddr == UART_STATE_W)
             {
                 return static_cast<uint16_t>((uart_rx_overflow ? 4 : 0) |
                         (uart_rx_ready ? 2 : 0) |
                         (uart_tx_ready ? 1 : 0));
             }
-            if (waddr == UART_CTRL_W)
-                return uart_irq_en & 3;
         }
         return mem[waddr];
     }
@@ -429,30 +445,28 @@ struct Sim
     void store_word(uint16_t baddr, uint16_t val, int mask = 3)
     {
         uint16_t w = (baddr >> 1) & 0x7fff;
-        if (w == IRQ_ENABLE_W)
-        {
-            irq_enable = static_cast<uint8_t>(val & 3);
-            return;
-        }
-        if (w == TIMER_COUNT_W)
+        if (w == TIMER_W)
         {
             timer_count = val;
             timer_pending = false;
             return;
         }
-        if (w == IRQ_PENDING_W || w == TICKS_W)
+        if (w == IRQ_STATE_W)
+        {
+            irq_enable = static_cast<uint8_t>(val & 3);
             return;
-        if (opts.uart_enabled() && (w == UART_TX_W || w == UART_CTRL_W))
+        }
+        if (opts.uart_enabled() && (w == UART_DATA_W || w == UART_STATE_W))
         {
             mem_written[w] = 1;
-            if (w == UART_TX_W && (mask & 1))
+            if (w == UART_DATA_W && (mask & 1))
             {
                 uint8_t byte = static_cast<uint8_t>(val);
                 std::putchar(byte);
                 std::fflush(stdout);
                 uart_tx_ready = true;
             }
-            else if (w == UART_CTRL_W && (mask & 1))
+            else if (w == UART_STATE_W && (mask & 1))
             {
                 uart_irq_en = static_cast<uint8_t>(val & 3);
             }
@@ -465,10 +479,8 @@ struct Sim
             old = static_cast<uint16_t>((old & 0x00ff) | (val & 0xff00));
         mem[w] = old;
         mem_written[w] = 1;
-        if (w == IRQ_RAISE_W)
+        if (w == TEST_IRQ_W)
             irq_line = true;
-        if (w == IRQ_ACK_W)
-            irq_line = false;
         if (w == RESULT_W)
         {
             done = true;
@@ -627,7 +639,8 @@ struct Sim
                 {
                     throw std::runtime_error("branch cc 101/110/111 reserved");
                 }
-                instr_cycles = (opts.fast && taken) ? 3 : cycle.direct;
+                instr_cycles = ((opts.fast || opts.faster) && taken) ?
+                    3 : cycle.direct;
             }
         }
         else
@@ -843,12 +856,15 @@ struct Sim
     }
 };
 
-void render_framebuffer_rgb(const Sim &sim, std::vector<uint8_t> &pixels)
+void render_framebuffer_rgb(const Sim &sim, const FramebufferLayout &layout,
+        std::vector<uint8_t> &pixels)
 {
-    pixels.resize(FB_PIXELS * 3);
-    for (int pix = 0; pix < FB_PIXELS; pix++)
+    const int pixels_count = layout.width * layout.height;
+
+    pixels.resize(pixels_count * 3);
+    for (int pix = 0; pix < pixels_count; pix++)
     {
-        uint16_t word = sim.mem[FB_BASE_W + (pix >> 2)];
+        uint16_t word = sim.mem[layout.base_word + (pix >> 2)];
         Rgb rgb = FB_PALETTE[(word >> ((pix & 3) * 4)) & 0xf];
         pixels[pix * 3 + 0] = rgb.r;
         pixels[pix * 3 + 1] = rgb.g;
@@ -863,8 +879,10 @@ struct FramebufferWindow
     SDL_Texture *texture = nullptr;
     std::vector<uint8_t> pixels;
     bool is_closed = false;
+    FramebufferLayout layout;
 
-    explicit FramebufferWindow(int initial_scale)
+    FramebufferWindow(int initial_scale, const FramebufferLayout &fb_layout)
+        : layout(fb_layout)
     {
         int scale = std::max(1, initial_scale);
         if (SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -872,7 +890,7 @@ struct FramebufferWindow
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
         window = SDL_CreateWindow("RISC-C framebuffer",
                 SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                FB_WIDTH * scale, FB_HEIGHT * scale,
+                layout.width * scale, layout.height * scale,
                 SDL_WINDOW_RESIZABLE);
         if (!window)
             throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
@@ -882,7 +900,7 @@ struct FramebufferWindow
         if (!renderer)
             throw std::runtime_error(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
         texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24,
-                SDL_TEXTUREACCESS_STREAMING, FB_WIDTH, FB_HEIGHT);
+                SDL_TEXTUREACCESS_STREAMING, layout.width, layout.height);
         if (!texture)
             throw std::runtime_error(std::string("SDL_CreateTexture failed: ") + SDL_GetError());
     }
@@ -923,18 +941,19 @@ struct FramebufferWindow
         if (is_closed)
             return false;
 
-        render_framebuffer_rgb(sim, pixels);
-        SDL_UpdateTexture(texture, nullptr, pixels.data(), FB_WIDTH * 3);
+        render_framebuffer_rgb(sim, layout, pixels);
+        SDL_UpdateTexture(texture, nullptr, pixels.data(), layout.width * 3);
         int win_w = 0;
         int win_h = 0;
         SDL_GetRendererOutputSize(renderer, &win_w, &win_h);
-        int draw_scale = std::max(1, std::min(win_w / FB_WIDTH, win_h / FB_HEIGHT));
+        int draw_scale = std::max(1, std::min(win_w / layout.width,
+                                               win_h / layout.height));
         SDL_Rect dst =
         {
-            std::max(0, (win_w - FB_WIDTH * draw_scale) / 2),
-            std::max(0, (win_h - FB_HEIGHT * draw_scale) / 2),
-            FB_WIDTH * draw_scale,
-            FB_HEIGHT * draw_scale,
+            std::max(0, (win_w - layout.width * draw_scale) / 2),
+            std::max(0, (win_h - layout.height * draw_scale) / 2),
+            layout.width * draw_scale,
+            layout.height * draw_scale,
         };
         std::string title = "RISC-C framebuffer  insns=" + std::to_string(sim.insns) +
                 " cycles=" + std::to_string(sim.cycles);
@@ -996,13 +1015,14 @@ std::string run_sim(Sim &sim, uint64_t max_insns, double mhz,
     return sim.done ? "DONE" : sim.halted ? "HALT" : "TIMEOUT";
 }
 
-void write_framebuffer_png(const Sim &sim, const std::string &path)
+void write_framebuffer_png(const Sim &sim, const FramebufferLayout &layout,
+        const std::string &path)
 {
     std::vector<uint8_t> pixels;
-    render_framebuffer_rgb(sim, pixels);
+    render_framebuffer_rgb(sim, layout, pixels);
 
-    if (!stbi_write_png(path.c_str(), FB_WIDTH, FB_HEIGHT, 3,
-            pixels.data(), FB_WIDTH * 3))
+    if (!stbi_write_png(path.c_str(), layout.width, layout.height, 3,
+            pixels.data(), layout.width * 3))
         throw std::runtime_error("failed writing PNG " + path);
 }
 
@@ -1013,7 +1033,8 @@ void print_usage(const char *prog)
         << "usage: " << prog << " image.bin [options]\n"
         << "  --min --full\n"
         << "  --nano\n"
-        << "  --fast [--fast-dsp]       approximate pipelined timing (full ISA)\n"
+        << "  --fast [--fast-dsp]       approximate Fast pipelined timing (full ISA)\n"
+        << "  --faster                  Faster DSP timing model (full ISA)\n"
         << "  --width W --max-insns N --mhz N --trace --state --dump WADDR LEN --dump-written\n"
         << "    --mhz also selects the 1 kHz timer clock; without it, ISS uses 50 MHz virtual time\n"
         << "  --uart                    UART console: RX from stdin, TX to stdout\n"
@@ -1063,6 +1084,10 @@ Opts parse_args(int argc, char **argv)
         {
             opts.fast = true;
             opts.fast_dsp = true;
+        }
+        else if (opt == "--faster")
+        {
+            opts.faster = true;
         }
         else if (opt == "--width")
         {
@@ -1132,8 +1157,10 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("--min and --full are mutually exclusive");
     if (opts.nano && (opts.min || opts.full))
         throw std::runtime_error("--nano cannot be combined with a tiny profile");
-    if (opts.fast && (opts.nano || opts.min))
-        throw std::runtime_error("--fast cannot be combined with --nano or --min");
+    if ((opts.fast || opts.faster) && (opts.nano || opts.min))
+        throw std::runtime_error("pipelined timing cannot be combined with --nano or --min");
+    if (opts.fast && opts.faster)
+        throw std::runtime_error("--fast and --faster are mutually exclusive");
     return opts;
 }
 
@@ -1147,15 +1174,17 @@ int main(int argc, char **argv)
         std::vector<uint8_t> image = read_file(opts.image);
 
         Sim sim(image, opts);
+        const FramebufferLayout fb_layout = framebuffer_layout(opts);
 
         bool window_closed = false;
         std::unique_ptr<FramebufferWindow> fb_window;
         if (opts.fb_window)
-            fb_window = std::make_unique<FramebufferWindow>(opts.fb_scale);
+            fb_window = std::make_unique<FramebufferWindow>(opts.fb_scale,
+                fb_layout);
         std::string outcome = run_sim(sim, opts.max_insns, opts.mhz,
             fb_window.get(), &window_closed);
         if (!opts.fb_dump_png.empty())
-            write_framebuffer_png(sim, opts.fb_dump_png);
+            write_framebuffer_png(sim, fb_layout, opts.fb_dump_png);
 
         uint16_t result = sim.mem[RESULT_W];
         bool result_pass = result == 0x600d;
@@ -1164,18 +1193,21 @@ int main(int argc, char **argv)
         bool window_ok = opts.fb_window && window_closed;
         double ipc = sim.cycles ? static_cast<double>(sim.insns) /
             static_cast<double>(sim.cycles) : 0.0;
+        const char *timing_note = opts.fast ? " (estimated fast timing)" :
+            opts.faster ? " (modeled faster timing)" : "";
+        const char *timing_name = opts.fast ? "estimated-fast" :
+            opts.faster ? "modeled-faster" : "modeled";
         std::fprintf(stderr, "%s after %llu insns, %llu cycles, IPC=%.3f, result=0x%04X: %s%s\n",
             outcome.c_str(), static_cast<unsigned long long>(sim.insns),
             static_cast<unsigned long long>(sim.cycles),
-            ipc, result, (pass || window_ok) ? "PASS" : "FAIL",
-            opts.fast ? " (estimated fast timing)" : "");
+            ipc, result, (pass || window_ok) ? "PASS" : "FAIL", timing_note);
 
         if (opts.state)
         {
             std::fprintf(stderr, "STATE outcome=%s insns=%llu cycles=%llu ipc=%.6f timing=%s result=0x%04X\n",
                 outcome.c_str(), static_cast<unsigned long long>(sim.insns),
                 static_cast<unsigned long long>(sim.cycles), ipc,
-                opts.fast ? "estimated-fast" : "modeled", result);
+                timing_name, result);
             std::fprintf(stderr, "R");
             for (int i = 0; i < 8; i++)
                 std::fprintf(stderr, " 0x%04X", sim.r[i]);

@@ -4,15 +4,15 @@
 module atum_fb_ram (
     input wire cpu_clk,
     input wire cpu_we,
-    input wire [12:0] cpu_addr,
+    input wire [14:0] cpu_addr,
     input wire [1:0] cpu_wmask,
     input wire [15:0] cpu_wdata,
     input wire vid_clk,
-    input wire [12:0] vid_addr,
+    input wire [14:0] vid_addr,
     output reg [15:0] vid_rdata
 );
-    // 160x120 pixels, four 4-bit pixels per 16-bit word (4,800 words).
-    (* ramstyle = "M20K, no_rw_check" *) reg [15:0] mem [0:4799];
+    // 320x180 pixels, four 4-bit pixels per 16-bit word (14,400 words).
+    (* ramstyle = "M20K, no_rw_check" *) reg [15:0] mem [0:14399];
 
     always @(posedge cpu_clk) begin
         if (cpu_we) begin
@@ -26,12 +26,12 @@ module atum_fb_ram (
 endmodule
 
 // 1920x1080p60 timing for the TFP410 parallel transmitter.  It scales the
-// RISC-C 160x120 framebuffer by 12 horizontally and 9 vertically, so no
+// RISC-C 320x180 framebuffer by 6 in both directions, so no
 // resampling RAM or second framebuffer is required.
 module atum_fb_hdmi (
     input wire cpu_clk,
     input wire cpu_we,
-    input wire [12:0] cpu_addr,
+    input wire [14:0] cpu_addr,
     input wire [1:0] cpu_wmask,
     input wire [15:0] cpu_wdata,
     input wire pix_clk,
@@ -53,19 +53,20 @@ module atum_fb_hdmi (
 
     reg [11:0] h_count;
     reg [11:0] v_count;
-    reg [7:0] source_x;
-    reg [6:0] source_y;
-    reg [3:0] h_repeat;
-    reg [3:0] v_repeat;
+    reg [8:0] source_x;
+    reg [7:0] source_y;
+    reg [2:0] h_repeat;
+    reg [2:0] v_repeat;
     wire active = (h_count >= H_ACTIVE_START) && (h_count < H_ACTIVE_END) &&
                   (v_count >= V_ACTIVE_START) && (v_count < V_ACTIVE_END);
     wire hsync = h_count >= H_SYNC;
     wire vsync = v_count >= V_SYNC;
-    // Counters replace division by 12 and 9 in the 148.5 MHz pixel domain.
-    // source_x changes after each group of 12 pixels; source_y after 9 lines.
-    wire [14:0] source_pixel = ({8'd0, source_y} << 7) +
-                                ({8'd0, source_y} << 5) + source_x;
-    wire [12:0] fb_vid_addr = active ? source_pixel[14:2] : 13'd0;
+    // Counters replace division by 6 in the 148.5 MHz pixel domain.
+    // source_x changes after each group of six pixels; source_y after six lines.
+    wire [16:0] source_pixel = ({1'b0, source_y} << 8) +
+                                ({3'b000, source_y} << 6) +
+                                {8'b00000000, source_x};
+    wire [14:0] fb_vid_addr = active ? source_pixel[16:2] : 15'd0;
     wire [1:0] pix_lane = source_x[1:0];
     wire [15:0] fb_vid_word;
 
@@ -84,10 +85,10 @@ module atum_fb_hdmi (
         if (rst) begin
             h_count <= 12'd0;
             v_count <= 12'd0;
-            source_x <= 8'd0;
-            source_y <= 7'd0;
-            h_repeat <= 4'd0;
-            v_repeat <= 4'd0;
+            source_x <= 9'd0;
+            source_y <= 8'd0;
+            h_repeat <= 3'd0;
+            v_repeat <= 3'd0;
             active_q <= 1'b0;
             hsync_q <= 1'b0;
             vsync_q <= 1'b0;
@@ -96,13 +97,13 @@ module atum_fb_hdmi (
             // Prime the source coordinate one cycle before its active region
             // starts, so the synchronous framebuffer read aligns with DE.
             if (h_count == H_ACTIVE_START - 1'b1) begin
-                source_x <= 8'd0;
-                h_repeat <= 4'd0;
+                source_x <= 9'd0;
+                h_repeat <= 3'd0;
             end else if ((h_count >= H_ACTIVE_START) &&
                          (h_count < H_ACTIVE_END)) begin
-                if (h_repeat == 4'd11) begin
+                if (h_repeat == 3'd5) begin
                     source_x <= source_x + 1'b1;
-                    h_repeat <= 4'd0;
+                    h_repeat <= 3'd0;
                 end else begin
                     h_repeat <= h_repeat + 1'b1;
                 end
@@ -110,13 +111,13 @@ module atum_fb_hdmi (
 
             if (h_count == H_TOTAL - 1'b1) begin
                 if (v_count == V_ACTIVE_START - 1'b1) begin
-                    source_y <= 7'd0;
-                    v_repeat <= 4'd0;
+                    source_y <= 8'd0;
+                    v_repeat <= 3'd0;
                 end else if ((v_count >= V_ACTIVE_START) &&
                              (v_count < V_ACTIVE_END)) begin
-                    if (v_repeat == 4'd8) begin
+                    if (v_repeat == 3'd5) begin
                         source_y <= source_y + 1'b1;
-                        v_repeat <= 4'd0;
+                        v_repeat <= 3'd0;
                     end else begin
                         v_repeat <= v_repeat + 1'b1;
                     end

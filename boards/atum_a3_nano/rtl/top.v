@@ -72,7 +72,7 @@ module top (
 
     wire [3:0] led_raw;
     wire fb_we;
-    wire [12:0] fb_addr;
+    wire [14:0] fb_addr;
     wire [1:0] fb_wmask;
     wire [15:0] fb_wdata;
     wire tfp410_ready;

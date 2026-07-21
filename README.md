@@ -105,7 +105,9 @@ make -j16 test-compiler
 | `make -j16 all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports. It does not include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
 | `make -j16 tables` | Regenerates area, Fmax, and benchmark measurement tables; substantially slower. |
+| `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast DSP ISS model with its framebuffer window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |
+| `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Faster DSP ISS model with its framebuffer window. |
 | `make atum-a3-demo` | Builds the Atum A3 Nano demo `.sof`; requires Quartus Pro and does not program hardware. |
 
 See the Hardware manual before running FPGA flows or programming a board, and

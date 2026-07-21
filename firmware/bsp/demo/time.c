@@ -27,7 +27,7 @@ void riscc_time_init(void)
     seconds_high = 0;
     riscc_irq_set_handler(riscc_time_tick);
     riscc_timer_set_ticks(RISCC_TICK_HZ);
-    RISCC_MMIO16(RISCC_IRQ_ENABLE) |= RISCC_IRQ_TIMER;
+    RISCC_MMIO16(RISCC_IRQ_ENABLE) = RISCC_IRQ_TIMER;
     time_started = 1;
     riscc_irq_enable();
 }

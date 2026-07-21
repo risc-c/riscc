@@ -4,7 +4,9 @@
 module icepi_zero_soc #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
     parameter integer UART_CLK_DIV = 434,
-    parameter integer TIMER_TICK_DIV = 50000
+    parameter integer TIMER_TICK_DIV = 50000,
+    parameter integer PIPELINE_MMIO_WRITES = 0,
+    parameter integer PIPELINE_FB_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -14,7 +16,7 @@ module icepi_zero_soc #(
     output wire        uart_tx,
     output wire [4:0]  led,
     output wire        fb_we,
-    output wire [12:0] fb_addr,
+    output wire [13:0] fb_addr,
     output wire [1:0]  fb_wmask,
     output wire [15:0] fb_wdata,
 
@@ -22,7 +24,7 @@ module icepi_zero_soc #(
     output wire [31:0] dbg_uart_tx_count,
     output wire [31:0] dbg_uart_rx_count
 );
-    localparam [14:0] LED_W          = 15'h7ff4; // byte 0xffe8
+    localparam [14:0] LED_W          = 15'h7ffc; // byte 0xfff8
 
     wire [14:0] cpu_addr;
     wire [15:0] cpu_rdata;
@@ -40,13 +42,13 @@ module icepi_zero_soc #(
     reg [31:0] fb_writes_q;
 `endif
 
-    // Decode 8K-word apertures from the high address bits: RAM at 0x0000,
-    // framebuffer at 0x4000, and MMIO at 0x6000.
+    // The high-half framebuffer decode stays deliberately shallow: a CPU
+    // store reaches its EBR write-enable in the same 50 MHz cycle.
     wire ram_sel = ~cpu_addr[14];
-    wire mmio_sel = cpu_addr[14] & cpu_addr[13];
+    wire fb_sel;
+    wire mmio_sel = &cpu_addr[14:3];
     wire mmio_we = cpu_we && mmio_sel;
     wire led_sel = mmio_sel && (cpu_addr[3:0] == LED_W[3:0]);
-    wire fb_sel;
 
     wire [15:0] uart_rdata;
     wire uart_irq;
@@ -70,15 +72,53 @@ module icepi_zero_soc #(
         .mem_we(cpu_we)
     );
 
-    riscc_framebuffer_mmio framebuffer_mmio (
+    wire fb_we_raw;
+    wire [14:0] fb_addr_full;
+    wire [1:0] fb_wmask_raw;
+    wire [15:0] fb_wdata_raw;
+    riscc_framebuffer_mmio #(
+        .WORDS(15'd14400),
+        .HIGH_HALF_APERTURE(1)
+    ) framebuffer_mmio (
         .rst(rst), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
         .cpu_wmask(cpu_wmask), .cpu_wdata(cpu_wdata), .fb_sel(fb_sel),
-        .fb_we(fb_we), .fb_addr(fb_addr), .fb_wmask(fb_wmask),
-        .fb_wdata(fb_wdata)
+        .fb_we(fb_we_raw), .fb_addr(fb_addr_full), .fb_wmask(fb_wmask_raw),
+        .fb_wdata(fb_wdata_raw)
     );
+    generate
+        if (PIPELINE_FB_WRITES != 0) begin : g_pipeline_fb_writes
+            reg fb_we_q;
+            reg [13:0] fb_addr_q;
+            reg [1:0] fb_wmask_q;
+            reg [15:0] fb_wdata_q;
+            always @(posedge clk) begin
+                if (rst) begin
+                    fb_we_q <= 1'b0;
+                    fb_addr_q <= 14'h0000;
+                    fb_wmask_q <= 2'b00;
+                    fb_wdata_q <= 16'h0000;
+                end else begin
+                    fb_we_q <= fb_we_raw;
+                    fb_addr_q <= fb_addr_full[13:0];
+                    fb_wmask_q <= fb_wmask_raw;
+                    fb_wdata_q <= fb_wdata_raw;
+                end
+            end
+            assign fb_we = fb_we_q;
+            assign fb_addr = fb_addr_q;
+            assign fb_wmask = fb_wmask_q;
+            assign fb_wdata = fb_wdata_q;
+        end else begin : g_direct_fb_writes
+            assign fb_we = fb_we_raw;
+            assign fb_addr = fb_addr_full[13:0];
+            assign fb_wmask = fb_wmask_raw;
+            assign fb_wdata = fb_wdata_raw;
+        end
+    endgenerate
 
     riscc_uart_mmio #(
-        .CLK_DIV(UART_CLK_DIV)
+        .CLK_DIV(UART_CLK_DIV),
+        .PIPELINE_WRITES(PIPELINE_MMIO_WRITES)
     ) uart (
         .clk(clk),
         .rst(rst),
@@ -94,12 +134,15 @@ module icepi_zero_soc #(
         .dbg_rx_count(dbg_uart_rx_count)
     );
 
-    riscc_timer_mmio #(.TICK_DIV(TIMER_TICK_DIV)) timer (
+    riscc_timer_mmio #(
+        .TICK_DIV(TIMER_TICK_DIV),
+        .PIPELINE_WRITES(PIPELINE_MMIO_WRITES)
+    ) timer (
         .clk(clk), .rst(rst), .cpu_we(mmio_we), .cpu_addr(cpu_addr[3:0]),
         .cpu_wdata(cpu_wdata), .cpu_rdata(timer_rdata), .irq(timer_irq)
     );
 
-    riscc_irq_ctrl irq_ctrl (
+    riscc_irq_ctrl #(.PIPELINE_WRITES(PIPELINE_MMIO_WRITES)) irq_ctrl (
         .clk(clk), .rst(rst), .cpu_we(mmio_we), .cpu_addr(cpu_addr[3:0]),
         .cpu_wdata(cpu_wdata), .cpu_rdata(irq_rdata),
         .sources({timer_irq, uart_irq}), .irq(cpu_irq)

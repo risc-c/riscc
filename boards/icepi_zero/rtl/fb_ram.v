@@ -3,15 +3,18 @@
 module icepi_fb_ram (
     input  wire        cpu_clk,
     input  wire        cpu_we,
-    input  wire [12:0] cpu_addr,
+    input  wire [13:0] cpu_addr,
     input  wire [1:0]  cpu_wmask,
     input  wire [15:0] cpu_wdata,
 
     input  wire        vid_clk,
-    input  wire [12:0] vid_addr,
+    input  wire [13:0] vid_addr,
     output reg  [15:0] vid_rdata
 );
-    (* ram_style = "block" *) reg [15:0] mem [0:4799];
+    // 320x180 pixels, four 4-bit pixels per word (14,400 words).
+    // Keep a power-of-two aperture: the framebuffer occupies its first
+    // 14,400 words and the remaining words are intentionally unused.
+    (* ram_style = "block" *) reg [15:0] mem [0:16383];
 
     always @(posedge cpu_clk) begin
         if (cpu_we) begin

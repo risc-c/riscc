@@ -84,24 +84,24 @@ int main(int argc, char **argv)
     for (int cycle = 0; cycle < 5000000; cycle++)
     {
         tick(top, txcap);
-        // Julia begins at framebuffer row 10.  Each row is 40 packed words;
+        // Julia begins at framebuffer row 10.  Each row is 80 packed words;
         // ignore the two white-border words when checking animation writes.
         // A later ticker-band write proves the time-driven scroll ran.
         if (top->dbg_fb_we)
         {
-            if (top->dbg_fb_addr >= 400)
+            if (top->dbg_fb_addr >= 800)
             {
-                const unsigned column = unsigned(top->dbg_fb_addr) % 40;
+                const unsigned column = unsigned(top->dbg_fb_addr) % 80;
 
                 julia_started = true;
-                if (column > 0 && column < 39)
+                if (column > 0 && column < 79)
                 {
                     julia_writes++;
                     if (top->dbg_fb_wdata != 0)
                         julia_nonzero++;
                 }
             }
-            else if (julia_started && top->dbg_fb_addr >= 40)
+            else if (julia_started && top->dbg_fb_addr >= 80)
             {
                 ticker_scrolled = true;
             }

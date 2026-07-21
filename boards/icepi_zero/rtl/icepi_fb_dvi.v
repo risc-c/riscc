@@ -4,7 +4,7 @@
 module icepi_fb_dvi (
     input  wire        cpu_clk,
     input  wire        cpu_we,
-    input  wire [12:0] cpu_addr,
+    input  wire [13:0] cpu_addr,
     input  wire [1:0]  cpu_wmask,
     input  wire [15:0] cpu_wdata,
 
@@ -45,12 +45,19 @@ module icepi_fb_dvi (
 
     wire [9:0] active_x = active ? (px - H_ACTIVE_START) : 10'd0;
     wire [9:0] active_y = active ? (py - V_ACTIVE_START) : 10'd0;
-    wire [7:0] sx = active_x[9:2];
-    wire [6:0] sy = active_y[8:2];
-    wire [14:0] pix_index = {1'b0, sy, 7'b0000000} +
-                            {3'b000, sy, 5'b00000} +
-                            {7'b0000000, sx};
-    wire [12:0] fb_vid_addr = pix_index[14:2];
+    // Keep the 640x480 timing that the IcePi DVI path already supports.
+    // The 320x180 framebuffer is doubled into a centered 640x360 image.
+    localparam [9:0] FB_TOP = 10'd60;
+    localparam [9:0] FB_BOTTOM = FB_TOP + 10'd360;
+    wire fb_visible = active && (active_y >= FB_TOP) &&
+                      (active_y < FB_BOTTOM);
+    wire [8:0] sx = active_x[9:1];
+    wire [9:0] fb_y = active_y - FB_TOP;
+    wire [7:0] sy = fb_y[8:1];
+    wire [16:0] pix_index = {1'b0, sy, 8'b00000000} +
+                             {3'b000, sy, 6'b000000} +
+                             {8'b00000000, sx};
+    wire [13:0] fb_vid_addr = fb_visible ? pix_index[15:2] : 14'd0;
     wire [1:0] pix_lane = pix_index[1:0];
     wire [15:0] fb_vid_word;
 
@@ -69,6 +76,7 @@ module icepi_fb_dvi (
     reg [9:0] py_q;
     reg [1:0] pix_lane_q;
     reg active_q;
+    reg fb_visible_q;
     reg hsync_q;
     reg vsync_q;
 
@@ -80,6 +88,7 @@ module icepi_fb_dvi (
             py_q <= 10'd0;
             pix_lane_q <= 2'd0;
             active_q <= 1'b0;
+            fb_visible_q <= 1'b0;
             hsync_q <= 1'b1;
             vsync_q <= 1'b1;
         end else begin
@@ -94,13 +103,14 @@ module icepi_fb_dvi (
             py_q <= active_y;
             pix_lane_q <= pix_lane;
             active_q <= active;
+            fb_visible_q <= fb_visible;
             hsync_q <= hsync;
             vsync_q <= vsync;
         end
     end
 
     wire [3:0] fb_nibble =
-        !active_q ? 4'h0 :
+        !fb_visible_q ? 4'h0 :
         (pix_lane_q == 2'd0) ? fb_vid_word[3:0] :
         (pix_lane_q == 2'd1) ? fb_vid_word[7:4] :
         (pix_lane_q == 2'd2) ? fb_vid_word[11:8] :
@@ -156,7 +166,9 @@ module icepi_fb_dvi (
     wire [23:0] active_rgb = palette(fb_nibble);
 `endif
 
-    wire [23:0] rgb = active_q ? active_rgb : OUTSIDE_RGB;
+    wire [23:0] rgb = active_q ?
+                      (fb_visible_q ? active_rgb : 24'h000000) :
+                      OUTSIDE_RGB;
 
     icepi_tmds_ddr tmds_out (
         .pix_clk(pix_clk),

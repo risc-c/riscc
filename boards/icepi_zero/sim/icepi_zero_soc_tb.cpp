@@ -149,7 +149,7 @@ int main(int argc, char **argv)
     const int max_cycles = 5000000;
     for (int run_cycle = 0; run_cycle < max_cycles; run_cycle++)
     {
-        if (!injecting && txcap.out.find("RISC-C on icepi-zero") != std::string::npos)
+        if (!injecting && txcap.out.find("RISC-C on Icepi Zero") != std::string::npos)
             injecting = true;
         top->uart_rx = injecting ? rxdrv.value() : 1;
         tick(top, txcap, sim_cycle++);
@@ -160,25 +160,25 @@ int main(int argc, char **argv)
         // advanced its scroll while incremental Julia rendering continued.
         if (top->dbg_fb_we)
         {
-            if (top->dbg_fb_addr >= 400)
+            if (top->dbg_fb_addr >= 800)
             {
-                const unsigned column = unsigned(top->dbg_fb_addr) % 40;
+                const unsigned column = unsigned(top->dbg_fb_addr) % 80;
 
                 julia_started = true;
-                if (column > 0 && column < 39)
+                if (column > 0 && column < 79)
                 {
                     julia_writes++;
                     if (top->dbg_fb_wdata != 0)
                         julia_nonzero++;
                 }
             }
-            else if (julia_started && top->dbg_fb_addr >= 40)
+            else if (julia_started && top->dbg_fb_addr >= 80)
             {
                 ticker_scrolled = true;
             }
         }
 
-        if (txcap.out.find("RISC-C on icepi-zero") != std::string::npos &&
+        if (txcap.out.find("RISC-C on Icepi Zero") != std::string::npos &&
             julia_writes >= 38 && julia_nonzero > 0 &&
             top->dbg_uart_rx_count >= 3 && ticker_scrolled)
         {

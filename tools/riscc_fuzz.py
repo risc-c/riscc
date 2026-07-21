@@ -47,8 +47,7 @@ import riscc_sim as iss  # noqa: E402
 WIN = 0xFC00              # data window, high RAM below the suite scratch
 WIN_WORDS = 32
 NANO_SCRATCH = 0xFB00     # saved nano GPR image, below WIN
-IRQ_TRIG = 0xFFFA         # I/O page: irq trigger register
-IRQ_ACK = 0xFFF8          # I/O page: irq acknowledge register
+TEST_IRQ = 0xFFFA         # I/O page: write trigger, read acknowledge
 RESULT = 0xFFFE           # I/O page: result register
 FAILBASE = 0x0B00         # fail codes 0x0B01.. per checked item
 
@@ -182,7 +181,7 @@ class Gen:
 
     def op_irq(self):
         return ["    STI",
-                "    LDI16 r7, 0x%04X" % IRQ_TRIG,
+                "    LDI16 r7, 0x%04X" % TEST_IRQ,
                 "    STW   r7, [r7+0]"]
 
     def simple_op(self, exclude=None):
@@ -261,8 +260,8 @@ class Gen:
                 "    MFS   r1, S1",
                 "    ADDI  r1, 1",
                 "    MTS   S1, r1",
-                "    LDI16 r1, 0x%04X" % IRQ_ACK,
-                "    STW   r1, [r1+0]",
+                "    LDI16 r1, 0x%04X" % TEST_IRQ,
+                "    LDW   r1, [r1+0]",
                 "    MFS   r1, S2",
                 "    ERET",
                 "brk_h:",                       # count in S3, resume

@@ -689,12 +689,12 @@ isr_irq:
     MTS   S6, r5
 
     ; RX ready: read the hardware byte and enqueue it if space exists.
-    LDI16 r1, 0xFFF4
+    LDI16 r1, 0xFFF2
     LDW   r2, [r1+0]
     MOV   r0, r2
     ANDI  r0, 2
     BEQZ  isr_rx_done
-    LDI16 r1, 0xFFF2
+    LDI16 r1, 0xFFF0
     LDW   r1, [r1+0]
     LDI16 r2, rx_tail
     LDW   r3, [r2+0]
@@ -712,7 +712,7 @@ isr_irq:
 isr_rx_done:
 
     ; TX ready: drain one software queue byte, or disable TX-ready IRQ.
-    LDI16 r1, 0xFFF4
+    LDI16 r1, 0xFFF2
     LDW   r2, [r1+0]
     MOV   r0, r2
     ANDI  r0, 1
@@ -730,12 +730,12 @@ isr_rx_done:
     ADDI  r2, 1
     ANDI  r2, 63
     STW   r2, [r1+0]
-    LDI16 r5, 0xFFF6
+    LDI16 r5, 0xFFF2
     LDI   r4, 3
     STW   r4, [r5+0]
     JMP8  isr_done
 isr_tx_empty:
-    LDI16 r5, 0xFFF6
+    LDI16 r5, 0xFFF2
     LDI   r4, 1
     STW   r4, [r5+0]
 
@@ -761,10 +761,10 @@ boot_queue_loop:
 boot_queue_done:
     CALL16 draw_border
     ; Enable the UART source in the shared two-source interrupt controller.
-    LDI16 r1, 0xFFE2
+    LDI16 r1, 0xFFE0
     LDI   r2, 1
     STW   r2, [r1+0]
-    LDI16 r1, 0xFFF6
+    LDI16 r1, 0xFFF2
     LDI   r2, 3
     STW   r2, [r1+0]
     STI

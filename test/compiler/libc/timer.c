@@ -21,8 +21,9 @@ int main(void)
         ;
     CHECK(riscc_ticks() != before, 1);
 
+    before = riscc_ticks();
     riscc_timer_set_ticks(1);
-    while (RISCC_MMIO16(RISCC_TIMER_COUNT) != 0)
+    while (riscc_ticks() == before)
         ;
     CHECK((RISCC_MMIO16(RISCC_IRQ_PENDING) & RISCC_IRQ_TIMER) != 0, 2);
     riscc_timer_set_ticks(0);

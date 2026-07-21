@@ -32,13 +32,16 @@ module top (
     end
 
     wire        fb_we;
-    wire [12:0] fb_addr;
+    wire [13:0] fb_addr;
     wire [1:0]  fb_wmask;
     wire [15:0] fb_wdata;
 
     icepi_zero_soc #(
         .MEM_HEX("build/icepi_zero/demo.memh"),
-        .UART_CLK_DIV(434)
+        .UART_CLK_DIV(434),
+        .TIMER_TICK_DIV(50000),
+        .PIPELINE_MMIO_WRITES(1),
+        .PIPELINE_FB_WRITES(1)
     ) soc (
         .clk(clk),
         .rst(soc_rst),

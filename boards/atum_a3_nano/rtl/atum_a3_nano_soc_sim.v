@@ -12,7 +12,7 @@ module atum_a3_nano_soc_sim #(
     output wire uart_tx,
     output wire [3:0] led,
     output wire dbg_fb_we,
-    output wire [12:0] dbg_fb_addr,
+    output wire [14:0] dbg_fb_addr,
     output wire [15:0] dbg_fb_wdata,
     output wire [31:0] dbg_fb_writes,
     output wire [31:0] dbg_uart_tx_count,

@@ -16,9 +16,22 @@ constexpr uint16_t kWordsPerRow = RISCC_FRAMEBUFFER_WIDTH / kPixelsPerWord;
 constexpr uint16_t kBytesPerRow = RISCC_FRAMEBUFFER_WIDTH / 2u;
 constexpr uint16_t kJuliaFirstRow = 10u;
 constexpr uint16_t kJuliaLastRow = RISCC_FRAMEBUFFER_HEIGHT - 1u;
-constexpr int16_t kJuliaCenterX = RISCC_FRAMEBUFFER_WIDTH / 2u;
-constexpr int16_t kJuliaCenterY = RISCC_FRAMEBUFFER_HEIGHT / 2u;
-constexpr int16_t kViewStep = 20;
+// The Julia area has an even width and an odd height.  Its origin is between
+// the middle two columns and on the middle row, so every pixel has an exact
+// 180-degree-rotated partner within the area.
+constexpr int16_t kJuliaDoubleCenterX = RISCC_FRAMEBUFFER_WIDTH - 1u;
+constexpr int16_t kJuliaCenterY =
+    (kJuliaFirstRow + kJuliaLastRow - 1u) / 2u;
+constexpr uint16_t kJuliaMirrorY =
+    kJuliaFirstRow + kJuliaLastRow - 1u;
+// The higher-resolution framebuffers need a smaller per-pixel step to keep
+// the Julia set at a useful scale.  Atum's 16:9 view keeps a little more
+// horizontal context than Icepi's 4:3 view.
+#ifdef RISCC_ATUM_A3
+constexpr int16_t kViewStep = 12;
+#else
+constexpr int16_t kViewStep = 10;
+#endif
 constexpr int16_t kParameterStep = 8;
 constexpr uint16_t kEscapeRadiusSquared = 4096u;
 constexpr uint16_t kMaxIterations = 31u;
@@ -55,7 +68,10 @@ const uint8_t kBitMasks[5] =
     0x10u, 0x08u, 0x04u, 0x02u, 0x01u
 };
 
-#ifdef RISCC_ATUM_A3
+#if !defined(RISCC_ATUM_A3) && !defined(RISCC_ICEPI_ZERO)
+#error "Board demo requires RISCC_ATUM_A3 or RISCC_ICEPI_ZERO"
+#endif
+
 enum Glyph : uint8_t
 {
     kGlyphR,
@@ -73,6 +89,12 @@ enum Glyph : uint8_t
     kGlyphLowerO,
     kGlyphLowerT,
     kGlyphLowerU,
+    kGlyphLowerC,
+    kGlyphLowerE,
+    kGlyphLowerP,
+    kGlyphLowerI,
+    kGlyphZ,
+    kGlyphLowerR,
     kGlyphCount
 };
 
@@ -93,8 +115,15 @@ const uint8_t kGlyphs[kGlyphCount][7] =
     {0x00u, 0x00u, 0x0eu, 0x11u, 0x11u, 0x11u, 0x0eu},  // o
     {0x04u, 0x04u, 0x1fu, 0x04u, 0x04u, 0x04u, 0x03u},  // t
     {0x00u, 0x00u, 0x11u, 0x11u, 0x11u, 0x13u, 0x0du},  // u
+    {0x00u, 0x00u, 0x0eu, 0x10u, 0x10u, 0x10u, 0x0eu},  // c
+    {0x00u, 0x00u, 0x0eu, 0x11u, 0x1fu, 0x10u, 0x0fu},  // e
+    {0x00u, 0x00u, 0x1eu, 0x11u, 0x1eu, 0x10u, 0x10u},  // p
+    {0x04u, 0x00u, 0x0cu, 0x04u, 0x04u, 0x04u, 0x0eu},  // i
+    {0x1fu, 0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x1fu},  // Z
+    {0x00u, 0x00u, 0x16u, 0x19u, 0x10u, 0x10u, 0x10u},  // r
 };
 
+#if defined(RISCC_ATUM_A3)
 const uint8_t kTickerText[] =
 {
     kGlyphR, kGlyphI, kGlyphS, kGlyphC, kGlyphDash, kGlyphC, kGlyphSpace,
@@ -103,42 +132,17 @@ const uint8_t kTickerText[] =
     kGlyphA, kGlyph3, kGlyphSpace, kGlyphN, kGlyphLowerA, kGlyphLowerN,
     kGlyphLowerO, kGlyphSpace, kGlyphSpace, kGlyphSpace, kGlyphSpace,
 };
-#else
-enum Glyph : uint8_t
-{
-    kGlyphR,
-    kGlyphI,
-    kGlyphS,
-    kGlyphC,
-    kGlyphDash,
-    kGlyphSpace,
-    kGlyphJ,
-    kGlyphU,
-    kGlyphL,
-    kGlyphA,
-    kGlyphCount
-};
-
-const uint8_t kGlyphs[kGlyphCount][7] =
-{
-    {0x1eu, 0x11u, 0x11u, 0x1eu, 0x14u, 0x12u, 0x11u},  // R
-    {0x1fu, 0x04u, 0x04u, 0x04u, 0x04u, 0x04u, 0x1fu},  // I
-    {0x0fu, 0x10u, 0x10u, 0x0eu, 0x01u, 0x01u, 0x1eu},  // S
-    {0x0eu, 0x11u, 0x10u, 0x10u, 0x10u, 0x11u, 0x0eu},  // C
-    {0x00u, 0x00u, 0x00u, 0x1fu, 0x00u, 0x00u, 0x00u},  // -
-    {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},  // space
-    {0x07u, 0x02u, 0x02u, 0x02u, 0x12u, 0x12u, 0x0cu},  // J
-    {0x11u, 0x11u, 0x11u, 0x11u, 0x11u, 0x11u, 0x0eu},  // U
-    {0x10u, 0x10u, 0x10u, 0x10u, 0x10u, 0x10u, 0x1fu},  // L
-    {0x0eu, 0x11u, 0x11u, 0x1fu, 0x11u, 0x11u, 0x11u},  // A
-};
-
+#elif defined(RISCC_ICEPI_ZERO)
 const uint8_t kTickerText[] =
 {
     kGlyphR, kGlyphI, kGlyphS, kGlyphC, kGlyphDash, kGlyphC, kGlyphSpace,
-    kGlyphJ, kGlyphU, kGlyphL, kGlyphI, kGlyphA, kGlyphSpace, kGlyphSpace,
-    kGlyphSpace, kGlyphSpace,
+    kGlyphLowerO, kGlyphLowerN, kGlyphSpace,
+    kGlyphI, kGlyphLowerC, kGlyphLowerE, kGlyphLowerP, kGlyphLowerI,
+    kGlyphSpace, kGlyphZ, kGlyphLowerE, kGlyphLowerR, kGlyphLowerO,
+    kGlyphSpace, kGlyphSpace, kGlyphSpace, kGlyphSpace,
 };
+#else
+#error "Board demo requires RISCC_ATUM_A3 or RISCC_ICEPI_ZERO"
 #endif
 
 constexpr uint16_t kTickerGlyphCount =
@@ -161,6 +165,8 @@ uint16_t ticker_tick_remainder;
 uint16_t julia_target = 1u;
 Point julia_c = {-571, 571};
 uint16_t ticker_last_tick;
+// A packed row is needed to emit its byte-reversed, nibble-swapped partner.
+uint8_t julia_row_pixels[kBytesPerRow];
 
 // Equivalent to (left * right) >> 10 without a 32-bit multiply.  Inputs in
 // this demo are well inside the signed-16 range, including after negation.
@@ -201,8 +207,9 @@ int16_t q10_multiply(int16_t left, int16_t right)
 uint16_t julia_pixel(uint16_t x, uint16_t y)
 {
     int16_t zx =
-        static_cast<int16_t>(static_cast<int16_t>(x) - kJuliaCenterX) *
-        kViewStep;
+        static_cast<int16_t>(
+            static_cast<int16_t>(x * 2u) - kJuliaDoubleCenterX) *
+        (kViewStep / 2);
     int16_t zy =
         static_cast<int16_t>(static_cast<int16_t>(y) - kJuliaCenterY) *
         kViewStep;
@@ -356,6 +363,8 @@ void update_julia_parameter()
 void draw_julia_row(uint16_t y)
 {
     volatile uint8_t *pixel = framebuffer_bytes + y * kBytesPerRow;
+    // z and -z have the same first iterate under z^2 + c.
+    const uint16_t mirror_y = kJuliaMirrorY - y;
 
     for (uint16_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; x += 2u)
     {
@@ -371,6 +380,21 @@ void draw_julia_row(uint16_t y)
             packed |= 0xf0u;
         }
         *pixel++ = packed;
+        julia_row_pixels[x / 2u] = packed;
+    }
+    if (mirror_y != y)
+    {
+        volatile uint8_t *mirror_pixel =
+            framebuffer_bytes + mirror_y * kBytesPerRow;
+
+        for (uint16_t byte = 0; byte < kBytesPerRow; ++byte)
+        {
+            const uint8_t packed =
+                julia_row_pixels[kBytesPerRow - 1u - byte];
+
+            *mirror_pixel++ = static_cast<uint8_t>(
+                static_cast<uint8_t>(packed << 4) | (packed >> 4));
+        }
     }
 }
 
@@ -411,11 +435,14 @@ void draw_next_row()
 {
     update_ticker();
     draw_julia_row(julia_row);
-    ++julia_row;
-    if (julia_row == kJuliaLastRow)
+    if (julia_row == kJuliaCenterY)
     {
         julia_row = kJuliaFirstRow;
         update_julia_parameter();
+    }
+    else
+    {
+        ++julia_row;
     }
 }
 
@@ -424,9 +451,9 @@ void draw_next_row()
 extern "C" int main()
 {
 #ifdef RISCC_ATUM_A3
-    puts("RISC-C on Atum A3 Nano: C++ Julia");
-#else
-    puts("RISC-C on icepi-zero: C++ Julia");
+    puts("RISC-C on Atum A3 Nano");
+#elif defined(RISCC_ICEPI_ZERO)
+    puts("RISC-C on Icepi Zero");
 #endif
     draw_border();
     draw_ticker();

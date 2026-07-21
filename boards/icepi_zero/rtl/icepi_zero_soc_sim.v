@@ -14,14 +14,14 @@ module icepi_zero_soc_sim #(
     output wire       uart_tx,
     output wire [4:0] led,
     output wire       dbg_fb_we,
-    output wire [12:0] dbg_fb_addr,
+    output wire [13:0] dbg_fb_addr,
     output wire [15:0] dbg_fb_wdata,
     output wire [31:0] dbg_fb_writes,
     output wire [31:0] dbg_uart_tx_count,
     output wire [31:0] dbg_uart_rx_count
 );
     wire        fb_we;
-    wire [12:0] fb_addr;
+    wire [13:0] fb_addr;
     wire [1:0]  fb_wmask;
     wire [15:0] fb_wdata;
     wire [3:0]  tmds;
@@ -33,7 +33,9 @@ module icepi_zero_soc_sim #(
     icepi_zero_soc #(
         .MEM_HEX(MEM_HEX),
         .UART_CLK_DIV(UART_CLK_DIV),
-        .TIMER_TICK_DIV(TIMER_TICK_DIV)
+        .TIMER_TICK_DIV(TIMER_TICK_DIV),
+        .PIPELINE_MMIO_WRITES(1),
+        .PIPELINE_FB_WRITES(1)
     ) soc (
         .clk(clk),
         .rst(rst),

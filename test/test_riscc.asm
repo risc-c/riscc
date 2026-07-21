@@ -182,7 +182,7 @@ subr:
 .ifdef RISCC_SYS
 fail:
     LDI16 r7, 0x0BAD
-    LDI16 r6, 0xFFFE
+    LDI16 r6, 0xFFF6
     STW   r7, [r6+0]
     HALT
 
@@ -190,19 +190,19 @@ fail:
 ; is needed at entry.  IRQ arrives via vector word 2.  r0 is the branch register, so a
 ; branching handler saves and restores it like anything else; restoring it
 ; with MFS keeps the branch shadow coherent.  The handler logs a marker to
-; 0xFFF8 (which also acks the TB's IRQ), counts entries in memory, and
-; restores everything it touched.
+; 0xFFFA (read acknowledges the TB's IRQ), counts entries in ordinary RAM,
+; and restores everything it touched.
 isr_irq:
     MTS   S1, r0
     MTS   S2, r1
-    MFS   r1, S0            ; EPC
-    LDI   r1, 1
     MTS   S3, r2
-    LDI16 r2, 0xFFF8
-    STW   r1, [r2+0]        ; log IRQ marker; acks the IRQ
-    LDW   r1, [r2+4]        ; entry counter (I/O page scratch, 0xFFFC):
+    LDI16 r2, 0xFFFA
+    LDW   r1, [r2+0]        ; read IRQ cause and acknowledge it
+    LDI16 r2, 0x7F00
+    STW   r1, [r2+0]        ; log the cause in ordinary RAM
+    LDW   r1, [r2+2]        ; entry counter
     ADDI  r1, 1             ; the system half is exactly EPC + 3 saves
-    STW   r1, [r2+4]
+    STW   r1, [r2+2]
     MFS   r2, S3
     MFS   r1, S2
     MFS   r0, S1
@@ -436,27 +436,28 @@ c16_ok:
     SUB   r0, r1, r2
     BNEZ  fail_late
 
-    LDI16 r5, 0xFFF8
+    LDI16 r5, 0x7F00
     LDI   r2, 0
-    STW   r2, [r5+4]        ; ISR entry counter (I/O page scratch, 0xFFFC) = 0
+    STW   r2, [r5+0]        ; IRQ cause log = 0
+    STW   r2, [r5+2]        ; ISR entry counter = 0
 
     STI
     LDI16 r5, 0xFFFA
     LDI16 r1, 0xAA55
     STW   r1, [r5+0]        ; magic store: testbench raises irq
 wait_irq:
-    LDI16 r5, 0xFFF8
-    LDW   r1, [r5+4]
+    LDI16 r5, 0x7F00
+    LDW   r1, [r5+2]
     ADDI  r1, -1
     MOV   r0, r1
     BNEZ  wait_irq          ; until the ISR has run
     CLI
-    LDI16 r5, 0xFFF8
-    LDW   r1, [r5+0]        ; IRQ entry logged ESR = {cause=0, IE=1} = 1
+    LDI16 r5, 0x7F00
+    LDW   r1, [r5+0]        ; IRQ handler logged the asserted test cause = 1
     ADDI  r1, -1
     MOV   r0, r1
     BNEZ  fail_late
-    LDW   r1, [r5+4]        ; r1 = 1 entry
+    LDW   r1, [r5+2]        ; r1 = 1 entry
     MFS   r2, S5            ; r2 = 0xBEEF (round trip survived the ISR)
     JMP8  feature_tests
 .endif
@@ -578,11 +579,11 @@ g16ok:
 .endif
 
 .ifdef RISCC_SYS
-    LDI16 r5, 0xFFF8        ; restore base-suite final memory for rich benches
+    LDI16 r5, 0x7F00        ; restore the IRQ test's final RAM values
     LDI   r1, 1
     STW   r1, [r5+0]
     LDI   r1, 2
-    STW   r1, [r5+4]
+    STW   r1, [r5+2]
     LDI   r0, 0             ; restore base-suite final scratch registers
     LDI   r1, 2
     MFS   r2, S5

@@ -23,10 +23,14 @@ module atum_tfp410_init #(
     localparam [3:0] ST_STOP_LOW = 4'd7;
     localparam [3:0] ST_STOP_HIGH = 4'd8;
     localparam [3:0] ST_STOP_RELEASE = 4'd9;
-    localparam [3:0] ST_DONE = 4'd10;
 
-    reg [22:0] powerup_count;
-    reg [10:0] i2c_count;
+    localparam integer POWERUP_BITS =
+        (POWERUP_CYCLES <= 1) ? 1 : $clog2(POWERUP_CYCLES);
+    localparam integer I2C_BITS =
+        (I2C_HALF_CYCLES <= 1) ? 1 : $clog2(I2C_HALF_CYCLES);
+
+    reg [POWERUP_BITS-1:0] powerup_count;
+    reg [I2C_BITS-1:0] i2c_count;
     reg [3:0] state;
     reg [1:0] byte_index;
     reg [2:0] bit_index;
@@ -49,23 +53,28 @@ module atum_tfp410_init #(
 
     always @(posedge clk) begin
         if (rst) begin
-            powerup_count <= 23'd0;
-            i2c_count <= 11'd0;
+            powerup_count <= {POWERUP_BITS{1'b0}};
+            i2c_count <= {I2C_BITS{1'b0}};
             state <= ST_WAIT;
             byte_index <= 2'd0;
             bit_index <= 3'd7;
             scl_low <= 1'b0;
             sda_low <= 1'b0;
             ready <= 1'b0;
+        end else if (ready) begin
+            // ST_STOP_RELEASE is the terminal state.  `ready` both exposes
+            // completion and removes the otherwise redundant ST_DONE state.
         end else if (state == ST_WAIT) begin
             if (powerup_count == POWERUP_CYCLES - 1) begin
                 state <= ST_START;
+                // Hold the terminal count; this avoids a needless rollover
+                // counter once the one-time delay is complete.
                 powerup_count <= powerup_count;
             end else begin
                 powerup_count <= powerup_count + 1'b1;
             end
         end else if (i2c_count == I2C_HALF_CYCLES - 1) begin
-            i2c_count <= 11'd0;
+            i2c_count <= {I2C_BITS{1'b0}};
             case (state)
             ST_START: begin
                 // START: SDA falls while SCL is released high.
@@ -124,9 +133,8 @@ module atum_tfp410_init #(
                 scl_low <= 1'b0;
                 sda_low <= 1'b0;
                 ready <= 1'b1;
-                state <= ST_DONE;
             end
-            default: state <= ST_DONE;
+            default: ready <= 1'b1;
             endcase
         end else begin
             i2c_count <= i2c_count + 1'b1;

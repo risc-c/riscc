@@ -183,6 +183,7 @@ ECP5_NANO_RF_SITES := 12
         fuzz-fast fuzz-fast-ice bench-nano bench-fast bench-fast-dsp bench-fast-ice bench-fast-ice-dsp bench-faster bench-faster-soft \
         area-fast area-agilex check-fast-dsp check-fast-ice \
         fmax-fast fmax-ice40 fmax-ecp5 fmax-agilex fmax-table fmax-all tables \
+        characterize-agilex-tiny \
         area area-all area-table area-ecp5
 
 all: test-all sim-all bench area-all
@@ -393,6 +394,7 @@ test-funnel: $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(call tiny_
 	  $(RISCC_SIM) $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
 	  $(PYTHON) tools/riscc_sim.py $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
 	done
+	$(RISCC_SIM) $(FUNNEL_BIN) --faster --max-insns 5000
 	@if $(RISCC_SIM) $(FUNNEL_BIN) --nano --max-insns 5000 >/dev/null 2>&1; then \
 	  echo "C++ ISS accepted FSL1/FSR1 in Nano"; exit 1; \
 	fi
@@ -620,6 +622,8 @@ test-matrix-parallel:
 # ---- Shared board demo ------------------------------------------------
 
 DEMO_PROGRAM ?= boards/shared/sw/demo.cpp
+RISCC_DEMO_RAM_LENGTH ?= 0x6000
+RISCC_DEMO_LD_RAM := -Wl,--defsym=__riscc_ram_length=$(RISCC_DEMO_RAM_LENGTH)
 
 # ---- Icepi Zero SoC demo ---------------------------------------------
 
@@ -638,13 +642,15 @@ ICEPI_VIDEO_TEST_CONFIG := $(ICEPI_BUILD)/video_test.config
 ICEPI_VIDEO_TEST_BIT := $(ICEPI_BUILD)/video_test.bit
 ICEPI_RTLSIM := $(ICEPI_BUILD)/rtlsim/Vicepi_zero_soc_sim
 ICEPI_CPU_DEFS := -DRISCC_FAST_DSP
+ICEPI_DEMO_DEFS := -DRISCC_ICEPI_ZERO
+ICEPI_DEMO_LD_RAM := -Wl,--defsym=__riscc_ram_length=0x8000
 # Keep the dense ABC9 mapper for the shipped demo.  Yosys 0.33's final
 # name-dressing pass aborts on the exact 1 kHz divider, so the normal recipe
 # runs the equivalent mapping/finalization sequence without that pass.
 # The color-bar image continues to use its separately tuned stable mapper.
 ICEPI_VIDEO_TEST_SYNTH_OPTS ?= -abc2
 ICEPI_SPEED ?= 6
-ICEPI_NEXTPNR_OPTS ?= --seed 4 --placer sa --tmg-ripup
+ICEPI_NEXTPNR_OPTS ?= --seed 3 --placer sa --tmg-ripup
 ICEPI_DVI_RTL := \
   $(ICEPI_DIR)/rtl/icepi_fb_dvi.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
@@ -678,13 +684,13 @@ $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py
 icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --full --fb-window --mhz 50 --max-insns 0
+	$(RISCC_SIM) $< --uart --fast-dsp --fb-window --mhz 50 --max-insns 0
 
 icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@mkdir -p build/icepi_zero
 	@printf '12+' | $(RISCC_SIM) $< --uart --full --max-insns 3000000 \
 	  > build/icepi_zero/demo_uart.txt 2> build/icepi_zero/demo_iss.log || true
-	@grep -q 'RISC-C on icepi-zero' build/icepi_zero/demo_uart.txt || { cat build/icepi_zero/demo_iss.log; exit 1; }
+	@grep -q 'RISC-C on Icepi Zero' build/icepi_zero/demo_uart.txt || { cat build/icepi_zero/demo_iss.log; exit 1; }
 	@echo "ISS UART expect PASS"
 
 $(ICEPI_RTLSIM): $(ICEPI_MEMH) $(ICEPI_SIM_RTL) $(ICEPI_DIR)/sim/icepi_zero_soc_tb.cpp Makefile
@@ -774,14 +780,14 @@ ATUM_PROJECT_FILES := \
   $(ATUM_DIR)/atum_a3_nano.sdc \
   $(ATUM_HW_RTL)
 
-$(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py
+$(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py Makefile
 	@mkdir -p $(@D)
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 16384
+	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 12288
 
 atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --full --fb-window --fb-scale 4 --mhz 225 --max-insns 0
+	$(RISCC_SIM) $< --uart --faster --fb-window --fb-scale 4 --mhz 225 --max-insns 0
 
 $(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp Makefile
 	@mkdir -p $(@D)
@@ -842,6 +848,17 @@ AGILEX_FMAX_FAST_SOFT := 195.73
 AGILEX_FMAX_FAST_DSP := 152.46
 AGILEX_FMAX_FASTER_DSP := 251.45
 AGILEX_FMAX_FASTER_SOFT := 247.71
+
+# Rebuild the Tiny/Nano Agilex figures with the same core-only harness and
+# explicit MLAB RF.  The generated projects and results stay under build/.
+AGILEX_TINY_CHARACTERIZE_DIR := build/agilex_tiny
+
+.PHONY: characterize-agilex-tiny
+
+characterize-agilex-tiny:
+	$(PYTHON) tools/agilex_core_characterize.py \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_TINY_CHARACTERIZE_DIR) \
+	  --jobs $(RISCC_BUILD_JOBS)
 
 agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
 agilex_tiny_area = $(word $(call agilex_area_index,$(1)),$(AGILEX_AREA_$(2)))
@@ -1705,14 +1722,14 @@ RISCC_DEMO_CXXFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) -O2 -std=c++11 \
 ifneq ($(filter %.cpp,$(ICEPI_PROGRAM)),)
 $(ICEPI_CPP_OBJECT): $(ICEPI_PROGRAM) $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_DEMO_CXXFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_DEMO_CXXFLAGS) $(ICEPI_DEMO_DEFS) -c $< -o $@
 
 $(ICEPI_ELF): $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
 		$(ICEPI_CPP_OBJECT) $(RISCC_FIRMWARE_LIBRARIES) firmware/unified.ld \
 		$(RISCC_CLANG) $(RISCC_LLD)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath firmware/unified.ld) -Wl,-Map,$(@:.elf=.map) \
+	  -Wl,-T,$(abspath firmware/unified.ld) $(ICEPI_DEMO_LD_RAM) -Wl,-Map,$(@:.elf=.map) \
 	  $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) $(ICEPI_CPP_OBJECT) \
 	  $(RISCC_FIRMWARE_LIBRARIES) -o $@
 
@@ -1737,7 +1754,7 @@ $(ATUM_ELF): $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
 		$(RISCC_CLANG) $(RISCC_LLD)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath firmware/unified.ld) -Wl,-Map,$(@:.elf=.map) \
+	  -Wl,-T,$(abspath firmware/unified.ld) $(RISCC_DEMO_LD_RAM) -Wl,-Map,$(@:.elf=.map) \
 	  $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) $(ATUM_CPP_OBJECT) \
 	  $(RISCC_FIRMWARE_LIBRARIES) -o $@
 

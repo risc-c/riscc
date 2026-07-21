@@ -261,18 +261,17 @@ clocking, RAM-inference, LEDs, or buttons into a shared layer:
 
 | Byte address or range | Demo function |
 |---:|---|
-| `0x0000..0x7fff` | unified program/data RAM |
-| `0x8000..0xa57f` | displayed 160x120 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
-| `0xffe0` | interrupt pending: UART bit 0, timer bit 1 (read-only) |
-| `0xffe2` | interrupt enable mask: UART bit 0, timer bit 1 (reset masked) |
-| `0xffe4` | one-shot 1 kHz timer: write a non-zero delay in milliseconds to arm/rearm; write zero to disarm; read remaining ticks |
-| `0xffe6` | free-running 16-bit millisecond tick counter (wraps every 65.536 seconds) |
-| `0xffe8` | LED output; Icepi uses five low bits and Atum uses four |
-| `0xfff0..0xfff6` | UART; see the [Programming manual](PROGRAMMING.md#1-software-tools-and-the-iss) for register semantics |
+| `0x0000..0x5fff` | unified program/data RAM |
+| `0x6000..0xf5ff` | Icepi displayed 320x240 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
+| `0x6000..0xd07f` | Atum displayed 320x180 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
+| `0xfff0..0xfff2` | UART; see the [Programming manual](PROGRAMMING.md#1-software-tools-and-the-iss) for register semantics |
+| `0xfff4` | timer: write a non-zero 1 kHz delay to arm/rearm; read the free-running 16-bit millisecond tick counter |
+| `0xfff6` | interrupt state: read pending UART/timer bits 0/1; write enable mask |
+| `0xfff8` | LED output; Icepi uses five low bits and Atum uses four |
 
-The active framebuffer is 4,800 words. The surrounding display aperture and
-other high-MMIO addresses are board implementation details; in particular,
-the ISS/generic-testbench registers at `0xfff8..0xfffe` are not board devices.
+The active framebuffer is 19,200 words on Icepi and 14,400 words on Atum.
+The remaining high address space is the board's MMIO aperture; in particular,
+the ISS/generic-testbench registers at `0xfffa` and `0xfffe` are not board devices.
 The UART divisor is likewise a board-build setting, not a RISC-C platform
 standard. [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines
 the shared addresses and bits for C code.
@@ -289,7 +288,7 @@ fixed IRQ vector.
 ### Icepi Zero
 
 The Icepi demo is in [`boards/icepi_zero`](../boards/icepi_zero). It runs a
-50 MHz Fast SoC, a 160x120 4-bit framebuffer scaled to 640x480 DVI, UART,
+50 MHz Fast SoC, a 320x240 4-bit framebuffer scaled 2x to 640x480 DVI, UART,
 LEDs, and C++ Julia-set demo firmware. The renderer writes one Julia row per
 main-loop iteration. Before every row, its title ticker samples the demo
 BSP's 1 kHz `clock()` counter; a fractional accumulator advances it smoothly
@@ -298,7 +297,7 @@ at 30 pixels per second.
 Its ECP5 PLL wrapper, TMDS encoder, and DDR serializer are maintained under
 `boards/icepi_zero/rtl`; the board build has no vendor RTL checkout.
 
-The current ECP5 synthesis of the complete demo uses 885 LUT4s, 21 EBRs,
+The current ECP5 synthesis of the complete demo uses 1,205 LUT4s, 31 EBRs,
 and one DSP block. The common timer and IRQ mask use ordinary logic; the
 framebuffer RAM and DVI pipeline remain Icepi-local.
 
@@ -336,8 +335,8 @@ video output.
 ### Terasic Atum A3 Nano
 
 [`boards/atum_a3_nano`](../boards/atum_a3_nano) is the Quartus Pro Agilex 3
-demo. It runs a 225 MHz Faster SoC, UART, on-chip program RAM, and a 160x120
-4-bit framebuffer expanded to 1920x1080p60 through the TFP410. Firmware
+demo. It runs a 225 MHz Faster SoC, UART, on-chip program RAM, and a 320x180
+4-bit framebuffer expanded 6x to 1920x1080p60 through the TFP410. Firmware
 source, ISS use, and RTL simulation need no external board checkout. It uses
 the same freestanding C++ Julia/timer-ticker source as the Icepi demo, with an
 Atum-specific banner:

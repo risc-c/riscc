@@ -37,13 +37,16 @@ build/tools/riscc_sim program.bin             # sys profile, /16 cycle model
 build/tools/riscc_sim program.bin --min
 build/tools/riscc_sim program.bin --full --width 4
 build/tools/riscc_sim program.bin --nano
+build/tools/riscc_sim program.bin --faster
 ```
 
 `--min` and `--full` are mutually exclusive; no profile option selects `sys`.
 `--nano` is separate and cannot be combined with either mainline option.
 `--width 1|2|4|8|16` selects the Tiny cycle model, not a different ISA. For an
 approximate Fast timing model use `--fast` or `--fast-dsp`; these are useful
-for interactive estimates but are not RTL timing results.
+for interactive estimates but are not RTL timing results. `--faster` selects
+the lightweight Faster DSP timing estimate. RTL simulation remains the
+reference for exact timing.
 
 The default limit is two million committed instructions. Use
 `--max-insns N` to choose another limit, or `--max-insns 0` to run until the
@@ -60,26 +63,26 @@ SoCs. They are the default demo-BSP UART contract, not general-purpose RAM:
 
 | Byte address | Register | Availability |
 |---:|---|---|
-| `0xfff0` | UART TX data | ISSes and current demo boards |
-| `0xfff2` | UART RX data (read consumes the byte) | ISSes and current demo boards |
-| `0xfff4` | UART status: TX-ready bit 0, RX-ready bit 1, RX-overflow bit 2 | ISSes and current demo boards |
-| `0xfff6` | UART IRQ control: RX enable bit 0, TX enable bit 1 | ISSes and current demo boards |
-| `0xfff8` | Testbench IRQ acknowledge / cause log | ISSes and generic RTL testbench only |
-| `0xfffa` | Testbench IRQ trigger | ISSes and generic RTL testbench only |
-| `0xfffc` | Testbench scratch word | ISSes and generic RTL testbench only |
-| `0xfffe` | Test result word | ISSes and generic RTL testbench only |
+| `0xfff0` | UART data: write TX byte; read RX byte and consume it | ISSes and current demo boards |
+| `0xfff2` | UART state: read TX-ready bit 0, RX-ready bit 1, RX-overflow bit 2; write RX/TX IRQ-enable bits 0/1 | ISSes and current demo boards |
+| `0xfff4` | Timer: write a one-shot delay in milliseconds; read the free-running 16-bit millisecond tick counter | C++ ISS and current demo boards |
+| `0xfff6` | Interrupt state: write UART/timer enable bits 0/1; read pending UART/timer bits 0/1 | C++ ISS and current demo boards |
+| `0xfff8` | LED output; Icepi uses five low bits and Atum uses four | current demo boards |
+| `0xfffa` | Test IRQ: write raises it; read returns its cause and acknowledges it | ISSes and generic RTL testbench only |
+| `0xfffe` | Test result word: write `0x600d` for pass | ISSes and generic RTL testbench only |
 
-The demo SoCs reserve their high MMIO aperture, but do not implement the four
-testbench devices. Board firmware must not use `0xfff8..0xfffe` as RAM or
+The demo SoCs reserve their high MMIO aperture, but do not implement these
+testbench functions. Board firmware must not use `0xfffa..0xfffe` as RAM or
 expect test-result/IRQ behavior there.
 
 The current demo boards also share a tiny source-level interrupt controller:
-`0xffe0` reads pending UART (bit 0) and timer (bit 1), while `0xffe2` is the
-same two-bit enable mask and resets to zero. `0xffe4` is a 16-bit one-shot
-1 kHz timer ticks: a non-zero write loads and arms it, terminal count latches
-the timer source, and a subsequent timer write both clears that source and
-re-arms (or disarms with zero). `0xffe6` is a free-running 16-bit millisecond
-tick counter. It wraps every 65.536 seconds, so an application that needs a
+`0xfff6` reads pending UART (bit 0) and timer (bit 1), and writes the same
+two-bit enable mask (reset to zero). `0xfff4` is a 16-bit one-shot
+1 kHz timer ticks: a non-zero write to `0xfff4` loads and arms it, terminal
+count latches the timer source, and a subsequent timer write both clears that
+source and re-arms (or disarms with zero). Reading `0xfff4` returns the
+free-running 16-bit millisecond tick counter. It wraps every 65.536 seconds,
+so an application that needs a
 longer clock must extend it from a periodic timer interrupt. The default BSP
 does this for its narrow `time()` service with one IRQ per second. There is no
 priority, vector, edge latch, or controller acknowledgement. Use
@@ -141,8 +144,9 @@ build/tools/riscc_sim program.bin --full --trace --dump-written 2>&1 \
 ```
 
 `--uart` also enables the ISS UART MMIO model. `--fb-window` displays the
-160x120 framebuffer, `--fb-scale N` chooses its initial scale, and
-`--fb-dump-png FILE` writes the final image. `--mhz N` throttles a long-running
+selected board framebuffer (320x240 with `--fast-dsp`, 320x180 with
+`--faster`; the generic default remains 160x120), `--fb-scale N` chooses its
+initial scale, and `--fb-dump-png FILE` writes the final image. `--mhz N` throttles a long-running
 simulation to approximately N simulated MHz; omit it to run as fast as the
 host permits. RTL trace comparison and fuzzing are hardware-validation work;
 see [Hardware validation](HARDWARE.md#6-validation-and-measurement).

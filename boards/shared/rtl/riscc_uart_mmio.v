@@ -4,7 +4,8 @@
 // Minimal 8N1 UART for the common demo MMIO map.  It intentionally has one
 // byte of receive storage and no transmit FIFO; software uses the ready bits.
 module riscc_uart_mmio #(
-    parameter integer CLK_DIV = 434
+    parameter integer CLK_DIV = 434,
+    parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -22,10 +23,9 @@ module riscc_uart_mmio #(
     output wire [31:0] dbg_tx_count,
     output wire [31:0] dbg_rx_count
 );
-    localparam [3:0] UART_TX_W     = 4'h8; // byte 0xfff0
-    localparam [3:0] UART_RX_W     = 4'h9; // byte 0xfff2
-    localparam [3:0] UART_STATUS_W = 4'ha; // byte 0xfff4
-    localparam [3:0] UART_CTRL_W   = 4'hb; // byte 0xfff6
+    // Direction disambiguates the two functions of each register.
+    localparam [3:0] UART_DATA_W  = 4'h8; // byte 0xfff0: write TX, read RX
+    localparam [3:0] UART_STATE_W = 4'h9; // byte 0xfff2: read status, write IRQ enables
     localparam integer DIV_BITS = $clog2(CLK_DIV + 1);
 
     function automatic [DIV_BITS-1:0] div_value(input integer value);
@@ -63,16 +63,52 @@ module riscc_uart_mmio #(
     assign dbg_rx_count = 32'd0;
 `endif
 
-    wire ctrl_write = cpu_we && (cpu_addr == UART_CTRL_W);
-    wire tx_write = cpu_we && (cpu_addr == UART_TX_W);
-    wire rx_read = cpu_sel && !cpu_we && (cpu_addr == UART_RX_W);
+    // Both UART registers occupy the adjacent 0x8/0x9 slots.  Factor their
+    // common decode, and gate it with cpu_sel so ordinary RAM writes with the
+    // same low address nibble cannot affect the peripheral.
+    wire uart_sel = cpu_sel && (cpu_addr[3:1] == 3'b100);
+    wire data_sel = uart_sel && !cpu_addr[0];
+    wire state_sel = uart_sel && cpu_addr[0];
+    wire rx_read = !cpu_we && data_sel;
+
+    wire write_raw = cpu_sel && cpu_we;
+    wire write_fire;
+    wire [3:0] write_addr;
+    wire [15:0] write_data;
+    generate
+        if (PIPELINE_WRITES != 0) begin : g_pipeline_writes
+            reg write_q;
+            reg [3:0] write_addr_q;
+            reg [15:0] write_data_q;
+            always @(posedge clk) begin
+                if (rst) begin
+                    write_q <= 1'b0;
+                    write_addr_q <= 4'h0;
+                    write_data_q <= 16'h0000;
+                end else begin
+                    write_q <= write_raw;
+                    write_addr_q <= cpu_addr;
+                    write_data_q <= cpu_wdata;
+                end
+            end
+            assign write_fire = write_q;
+            assign write_addr = write_addr_q;
+            assign write_data = write_data_q;
+        end else begin : g_direct_writes
+            assign write_fire = write_raw;
+            assign write_addr = cpu_addr;
+            assign write_data = cpu_wdata;
+        end
+    endgenerate
+    wire write_uart_sel = write_fire && (write_addr[3:1] == 3'b100);
+    wire ctrl_write = write_uart_sel && write_addr[0];
+    wire tx_write = write_uart_sel && !write_addr[0];
 
     assign irq = (irq_en[0] && rx_ready) || (irq_en[1] && tx_ready);
     assign cpu_rdata =
-        (cpu_addr == UART_RX_W) ? {8'h00, rx_data} :
-        (cpu_addr == UART_STATUS_W) ?
+        data_sel ? {8'h00, rx_data} :
+        state_sel ?
             {13'h0000, rx_overflow, rx_ready, tx_ready} :
-        (cpu_addr == UART_CTRL_W) ? {14'h0000, irq_en} :
         16'h0000;
 
     always @(posedge clk) begin
@@ -97,7 +133,7 @@ module riscc_uart_mmio #(
             rx_sync <= {rx_sync[0], uart_rx};
 
             if (ctrl_write)
-                irq_en <= cpu_wdata[1:0];
+                irq_en <= write_data[1:0];
 
             if (rx_read) begin
                 rx_ready <= 1'b0;
@@ -105,7 +141,7 @@ module riscc_uart_mmio #(
             end
 
             if (tx_write && tx_ready) begin
-                tx_shift <= {1'b1, cpu_wdata[7:0], 1'b0};
+                tx_shift <= {1'b1, write_data[7:0], 1'b0};
                 tx_bits <= 4'd10;
                 tx_div <= {DIV_BITS{1'b0}};
 `ifdef VERILATOR
