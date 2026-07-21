@@ -9,8 +9,9 @@ Hardware implementation, board builds, and FPGA flows are in the
 
 ## 1. Software tools and the ISS
 
-The in-tree assembler is the useful reference encoder for ISA work and small
-standalone assembly programs:
+Production builds use LLVM MC for compiler-generated objects and assembly
+sources. The in-tree Python assembler is a compact reference encoder for ISA
+work and small standalone assembly programs:
 
 ```sh
 python3 tools/riscc_asm.py --profile full program.asm -o program.bin
@@ -19,15 +20,15 @@ python3 tools/riscc_asm.py --profile nano program.asm -o program.bin
 
 It accepts `.ifdef NAME`, `.ifndef NAME`, `.else`, and `.endif`; pass
 `-D NAME` to define a symbol. Selecting `--profile min`, `sys`, `full`, or
-`nano` also defines the corresponding profile symbol. LLVM MC is the
-production assembler for compiler objects; `make check-llvm-mc-encodings`
-cross-checks its encodings against `riscc_asm.py`.
+`nano` also defines the corresponding profile symbol. `make
+check-llvm-mc-encodings` cross-checks LLVM MC encodings against
+`riscc_asm.py`.
 
 The normal interactive ISS is `tools/riscc_sim.cpp`, built as
 `build/tools/riscc_sim`. It executes the architectural ISA and provides the
 same testbench MMIO page used by the RTL tests, including the result register,
-UART, and framebuffer model. `tools/riscc_sim.py` is the slower reference and
-fallback ISS; it has the same basic ISA, trace, UART, and framebuffer behavior.
+UART, and framebuffer model. `tools/riscc_sim.py` is a compact standalone
+reference ISS; project tests use the C++ ISS.
 
 Build the C++ ISS once, then select the profile that matches the image:
 

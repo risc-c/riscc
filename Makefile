@@ -392,14 +392,10 @@ test-funnel: $(foreach w,$(TINY_WIDTHS),$(foreach c,$(TINY_CONFIGS),$(call tiny_
 	  test "$$profile" = min && opts=--min; \
 	  test "$$profile" = full && opts=--full; \
 	  $(RISCC_SIM) $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
-	  $(PYTHON) tools/riscc_sim.py $(FUNNEL_BIN) $$opts --max-insns 5000 || exit; \
 	done
 	$(RISCC_SIM) $(FUNNEL_BIN) --faster --max-insns 5000
 	@if $(RISCC_SIM) $(FUNNEL_BIN) --nano --max-insns 5000 >/dev/null 2>&1; then \
 	  echo "C++ ISS accepted FSL1/FSR1 in Nano"; exit 1; \
-	fi
-	@if $(PYTHON) tools/riscc_sim.py $(FUNNEL_BIN) --nano --max-insns 5000 >/dev/null 2>&1; then \
-	  echo "Python ISS accepted FSL1/FSR1 in Nano"; exit 1; \
 	fi
 
 define NANO_TB_RULE

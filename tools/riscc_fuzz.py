@@ -2,7 +2,7 @@
 """RISC-C differential fuzzer.
 
 Generates seeded random programs, predicts their final architectural
-state with the ISS (compiled RISCC_SIM when available, Python fallback),
+state with the C++ ISS,
 and emits SELF-CHECKING binaries: the epilogue compares every register
 (and probed memory words, and the IRQ/BRK counters) against the ISS
 prediction and writes the standard 0x600D/0x0BAD result word.  The same
@@ -41,9 +41,6 @@ with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as version_file:
     RISCC_VERSION = version_file.read().strip()
 RTL = os.path.join(ROOT, "rtl")
 TEST = os.path.join(ROOT, "test")
-sys.path.insert(0, HERE)
-import riscc_sim as iss  # noqa: E402
-
 WIN = 0xFC00              # data window, high RAM below the suite scratch
 WIN_WORDS = 32
 NANO_SCRATCH = 0xFB00     # saved nano GPR image, below WIN
@@ -584,7 +581,7 @@ def make_tiny_case(seed, config, outdir):
     with open(stem + "_probe.asm", "w") as f:
         f.write(g.emit(None))
     assemble(stem + "_probe.asm", stem + "_probe.bin")
-    sim = tiny_state(stem + "_probe.bin", config, cfg)
+    sim = tiny_state(stem + "_probe.bin", config)
     if sim["outcome"] != "DONE":
         raise RuntimeError("probe did not finish (seed %d)" % seed)
     rng = random.Random(seed ^ 0x5EED)
@@ -599,7 +596,7 @@ def make_tiny_case(seed, config, outdir):
     with open(stem + ".asm", "w") as f:
         f.write(g2.emit(expect))
     assemble(stem + ".asm", stem + ".bin")
-    chk = tiny_state(stem + ".bin", config, cfg, dump_window=False)
+    chk = tiny_state(stem + ".bin", config, dump_window=False)
     if chk["outcome"] != "DONE" or chk["result"] != 0x600D:
         raise RuntimeError("self-check failed under ISS (seed %d, result 0x%04X)"
                            % (seed, chk["result"]))
@@ -665,7 +662,9 @@ def fast_iss_path():
     if env:
         return env
     candidate = os.path.join(ROOT, "build", "tools", "riscc_sim")
-    return candidate if os.path.exists(candidate) else None
+    if os.path.exists(candidate):
+        return candidate
+    raise RuntimeError("C++ ISS not found; build it with make sim-cpp or set RISCC_SIM")
 
 
 def sim_base_args(family, config, image, fast_iss):
@@ -715,8 +714,6 @@ def parse_fast_state(stdout, dump_base=None, dump_len=0):
 
 def run_fast_state(family, config, image, max_insns=500000, dump_base=None, dump_len=0):
     fast_iss = fast_iss_path()
-    if not fast_iss:
-        return None
     args = sim_base_args(family, config, image, fast_iss)
     args += ["--max-insns", str(max_insns), "--state"]
     if dump_base is not None:
@@ -732,63 +729,15 @@ def run_fast_state(family, config, image, max_insns=500000, dump_base=None, dump
 
 def sim_trace_args(family, config, image):
     fast_iss = fast_iss_path()
-    if family == "nano":
-        if fast_iss:
-            args = sim_base_args(family, config, image, fast_iss)
-            args += ["--trace", "--dump-written"]
-        else:
-            args = [sys.executable, os.path.join(HERE, "riscc_sim.py"),
-                    image, "--nano", "--trace", "--dump-written"]
-        return args
-
-    if fast_iss:
-        args = sim_base_args(family, config, image, fast_iss)
-        args += ["--trace", "--dump-written"]
-    else:
-        cfg = parse_config(config)
-        args = [sys.executable, os.path.join(HERE, "riscc_sim.py"),
-                image, "--trace", "--dump-written"]
-        if not cfg["sys"]:
-            args.append("--min")
-        if cfg["full"]:
-            args.append("--full")
+    args = sim_base_args(family, config, image, fast_iss)
+    args += ["--trace", "--dump-written"]
     return args
 
 
-def python_tiny_state(image, cfg):
-    with open(image, "rb") as f:
-        sim = iss.Sim(f.read(), sys_tier=cfg["sys"], full=cfg["full"])
-    outcome = sim.run(500000)
-    return {
-        "outcome": outcome,
-        "result": sim.mem[iss.RESULT_W],
-        "r": list(sim.r),
-        "s": list(sim.s),
-        "mem": [sim.mem[(WIN >> 1) + w] for w in range(WIN_WORDS)],
-    }
-
-
-def python_nano_state(image):
-    with open(image, "rb") as f:
-        sim = iss.Sim(f.read(), sys_tier=False, nano=True)
-    outcome = sim.run(500000)
-    regs = [0] * 8
-    for r in range(1, 8):
-        regs[r] = sim.mem[(NANO_SCRATCH >> 1) + r]
-    return {
-        "outcome": outcome,
-        "result": sim.mem[iss.RESULT_W],
-        "r": regs,
-        "mem": [sim.mem[(WIN >> 1) + w] for w in range(WIN_WORDS)],
-    }
-
-
-def tiny_state(image, config, cfg, dump_window=True):
+def tiny_state(image, config, dump_window=True):
     state = run_fast_state("tiny", config, image, dump_base=(WIN >> 1),
                            dump_len=WIN_WORDS) if dump_window else \
         run_fast_state("tiny", config, image)
-    if state is None:
-        return python_tiny_state(image, cfg)
     return state
 
 
@@ -799,17 +748,14 @@ def nano_state(image, config, dump_window=True):
         dump_len = (win_w - scratch_w) + WIN_WORDS
         state = run_fast_state("nano", config, image, dump_base=scratch_w,
                                dump_len=dump_len)
-        if state is not None:
-            dumped = state["mem"]
-            regs = [0] * 8
-            for r in range(1, 8):
-                regs[r] = dumped[r]
-            state["r"] = regs
-            state["mem"] = dumped[win_w - scratch_w:win_w - scratch_w + WIN_WORDS]
+        dumped = state["mem"]
+        regs = [0] * 8
+        for r in range(1, 8):
+            regs[r] = dumped[r]
+        state["r"] = regs
+        state["mem"] = dumped[win_w - scratch_w:win_w - scratch_w + WIN_WORDS]
     else:
         state = run_fast_state("nano", config, image)
-    if state is None:
-        return python_nano_state(image)
     return state
 
 
