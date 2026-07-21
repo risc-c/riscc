@@ -14,17 +14,15 @@ specialized RTL source.
 
 | Implementation | RTL | Organization | Profiles |
 |---|---|---|---|
+| RISC-C/nano | [`rtl/riscc_nano1.v`](../rtl/riscc_nano1.v) | fixed one-bit serial datapath | `nano` |
+| RISC-C/fast | [`rtl/riscc_fast.v`](../rtl/riscc_fast.v) | two-stage in-order pipeline | `full` |
+| RISC-C/faster | [`rtl/riscc_faster.v`](../rtl/riscc_faster.v) | three-stage interlocked pipeline | `full` |
 | RISC-C/1, /2, /4, /8 Min | [`rtl/riscc_tiny_min.v`](../rtl/riscc_tiny_min.v) | Min-specialized serial datapath, width `W = 1, 2, 4, 8` | `min` |
 | RISC-C/1, /2, /4, /8 Sys | [`rtl/riscc_tiny_sys.v`](../rtl/riscc_tiny_sys.v) | serial datapath, width `W = 1, 2, 4, 8` | `sys` |
 | RISC-C/1, /2, /4, /8 Full | [`rtl/riscc_tiny_full.v`](../rtl/riscc_tiny_full.v) | serial datapath with hardware multiply, width `W = 1, 2, 4, 8` | `full` |
 | RISC-C/16 Min | [`rtl/riscc_tiny16_min.v`](../rtl/riscc_tiny16_min.v) | Min-specialized 16-bit multi-cycle datapath | `min` |
 | RISC-C/16 Sys | [`rtl/riscc_tiny16_sys.v`](../rtl/riscc_tiny16_sys.v) | 16-bit multi-cycle datapath | `sys` |
 | RISC-C/16 Full | [`rtl/riscc_tiny16_full.v`](../rtl/riscc_tiny16_full.v) | 16-bit multi-cycle datapath with `MUL` | `full` |
-| RISC-C/16 Full MulH | [`rtl/riscc_tiny16_full_mulh.v`](../rtl/riscc_tiny16_full_mulh.v) | cost experiment with `MUL`/`MULHU` but no `DIVU` | `full` plus a partial optional extension |
-| RISC-C/16 Full MulDiv | [`rtl/riscc_tiny16_full_muldiv.v`](../rtl/riscc_tiny16_full_muldiv.v) | cost experiment with `MUL`/`MULHU`/`DIVU` | `full` plus optional `mdu` |
-| RISC-C/nano | [`rtl/riscc_nano1.v`](../rtl/riscc_nano1.v) | fixed one-bit serial datapath | `nano` |
-| RISC-C/fast | [`rtl/riscc_fast.v`](../rtl/riscc_fast.v) | two-stage in-order pipeline | `full` |
-| RISC-C/faster | [`rtl/riscc_faster.v`](../rtl/riscc_faster.v) | three-stage interlocked pipeline | `full` |
 
 Nano is an incompatible subset profile, not a smaller implementation of
 mainline `min`. Fast implements only `full`; Faster is an Agilex-oriented
@@ -58,13 +56,17 @@ Each serial source elaborates the four widths `/1`, `/2`, `/4`, and `/8`.
 RISC-C/16 is deliberately separate: it retains a small multi-cycle control
 machine but uses a full 16-bit datapath and shared 17-bit result/adder path.
 
-### Nano and RISC-C/16
+### Nano
 
 Nano uses its own fixed one-bit register file, staging, and control structure;
-it omits the mainline S-register/system paths. All RISC-C/16 sources use
-one-hot multi-cycle control, synchronous unified memory, and a shared MDR
-stage for second operands, loads, and byte lanes. The Sys and Full sources
-also use that path for `JAL16`; Full adds the multiply machinery.
+it omits the mainline S-register/system paths.
+
+### RISC-C/16
+
+All RISC-C/16 sources use one-hot multi-cycle control, synchronous unified
+memory, and a shared MDR stage for second operands, loads, and byte lanes.
+The Sys and Full sources also use that path for `JAL16`; Full adds the
+multiply machinery.
 
 ![RISC-C/16 microarchitecture](riscc_tiny16_microarch.svg)
 
@@ -94,14 +96,6 @@ use one EBR for the register file and one unified 16-bit synchronous memory
 port. With `RISCC_ECP5`, the mainline RF maps to packed distributed LUTRAM;
 Fast has its separate replicated two-read RF. On Agilex 3, Tiny/Nano use an
 inferred MLAB RF, while Faster uses two MLAB replicas and a registered DSP.
-
-The demonstrated boards are:
-
-- [Icepi Zero](https://github.com/cheyao/icepi-zero), ECP5
-  `LFE5U-25F-6BG256C`, using a Fast SoC with on-chip program RAM, DVI
-  framebuffer, LEDs, and UART.
-- Terasic Atum A3 Nano, Agilex 3 `A3CZ135BB18AE7S`, using a Faster SoC with
-  program RAM, UART, framebuffer, and TFP410 HDMI output.
 
 Build profiles are selected at build time. Tiny target names use
 `<verb>-<width>-<profile>` for widths `1`, `2`, `4`, `8`, and `16`; Nano uses
@@ -145,26 +139,6 @@ points. Cycle counts follow them as a reference for implementation work.
 | Fast soft / DSP | — | — | — | — | 285.0 / 261.0 |
 | Faster DSP / soft | — | — | — | — | 349.0 / 339.0 |
 
-### Full multiply/divide experiments
-
-The normal `full` sources retain low-half `MUL` only. Optional-`mdu`
-experiments are provided by the separate `/16` multi-cycle sources.
-
-| Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
-|---|---:|---:|---:|
-| Full (`MUL`) | 334 | 359 | 354 |
-| Full MulH (`MUL` + `MULHU`) | 342 | 372 | 366 |
-| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 387 | 415 | 411 |
-
-| Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
-|---|---:|---:|
-| Full (`MUL`) | 23.06 | 79.37 |
-| Full MulH (`MUL` + `MULHU`) | 22.61 | 75.23 |
-| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 19.04 | 72.87 |
-
-These optional-`mdu` timing measurements use the same core-only routed
-harness and seed one as the open-FPGA Fmax results elsewhere in this manual.
-Use `make fmax-16-mulh` or `make fmax-16-muldiv` to reproduce them.
 
 ### Mainline clock rate and throughput
 
@@ -177,10 +151,8 @@ Use `make fmax-16-mulh` or `make fmax-16-muldiv` to reproduce them.
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
 profile; Fast and Faster use `full`.
 
-The iCE40/ECP5 figures are reproducible v0.16 open-FPGA results. The Agilex
-area and Fmax figures are Quartus Pro 26.1 post-fit characterizations for
-`A3CZ135BB18AE7S`. Tiny uses the latest Tiny Min and Tiny RTL; Fast and Faster
-were refreshed against their current RTL on 2026-07-20.
+The tables report current reproducible iCE40/ECP5 open-FPGA measurements and
+current post-fit Agilex 3 characterizations for `A3CZ135BB18AE7S`.
 Agilex Fmax is a restricted-Fmax estimate, not closure at every listed clock.
 Run `make -j16 tables` to regenerate the open-FPGA area/Fmax matrices and
 benchmarks; the command prints the current Agilex characterization alongside
@@ -189,11 +161,6 @@ them. The Fast Agilex characterization defines
 best on that family. The Fast and Faster points use a 4 ns target with Quartus
 High Performance Effort. Faster has validation and benchmark targets but no
 standalone open-FPGA area/Fmax target.
-
-The common benchmark retires 3,165 instructions on mainline, Fast, and Faster,
-and 8,418 on Nano because Nano uses software multiply. The Tiny rates combine
-the mainline benchmark cycle counts with the `sys` width-ladder clocks above;
-Fast and Faster use their matching full-profile clocks.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -227,6 +194,27 @@ Faster implement `full` only; Nano runs its separate profile.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13276 | 261136 | 5698 | 4674 | 6653 | 7549 |
 
+### Full multiply/divide experiments
+
+The normal `full` sources retain low-half `MUL` only. Optional-`mdu`
+experiments are provided by the separate `/16` multi-cycle sources.
+
+| Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
+|---|---:|---:|---:|
+| Full (`MUL`) | 334 | 359 | 354 |
+| Full MulH (`MUL` + `MULHU`) | 342 | 372 | 366 |
+| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 387 | 415 | 411 |
+
+| Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
+|---|---:|---:|
+| Full (`MUL`) | 23.06 | 79.37 |
+| Full MulH (`MUL` + `MULHU`) | 22.61 | 75.23 |
+| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 19.04 | 72.87 |
+
+These optional-`mdu` timing measurements use the same core-only routed
+harness and seed one as the open-FPGA Fmax results elsewhere in this manual.
+Use `make fmax-16-mulh` or `make fmax-16-muldiv` to reproduce them.
+
 ## 4. FPGA toolchain
 
 The open-source flow needs yosys, Verilator 5 or newer, g++, Python 3,
@@ -253,24 +241,106 @@ C++ ISS, and host C/C++ compilation for the LLVM build. It uses ccache's
 configured persistent directory (normally `~/.cache/ccache`), not `/tmp`.
 Yosys synthesis is not a ccache workload.
 
-## 5. Board builds and demos
+## 5. Validation and measurement
 
-The current board SoCs share a deliberately small peripheral map.  It is
-enough for common demo firmware without forcing the FPGA-specific video,
-clocking, RAM-inference, LEDs, or buttons into a shared layer:
+```sh
+make test-<width>-<profile>   # Tiny width 1/2/4/8/16
+make test-nano
+make test-fast
+make test-faster
+make test-funnel
+make test-all
+make sim-all
+make fuzz-all
+make bench
+make area-table
+make fmax-table
+make -j16 tables
+```
+
+The shared Verilator testbench models synchronous single-port memory and can
+inject an external IRQ. Trace builds expose a post-step architectural record:
+the next PC, current instruction context, IE, `r0..r7`, and `S0..S7`. The ISS
+and RTL must produce identical trace records for the same image; written-memory
+records are compared as well.
+
+### Trace comparison
+
+The `trace-*` targets build a trace-enabled Verilator testbench. Build the
+matching image first, then compare trace records. The C++ ISS writes traces to
+stderr, so redirect it before filtering:
+
+```sh
+make trace-16-full > rtl.log 2>&1
+build/tools/riscc_sim build/bin/riscc-full.bin --full --trace --dump-written \
+  > iss.log 2>&1
+grep '^TRACE ' iss.log > iss.trace
+grep '^TRACE ' rtl.log > rtl.trace
+diff -u iss.trace rtl.trace
+```
+
+Use `make trace-nano`, `make trace-<width>-<profile>`, or `make trace-fast`
+for the relevant implementation. On a mismatch, compare the first differing
+`TRACE` record and then the `MEM` records from `--dump-written`; this separates
+an architectural state error from a final-memory error.
+
+### Differential fuzzing
+
+`tools/riscc_fuzz.py` generates deterministic, self-checking assembly programs
+from a seed. For each generated binary it first derives the expected state with
+the C++ ISS when available (otherwise the Python ISS), then runs a trace-enabled
+RTL testbench. It compares every `TRACE` record and every written-memory record,
+and the generated program independently checks its final architectural state.
+
+The random programs cover ALU and immediate operations, loads/stores,
+forward branches, bounded loops, calls, S-register spills, and for system
+profiles IRQ enable/disable and testbench IRQ delivery. Nano uses its own
+compatible program shape; Fast uses the full profile.
+
+```sh
+make fuzz-all                              # default: 100 fresh seeds/config
+FUZZ_SEEDS=1 FUZZ_BASE_SEED=12345 make fuzz-sys
+FUZZ_SEEDS=10 FUZZ_BASE_SEED=12345 make fuzz-nano
+FUZZ_SEEDS=10 FUZZ_BASE_SEED=12345 make fuzz-fast
+```
+
+The command prints the campaign base seed and, on failure, a one-command
+replay using the failing seed, profile, and core. For a direct focused run:
+
+```sh
+python3 tools/riscc_fuzz.py --seed 12345 --config sys
+python3 tools/riscc_fuzz.py --campaign 1 --base-seed 12345 \
+  --config sys --cores tiny16
+```
+
+Build artifacts, generated programs, traces, and reports belong under
+`build/`; keep source-tree RTL and board directories free of generated flow
+output.
+
+## 6. Board builds and demos
+
+Each board SoC provides:
+
+- on-chip program/data RAM;
+- a 4-bit framebuffer and board-local video output;
+- a UART, a 1 kHz timer, and a two-source interrupt controller; and
+- LED outputs and button inputs.
+
+The shared software-visible map is:
 
 | Byte address or range | Demo function |
 |---:|---|
-| `0x0000..0x5fff` | unified program/data RAM |
-| `0x6000..0xf5ff` | Icepi displayed 320x240 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
+| `0x0000..0x7fff` | Icepi unified program/data RAM |
+| `0x0000..0x5fff` | Atum unified program/data RAM |
+| `0x8000..0xffee` | Icepi framebuffer aperture; its first 14,400 words are the displayed 320x180 framebuffer, four adjacent 4-bit pixels per 16-bit word; CPU writes only |
 | `0x6000..0xd07f` | Atum displayed 320x180 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
 | `0xfff0..0xfff2` | UART; see the [Programming manual](PROGRAMMING.md#1-software-tools-and-the-iss) for register semantics |
 | `0xfff4` | timer: write a non-zero 1 kHz delay to arm/rearm; read the free-running 16-bit millisecond tick counter |
 | `0xfff6` | interrupt state: read pending UART/timer bits 0/1; write enable mask |
 | `0xfff8` | LED output; Icepi uses five low bits and Atum uses four |
 
-The active framebuffer is 19,200 words on Icepi and 14,400 words on Atum.
-The remaining high address space is the board's MMIO aperture; in particular,
+Both active framebuffers are 14,400 words. On Icepi, the unused part of the
+framebuffer aperture is reserved; only `0xfff0..0xffff` is MMIO. In particular,
 the ISS/generic-testbench registers at `0xfffa` and `0xfffe` are not board devices.
 The UART divisor is likewise a board-build setting, not a RISC-C platform
 standard. [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines
@@ -288,17 +358,18 @@ fixed IRQ vector.
 ### Icepi Zero
 
 The Icepi demo is in [`boards/icepi_zero`](../boards/icepi_zero). It runs a
-50 MHz Fast SoC, a 320x240 4-bit framebuffer scaled 2x to 640x480 DVI, UART,
-LEDs, and C++ Julia-set demo firmware. The renderer writes one Julia row per
-main-loop iteration. Before every row, its title ticker samples the demo
+50 MHz Fast SoC with a 320x180 4-bit framebuffer, scaled 2x and vertically
+centred in a 640x480 DVI frame. It also uses the board UART, five LEDs, two
+buttons, and C++ Julia-set demo firmware. The renderer writes one Julia row
+per main-loop iteration. Before every row, its title ticker samples the demo
 BSP's 1 kHz `clock()` counter; a fractional accumulator advances it smoothly
 at 30 pixels per second.
 
 Its ECP5 PLL wrapper, TMDS encoder, and DDR serializer are maintained under
 `boards/icepi_zero/rtl`; the board build has no vendor RTL checkout.
 
-The current ECP5 synthesis of the complete demo uses 1,205 LUT4s, 31 EBRs,
-and one DSP block. The common timer and IRQ mask use ordinary logic; the
+The current ECP5 synthesis of the complete demo uses 883 LUT4s, 32 EBRs, and
+one DSP block. The common timer and IRQ mask use ordinary logic; the
 framebuffer RAM and DVI pipeline remain Icepi-local.
 
 ```sh
@@ -411,79 +482,3 @@ restricted Fmax is 226.45 MHz.
 ![Video capture of RISC-C running on Atum A3 Nano](riscc_on_atum-a3.jpg)
 
 *Video capture of RISC-C running on the Atum-A3-Nano FPGA board.*
-
-## 6. Validation and measurement
-
-```sh
-make test-<width>-<profile>   # Tiny width 1/2/4/8/16
-make test-nano
-make test-fast
-make test-faster
-make test-funnel
-make test-all
-make sim-all
-make fuzz-all
-make bench
-make area-table
-make fmax-table
-make -j16 tables
-```
-
-The shared Verilator testbench models synchronous single-port memory and can
-inject an external IRQ. Trace builds expose a post-step architectural record:
-the next PC, current instruction context, IE, `r0..r7`, and `S0..S7`. The ISS
-and RTL must produce identical trace records for the same image; written-memory
-records are compared as well.
-
-### Trace comparison
-
-The `trace-*` targets build a trace-enabled Verilator testbench. Build the
-matching image first, then compare trace records. The C++ ISS writes traces to
-stderr, so redirect it before filtering:
-
-```sh
-make trace-16-full > rtl.log 2>&1
-build/tools/riscc_sim build/bin/riscc-full.bin --full --trace --dump-written \
-  > iss.log 2>&1
-grep '^TRACE ' iss.log > iss.trace
-grep '^TRACE ' rtl.log > rtl.trace
-diff -u iss.trace rtl.trace
-```
-
-Use `make trace-nano`, `make trace-<width>-<profile>`, or `make trace-fast`
-for the relevant implementation. On a mismatch, compare the first differing
-`TRACE` record and then the `MEM` records from `--dump-written`; this separates
-an architectural state error from a final-memory error.
-
-### Differential fuzzing
-
-`tools/riscc_fuzz.py` generates deterministic, self-checking assembly programs
-from a seed. For each generated binary it first derives the expected state with
-the C++ ISS when available (otherwise the Python ISS), then runs a trace-enabled
-RTL testbench. It compares every `TRACE` record and every written-memory record,
-and the generated program independently checks its final architectural state.
-
-The random programs cover ALU and immediate operations, loads/stores,
-forward branches, bounded loops, calls, S-register spills, and for system
-profiles IRQ enable/disable and testbench IRQ delivery. Nano uses its own
-compatible program shape; Fast uses the full profile.
-
-```sh
-make fuzz-all                              # default: 100 fresh seeds/config
-FUZZ_SEEDS=1 FUZZ_BASE_SEED=12345 make fuzz-sys
-FUZZ_SEEDS=10 FUZZ_BASE_SEED=12345 make fuzz-nano
-FUZZ_SEEDS=10 FUZZ_BASE_SEED=12345 make fuzz-fast
-```
-
-The command prints the campaign base seed and, on failure, a one-command
-replay using the failing seed, profile, and core. For a direct focused run:
-
-```sh
-python3 tools/riscc_fuzz.py --seed 12345 --config sys
-python3 tools/riscc_fuzz.py --campaign 1 --base-seed 12345 \
-  --config sys --cores tiny16
-```
-
-Build artifacts, generated programs, traces, and reports belong under
-`build/`; keep source-tree RTL and board directories free of generated flow
-output.

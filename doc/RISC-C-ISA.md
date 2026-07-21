@@ -29,28 +29,29 @@ changes.
 ## 1. RISC-C Base Integer Instruction Set
 
 This chapter describes the RISC-C base integer ISA. The `min` profile defines
-the base instruction set; the `sys` and `full` profiles add the extensions
-defined in section 7.
+the base instruction set; section 7 summarizes the profile differences.
 
-### 1.1 Programmer's Model
+### 1.1 Architectural State
 
 | state | width | description |
 |---|---:|---|
 | `r0..r7` | 16 | general-purpose registers |
-| `S0..S7` | 16 | S-register bank |
+| `S0..S7` | 16 | S registers |
 | `pc` | 15 | program counter, in word addresses |
 | `IE` | 1 | interrupt-enable bit (`sys` profile) |
 
 There are no arithmetic condition codes and no architectural zero register.
-All general-register and S-register writes retain their low 16 bits. Program
-counter updates retain their low 15 bits.
+All `r`- and S-register writes retain their low 16 bits. Program counter
+updates retain their low 15 bits.
 
 `r0` has no special storage behavior. All short conditional branches test
 `r0`, and `CMPI` always writes its result to `r0`.
 
-The S-register bank is accessed by `JAL`, `RET`, `MFS`, and `MTS`. The `sys`
-profile additionally provides `JAL16`, `RETI`, `CLI`, and `STI`. `S0` has two
-architectural roles:
+`MFS` and `MTS` let software read and write `S0..S7` as ordinary 16-bit
+storage. `JAL` uses an S-register destination for its link, and `RET` uses an
+S-register operand for its return address. The `sys` profile additionally
+provides `JAL16`, `RETI`, `CLI`, and `STI`. Only `S0` has special
+architectural treatment:
 
 - In `JAL` and `JAL16`, destination `S0` suppresses the link write.
 - In the `sys` profile, `S0` is `EPC`, the interrupt return program
@@ -81,16 +82,20 @@ Instructions are encoded in 16-bit words. `JAL16` is the only instruction
 that occupies two words. The two most-significant bits select one of four
 major opcode spaces:
 
-| bits `[15:14]` | instruction class |
-|---|---|
-| `00` | immediate-offset word load |
-| `01` | immediate-offset word store |
-| `10` | immediate and branch instructions |
-| `11` | register, indexed-memory, control, and S-register instructions |
+| bits `[15:14]` | format bits `[15:0]` | instruction class |
+|---|---|---|
+| `00` | `00 ddd aaa iiiiiiii` | immediate-offset word load |
+| `01` | `01 ddd aaa iiiiiiii` | immediate-offset word store |
+| `10` | `10 ddd ooo iiiiiiii` | immediate or branch instruction |
+| `11` | `11 ddd aaa fffff bbb` | register-format instruction |
 
-The individual formats and their fields are defined with their instruction
-classes. All instruction addresses are word addresses, so every instruction
-is naturally aligned.
+When present, the named fields retain their positions across formats: `ddd`,
+`aaa`, and `bbb` generally select destination or source registers, while
+`iiiiiiii` encodes an immediate value. An instruction may give a field a
+different meaning.
+
+All instruction addresses are word addresses, so every instruction is
+naturally aligned.
 
 Bits are numbered from least significant to most significant: bit 0 is the
 least-significant bit of a byte or word, and bit 15 is the most-significant
@@ -209,6 +214,11 @@ word-alignment requirement in section 2.2.
 stores the low byte of its source register; its `bbb` field is reserved and
 must be zero in portable software.
 
+`LDB` reads a byte at the effective address formed by adding `ra` and `rb`,
+then zero-extends it to 16 bits. `LDBS` uses the same effective address and
+sign-extends the loaded byte to 16 bits. Neither byte load has an alignment
+requirement.
+
 ## 3. Immediate and Branch Instructions
 
 The immediate format is:
@@ -283,7 +293,7 @@ at `pc_next`.
 
 For a taken branch, `pc = pc_target`; otherwise `pc = pc_next`.
 
-## 4. Register Instructions
+## 4. Register-Format Instructions
 
 The register format is:
 
@@ -319,6 +329,8 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `10_001`, `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
+The load and store instructions in this table are described in section 2.3.
+
 `ADD` adds the two source registers and writes the low 16 bits of the result
 to `rd`.
 
@@ -346,14 +358,10 @@ bits. Its shift count is `bbb+1`.
 `MUL` writes the low 16 bits of the product of `ra` and `rb` to `rd`. The low
 half is the same for signed and unsigned multiplication.
 
-`MULHU` writes the high 16 bits of the unsigned product of `ra` and `rb` to
-`rd`. Both sources are read before `rd` is written, so the destination may
-name either source register.
-
 `SHLI`, `SHRI`, and `SARI` encode shift counts from 1 through 8. In the
 `min` profile, `SHRI` and `SARI` always shift by one and their `bbb` field
-must be zero; `SHLI` is undefined. `MUL` returns the low 16 bits of the
-product and is available only in the `full` profile.
+must be zero; `SHLI` is undefined. `MUL` is available only in the `full`
+profile.
 
 ### 4.1 Multiply-Divide Extension
 
@@ -364,6 +372,10 @@ reserved three-register slots:
 MULHU  rd, ra, rb
 DIVU rr, rq, rb
 ```
+
+`MULHU` writes the high 16 bits of the unsigned product of `ra` and `rb` to
+`rd`. Both sources are read before `rd` is written, so the destination may
+name either source register.
 
 `DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
 pair `rr:rq` as a two-word unsigned partial dividend. More precisely, using
@@ -390,18 +402,17 @@ The control and S-register group has the following format:
 11 ddd aaa 11111 bbb
 ```
 
-For `bbb = 000` and `bbb = 110`, `ddd` is a control selector, written as
-`ccc` below. Only the following control-selector values are defined:
+For `bbb = 000` and `bbb = 110`, `ddd` is a control selector. Only the
+following control-selector values are defined:
 
-| `bbb` | `ccc` | instruction | profile | operation |
+| `bbb` | `ddd` | instruction | profile | operation |
 |---|---|---|---|---|
 | `000` | `000` | `RET Sa` | all | `pc = S[a][14:0]` |
 | `000` | `111` | `RETI Sa` | sys | `IE = 1`; `pc = S[a][14:0]` |
 | `110` | `000` | `CLI` | sys | `IE = 0` |
 | `110` | `111` | `STI` | sys | `IE = 1` |
 
-All other `ccc` values in those two `bbb` rows are reserved and undefined.
-The defined selectors duplicate the new `IE` value in all three `ccc` bits.
+All other `ddd` values in those two `bbb` rows are reserved and undefined.
 `aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
 
 The remaining `bbb` values have the following definitions:
