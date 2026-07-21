@@ -8,6 +8,16 @@ static volatile uint32_t seeds[8] =
     UINT32_C(0x082efa98), UINT32_C(0xec4e6c89),
 };
 
+// A small volatile working set keeps the memory portion of this benchmark
+// about ordinary indexed 32-bit loads and stores rather than cache capacity.
+static volatile uint32_t words[8] =
+{
+    UINT32_C(0x6a09e667), UINT32_C(0xbb67ae85),
+    UINT32_C(0x3c6ef372), UINT32_C(0xa54ff53a),
+    UINT32_C(0x510e527f), UINT32_C(0x9b05688c),
+    UINT32_C(0x1f83d9ab), UINT32_C(0x5be0cd19),
+};
+
 BENCH_NOINLINE static uint16_t arithmetic32(void)
 {
     uint32_t a = seeds[0];
@@ -84,6 +94,24 @@ BENCH_NOINLINE static uint16_t bitops32(void)
     return bench_fold32(hash ^ value);
 }
 
+BENCH_NOINLINE static uint16_t memory32(void)
+{
+    uint32_t hash = seeds[1];
+    uint16_t round;
+
+    for (round = 0; round != 24; ++round)
+    {
+        uint16_t index = round & 7u;
+        uint16_t peer = (uint16_t)((round + 3u) & 7u);
+        uint32_t value = words[index];
+
+        hash += value ^ words[peer];
+        value = (value << 5) | (value >> 27);
+        words[index] = value ^ hash;
+    }
+    return bench_fold32(hash ^ words[0] ^ words[7]);
+}
+
 BENCH_NOINLINE static uint16_t divide32(void)
 {
     uint32_t numerator = seeds[4];
@@ -100,11 +128,16 @@ BENCH_NOINLINE static uint16_t divide32(void)
             (int32_t)(numerator ^ UINT32_C(0x9630a5c3));
         int32_t signed_denominator =
             (int32_t)((denominator & UINT32_C(0x3fffffff)) + 3);
-        int32_t signed_quotient = signed_numerator / signed_denominator;
-        int32_t signed_remainder = signed_numerator % signed_denominator;
+        int32_t signed_quotient;
+        int32_t signed_remainder;
         uint32_t small_denominator = (uint32_t)round + 3;
         uint32_t small_quotient = numerator / small_denominator;
         uint32_t small_remainder = numerator % small_denominator;
+
+        if (round & 1u)
+            signed_denominator = -signed_denominator;
+        signed_quotient = signed_numerator / signed_denominator;
+        signed_remainder = signed_numerator % signed_denominator;
 
         hash ^= quotient + (remainder << (round & 7));
         hash += (uint32_t)signed_quotient ^ (uint32_t)signed_remainder;
@@ -124,6 +157,7 @@ int main(void)
     uint16_t result = arithmetic32();
     result ^= multiply_shift32();
     result ^= bitops32();
+    result ^= memory32();
     result ^= divide32();
-    bench_finish(result, UINT16_C(0x807f));
+    bench_finish(result, UINT16_C(0xd6cf));
 }
