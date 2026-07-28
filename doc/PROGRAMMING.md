@@ -195,6 +195,22 @@ On the mainline profiles, one-bit LLVM funnel shifts and the corresponding
 limb patterns in 32-bit shifts select `FSL1`/`FSR1`; Nano expands the same
 operations using its base instruction set.
 
+Optional ISA features do not create more CPU names. The multiply-divide
+extension is enabled for the Full preset with `-mmdu` (and disabled with
+`-mno-mdu`); it maps to LLVM's `+mdu` target feature. In addition to the Full
+profile macros, Clang then defines `__RISCC_MDU__`, `__RISCC_MULHU__`, and
+`__RISCC_DIVU__`. `llvm-mc` and `llc` use `-mcpu=full -mattr=+mdu`. With the
+feature enabled, LLVM lowers 16-bit unsigned C `/` and `%` directly to `DIVU`;
+when both results are live, they share one instruction. The selector models
+the ISA's tied quotient/remainder registers and preserves its distinct-register
+requirements. Signed and wider division continue to use the normal ABI
+helpers, which also use `DIVU` internally for their unsigned 16-bit steps.
+The MDU runtime additionally implements 32-bit `__mulsi3` as one paired
+`MULHU` plus two low-half cross products, replacing Full's byte-decomposed
+base product. Its binary32 divide helper uses two base-2^16 quotient digits
+backed by `DIVU` and paired products; without `-mmdu`, it retains the compact
+26-round restoring divide.
+
 The compiler supports C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS
 objects, stack frames, aggregate calls and returns, function pointers,
 16-/32-/64-bit integer operations, and software `float`, `double`, and
@@ -248,6 +264,16 @@ The compiler and top-level build also provide `-mcpu=nano` and
 `build/firmware/nano` without the mainline interrupt library, TLS, or the
 interrupt-driven `time()` service. Nano packaging in the application
 `riscc.mk` fragment remains to be completed.
+
+To build the MDU runtime, retain `RISCC_CPU := full` and add
+`RISCC_TARGET_FEATURES := mdu`; the top-level Makefile maps that value to
+`-mmdu` and enables the matching ISS capability. Use a separate runtime output
+directory, for example:
+
+```sh
+make -j16 RISCC_CPU=full RISCC_TARGET_FEATURES=mdu \
+  RISCC_FIRMWARE_BUILD=build/firmware/mdu riscc-firmware
+```
 
 The essentials of the direct invocation are:
 
@@ -323,8 +349,9 @@ implements directly.
   and Full use whole-routine assembly and a shared IEEE packer for gradual
   underflow and round-to-nearest/ties-to-even. Sys and Full use their
   fixed-count shifts directly; Full computes the binary32 24-by-24
-  significand product from native byte products. The optional `mdu`
-  extension is not required.
+  significand product from native byte products. With `-mmdu`, the same
+  routine uses paired products and binary32 divide uses two base-2^16
+  `DIVU` digits; the extension remains optional.
 - Compiler-rt supplies the binary32 subtraction wrapper and comparisons,
   binary32 integer and format conversions, and all binary64 arithmetic,
   comparison, and conversion helpers.

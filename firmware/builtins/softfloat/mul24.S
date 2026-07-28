@@ -1,10 +1,10 @@
 /*
  * Full-profile unsigned 24x24 -> 48 significand multiply.
  *
- * The MULHU instruction belongs to the optional mdu extension and is not
- * enabled by any standard profile. This routine therefore decomposes the two
- * normalized significands into bytes, uses Full's low-half MUL for the nine
- * byte products, and accumulates them into three 16-bit result limbs.
+ * With the optional mdu extension, three paired 16x16 products plus one
+ * byte-sized low product form the result directly. Standard Full instead
+ * decomposes the normalized significands into bytes and accumulates nine
+ * low-half products.
  *
  * Arguments: r1:r2, r3:r4 (high limbs contain only eight significant bits)
  * Result:    r1:r2:r3
@@ -24,6 +24,47 @@ __riscc_umul24x24:
          */
         STW     r5, [r7 - 2]
         STW     r6, [r7 - 4]
+
+#ifdef __RISCC_MULHU__
+        /*
+         * A = a1: a0 and B = b1: b0, where a1 and b1 are eight bits:
+         *
+         *   A*B = a0*b0 + (a0*b1 + a1*b0)<<16 + a1*b1<<32.
+         *
+         * MULHU returns both halves, so only the final a1*b1 product needs
+         * the ordinary low-half MUL.  S3/S4 retain the two high partials;
+         * r5 remains the final low result word throughout.
+         */
+        MTS     s3, r1                 /* a0 */
+        MULHU   r5, r1, r3              /* r5:p0lo, r1:p0hi */
+        MTS     s4, r1                 /* p0hi */
+
+        MFS     r1, s3
+        MULHU   r6, r1, r4              /* r6:p1lo, r1:p1hi */
+        MTS     s3, r1                 /* p1hi; a0 is dead */
+
+        MUL     r0, r2, r4              /* p3 = a1*b1 fits in 16 bits */
+        MULHU   r1, r2, r3              /* r1:p2lo, r2:p2hi */
+
+        MFS     r3, s4
+        ADD     r3, r3, r6
+        SLTU    r4, r3, r6              /* carry from p0hi + p1lo */
+        ADD     r3, r3, r1
+        SLTU    r1, r3, r1              /* carry from adding p2lo */
+        ADD     r4, r4, r1
+
+        MFS     r1, s3
+        ADD     r1, r1, r2              /* p1hi + p2hi */
+        ADD     r1, r1, r0              /* + p3 */
+        ADD     r1, r1, r4              /* + carry from middle word */
+        MOV     r2, r3
+        MOV     r3, r1
+        MOV     r1, r5
+
+        LDW     r6, [r7 - 4]
+        LDW     r5, [r7 - 2]
+        RETS
+#else
 
         /*
          * Byte layout after extraction:
@@ -153,5 +194,6 @@ __riscc_umul24x24:
         LDW     r6, [r7 - 4]
         LDW     r5, [r7 - 2]
         RETS
+#endif
         .size __riscc_umul24x24, . - __riscc_umul24x24
 #endif

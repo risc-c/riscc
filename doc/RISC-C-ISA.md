@@ -13,7 +13,7 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.16.0`.
+Version: `v0.17.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
@@ -325,7 +325,7 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 4.1 |
 | `10_010` | `FSR1 rd, ra, rb` | `R[d] = (R[a] >> 1) \| (R[b][0] << 15)` |
 | `10_011` | `FSL1 rd, ra, rb` | `R[d] = (R[a] << 1) \| R[b][15]` |
-| `10_100` | `MULHU rd, ra, rb` | `R[d] = (R[a] * R[b])[31:16]` |
+| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 4.1 |
 | `10_001`, `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
@@ -369,13 +369,23 @@ The optional `mdu` extension adds two unsigned primitives in otherwise
 reserved three-register slots:
 
 ```text
-MULHU  rd, ra, rb
+MULHU  rl, rh, rb
 DIVU rr, rq, rb
 ```
 
-`MULHU` writes the high 16 bits of the unsigned product of `ra` and `rb` to
-`rd`. Both sources are read before `rd` is written, so the destination may
-name either source register.
+`MULHU` is the paired unsigned multiply. It uses `ddd = rl`, `aaa = rh`, and
+`bbb = rb`; using the input register values:
+
+```text
+P     = R[rh] * R[rb]
+R[rl] = P[15:0]
+R[rh] = P[31:16]
+```
+
+`rl` and `rh` must be different registers. `rb` may name either input/output
+register: both multiplier operands are read before either result is written.
+Thus the extension needs no separate low-half multiply instruction; regular
+`MUL` remains the non-destructive low-half operation supplied by `full`.
 
 `DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
 pair `rr:rq` as a two-word unsigned partial dividend. More precisely, using
@@ -530,7 +540,7 @@ the mainline profiles.
 | `SARI rd, ra, 1` | X | X | X | X |
 | `SARI rd, ra, 2..8` |  | X | X |  |
 | `MUL rd, ra, rb` |  |  | X |  |
-| `MULHU rd, ra, rb` |  |  |  |  |
+| `MULHU rl, rh, rb` |  |  |  |  |
 | `DIVU rr, rq, rb` |  |  |  |  |
 | `RET Sa` | X | X | X |  |
 | `JAL Sd, ra` | X | X | X |  |

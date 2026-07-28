@@ -12,11 +12,12 @@ Profile model mirrors the three RTL builds:
     --min           SLT/LDBS, count-one and funnel shifts, no sys profile
     sys (default)   min + IRQ/ERET + CALL16/JMP16 + variable shifts
     --full          sys + MUL
+    --mdu           paired MULHU and DIVU (requires --full)
     --nano          nano ABI: no S-bank/sys profile/CMPI/JAL16, JAL links to rd
 In min, SHRI/SARI shift by exactly 1, FSL1/FSR1 are defined, and SHLI/MUL
 are undefined.
 
-Usage: riscc_sim.py image.bin [--min] [--full]
+Usage: riscc_sim.py image.bin [--min] [--full] [--mdu]
                        [--nano]
                        [--max-insns N] [--trace] [--dump ADDR LEN] [--dump-written]
                        [--uart] [--uart-in FILE] [--uart-in-text TEXT]
@@ -154,7 +155,7 @@ class FramebufferWindow:
 
 
 class Sim:
-    def __init__(self, image, sys_tier=True, full=False, nano=False,
+    def __init__(self, image, sys_tier=True, full=False, mdu=False, nano=False,
                  trace=False, uart=False, uart_in=b""):
         self.mem = [0] * 32768
         for i in range(0, min(len(image), 65536), 2):
@@ -169,6 +170,7 @@ class Sim:
         self.sys_tier = False if nano else sys_tier
         self.shifts = nano or sys_tier or full
         self.full = full and not nano
+        self.mdu = mdu and self.full
         self.insns = 0
         self.trace = trace
         self.trace_steps = 0
@@ -366,6 +368,24 @@ class Sim:
                 if self.nano or not self.shifts:
                     raise Undefined("SHLI is not in the min profile")
                 self.r[ddd] = (self.r[aaa] << (bbb + 1)) & 0xFFFF
+            elif f5 in (0x10, 0x14):                    # DIVU / MULHU
+                if not self.mdu:
+                    raise Undefined("MDU instruction without the mdu extension")
+                if f5 == 0x14:
+                    if ddd == aaa:
+                        raise Undefined("MULHU requires distinct low/high registers")
+                    product = self.r[aaa] * self.r[bbb]
+                    self.r[ddd] = product & 0xFFFF
+                    self.r[aaa] = (product >> 16) & 0xFFFF
+                else:
+                    if len({ddd, aaa, bbb}) != 3:
+                        raise Undefined("DIVU requires distinct registers")
+                    remainder, quotient, divisor = self.r[ddd], self.r[aaa], self.r[bbb]
+                    if divisor == 0 or remainder >= divisor:
+                        raise Undefined("DIVU operand precondition failed")
+                    dividend = (remainder << 16) | quotient
+                    self.r[aaa] = dividend // divisor
+                    self.r[ddd] = dividend % divisor
             elif f5 in (0x12, 0x13):                    # FSR1 / FSL1
                 if self.nano:
                     raise Undefined("funnel shift in nano")
@@ -457,6 +477,8 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--min", action="store_true", help="min profile (no sys/variable shifts)")
     ap.add_argument("--full", action="store_true")
+    ap.add_argument("--mdu", action="store_true",
+                    help="enable the paired MULHU/DIVU extension (requires --full)")
     ap.add_argument("--nano", action="store_true",
                     help="nano ABI/subset (JAL links to rd, no S-bank/sys profile)")
     ap.add_argument("--max-insns", type=int, default=2_000_000,
@@ -487,6 +509,8 @@ def main():
         ap.error("--min and --full are mutually exclusive")
     if args.nano and (args.min or args.full):
         ap.error("--nano cannot be combined with a tiny profile")
+    if args.mdu and not args.full:
+        ap.error("--mdu requires --full")
 
     with open(args.image, "rb") as f:
         image = f.read()
@@ -496,7 +520,7 @@ def main():
             uart_in.extend(f.read())
     if args.uart_in_text is not None:
         uart_in.extend(args.uart_in_text.encode("latin1"))
-    sim = Sim(image, sys_tier=not args.min, full=args.full,
+    sim = Sim(image, sys_tier=not args.min, full=args.full, mdu=args.mdu,
               nano=args.nano, trace=args.trace,
               uart=args.uart or args.uart_in or args.uart_in_text is not None or
               args.uart_out or args.uart_expect is not None,

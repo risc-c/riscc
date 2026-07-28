@@ -194,26 +194,66 @@ Faster implement `full` only; Nano runs its separate profile.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13276 | 261136 | 5698 | 4674 | 6653 | 7549 |
 
-### Full multiply/divide experiments
+### Full multiply/divide options
 
 The normal `full` sources retain low-half `MUL` only. Optional-`mdu`
-experiments are provided by the separate `/16` multi-cycle sources.
+implementations are provided by the separate `/16` multi-cycle sources.
 
 | Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
 |---|---:|---:|---:|
 | Full (`MUL`) | 334 | 359 | 354 |
-| Full MulH (`MUL` + `MULHU`) | 342 | 372 | 366 |
-| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 387 | 415 | 411 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 344 | 374 | 369 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 383 | 410 | 407 |
 
 | Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
 |---|---:|---:|
 | Full (`MUL`) | 23.06 | 79.37 |
-| Full MulH (`MUL` + `MULHU`) | 22.61 | 75.23 |
-| Full MulDiv (`MUL` + `MULHU` + `DIVU`) | 19.04 | 72.87 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 22.51 | 80.13 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 22.34 | 74.60 |
+
+`MULHU` writes its high half to `rh` and its low half to `rl`.  The Tiny16
+implementations retain the product across one extra writeback cycle so both writes
+reuse the existing RF and ALU paths; the paired result increases area by only
+2--3 LUTs versus the former high-only design.
+
+`DIVU` keeps its live quotient and remainder in the architectural RF. Its
+shift phases are folded into the shared ALU-B OR plane rather than selecting a
+separate 16-bit divider input mux. A registered conditional-write commit
+follows each subtract: it adds one clock per quotient bit, but keeps the
+16-bit subtract carry path out of the RF-write and r0-shadow controls. This
+restores MulH-like UP5K timing for only two additional LUTs versus the compact
+initial MDU design.
 
 These optional-`mdu` timing measurements use the same core-only routed
 harness and seed one as the open-FPGA Fmax results elsewhere in this manual.
 Use `make fmax-16-mulh` or `make fmax-16-muldiv` to reproduce them.
+
+The Full toolchain enables MDU as `-mcpu=full -mmdu`; its runtime
+uses paired `MULHU` products in both the binary32 significand helper and the
+32-bit `__mulsi3` helper. LLVM also lowers ordinary 16-bit unsigned C division
+and remainder directly to `DIVU` (one instruction when both results are
+used); the runtime helpers retain it for wider operations. Binary32 divide
+uses two base-2^16 `DIVU` digits with paired products, instead of 26 restoring
+rounds. The table below is actual Tiny16 RTL cycle count at `-O2`, comparing
+Full to Full plus MDU; both images completed with `0x600D`.
+
+| Compiler benchmark | Full cycles | Full + MDU cycles | cycle change |
+|---|---:|---:|---:|
+| `int32` | 218649 | 205597 | -5.97% |
+| `softfloat` | 540249 | 512180 | -5.20% |
+| `libm32` | 42025 | 40858 | -2.78% |
+| `matrix` | 268233 | 234811 | -12.46% |
+| `structures` | 11441 | 11441 | 0.00% |
+| all five workloads | 1080597 | 1004887 | -7.01% |
+
+This is a cycle-only comparison: use the routed Fmax table above when judging
+elapsed-time improvement for a particular FPGA target. The `int32`,
+`softfloat`, and `libm32` gains include the MDU-specific `__mulsi3` path; these
+workloads do not have a hot standalone 16-bit unsigned C divide. The MDU
+binary32 divide path removes a further 4077 cycles (0.79%) from `softfloat`
+and 6858 cycles (2.84%) from `matrix` relative to the former MDU runtime. It
+increases `__divsf3` from 352 to 402 bytes, so it remains a speed choice rather
+than a size optimization.
 
 ## 4. FPGA toolchain
 

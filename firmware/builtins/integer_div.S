@@ -50,6 +50,17 @@
         .endm
 
         FUNCTION __udivhi3
+#ifdef __RISCC_MDU__
+        /* DIVU takes remainder:quotient in r3:r1 and leaves r1 as quotient. */
+        MOV     r0, r2
+        BEQZ    .Ludiv_mdu_zero
+        LDI     r3, 0
+        DIVU    r3, r1, r2
+        DIV_RETURN
+.Ludiv_mdu_zero:
+        LDI     r1, 0
+        DIV_RETURN
+#else
         SAVE_R5
         LDI     r4, 0                  /* quotient */
         MOV     r0, r2
@@ -86,9 +97,19 @@
         MOV     r1, r4
         RESTORE_R5
         DIV_RETURN
+#endif
         .size __udivhi3, . - __udivhi3
 
         FUNCTION __umodhi3
+#ifdef __RISCC_MDU__
+        MOV     r0, r2
+        BEQZ    .Lumod_mdu_done
+        LDI     r3, 0
+        DIVU    r3, r1, r2
+        MOV     r1, r3
+.Lumod_mdu_done:
+        DIV_RETURN
+#else
         SAVE_R5
         MOV     r0, r2
         BEQZ    .Lumod_done
@@ -117,9 +138,28 @@
 .Lumod_done:
         RESTORE_R5
         DIV_RETURN
+#endif
         .size __umodhi3, . - __umodhi3
 
         FUNCTION __udivmodhi4
+#ifdef __RISCC_MDU__
+        /* Preserve the ABI remainder pointer while r3 becomes DIVU's rr. */
+        MTS     s4, r3
+        MOV     r0, r2
+        BEQZ    .Ludivmodhi_mdu_zero
+        LDI     r3, 0
+        DIVU    r3, r1, r2
+        JMP8    .Ludivmodhi_mdu_store
+.Ludivmodhi_mdu_zero:
+        MOV     r3, r1
+        LDI     r1, 0
+.Ludivmodhi_mdu_store:
+        MFS     r0, s4
+        BEQZ    .Ludivmodhi_mdu_done
+        STW     r3, [r0 + 0]
+.Ludivmodhi_mdu_done:
+        DIV_RETURN
+#else
         SAVE_R5
 #ifdef __RISCC_NANO__
         STW     r3, [r7 - 4]
@@ -166,6 +206,7 @@
         MOV     r1, r4
         RESTORE_R5
         DIV_RETURN
+#endif
         .size __udivmodhi4, . - __udivmodhi4
 
 /*

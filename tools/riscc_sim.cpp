@@ -225,6 +225,7 @@ struct Opts
     std::string image;
     bool min = false;
     bool full = false;
+    bool mdu = false;
     bool nano = false;
     bool fast = false;
     bool fast_dsp = false;
@@ -262,6 +263,11 @@ struct Opts
     bool has_full() const
     {
         return fast || faster || (full && !nano);
+    }
+
+    bool has_mdu() const
+    {
+        return full && mdu && !nano;
     }
 };
 
@@ -738,6 +744,36 @@ struct Sim
                 r[rd] = static_cast<uint16_t>(r[ra] << (rb + 1));
                 instr_cycles = cycle.variable_shift(static_cast<int>(rb + 1));
             }
+            else if (func == 0x10 || func == 0x14)
+            {
+                if (!opts.has_mdu())
+                    throw std::runtime_error("MDU instruction without the mdu extension");
+                if (func == 0x14)
+                {
+                    if (rd == ra)
+                        throw std::runtime_error("MULHU requires distinct low/high registers");
+                    uint32_t product = static_cast<uint32_t>(r[ra]) * r[rb];
+                    r[rd] = static_cast<uint16_t>(product);
+                    r[ra] = static_cast<uint16_t>(product >> 16);
+                    instr_cycles = cycle.mul + 1;
+                }
+                else
+                {
+                    if (rd == ra || rd == rb || ra == rb)
+                        throw std::runtime_error("DIVU requires distinct registers");
+                    uint16_t remainder = r[rd];
+                    uint16_t quotient = r[ra];
+                    uint16_t divisor = r[rb];
+                    if (divisor == 0 || remainder >= divisor)
+                        throw std::runtime_error("DIVU operand precondition failed");
+                    uint32_t dividend = (static_cast<uint32_t>(remainder) << 16) | quotient;
+                    r[ra] = static_cast<uint16_t>(dividend / divisor);
+                    r[rd] = static_cast<uint16_t>(dividend % divisor);
+                    // Decode/operand capture plus sixteen five-clock digits and
+                    // the final quotient shift: 82 post-decode clocks.
+                    instr_cycles = 85;
+                }
+            }
             else if (func == 0x12 || func == 0x13)
             {
                 if (opts.nano)
@@ -1034,7 +1070,7 @@ void print_usage(const char *prog)
     std::cerr
         << "RISC-C simulator " << RISCC_VERSION << "\n"
         << "usage: " << prog << " image.bin [options]\n"
-        << "  --min --full\n"
+        << "  --min --full [--mdu]\n"
         << "  --nano\n"
         << "  --fast [--fast-dsp]       approximate Fast pipelined timing (full ISA)\n"
         << "  --faster                  Faster DSP timing model (full ISA)\n"
@@ -1074,6 +1110,10 @@ Opts parse_args(int argc, char **argv)
         else if (opt == "--full")
         {
             opts.full = true;
+        }
+        else if (opt == "--mdu")
+        {
+            opts.mdu = true;
         }
         else if (opt == "--nano")
         {
@@ -1164,6 +1204,8 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("--min and --full are mutually exclusive");
     if (opts.nano && (opts.min || opts.full))
         throw std::runtime_error("--nano cannot be combined with a tiny profile");
+    if (opts.mdu && !opts.full)
+        throw std::runtime_error("--mdu requires --full");
     if ((opts.fast || opts.faster) && (opts.nano || opts.min))
         throw std::runtime_error("pipelined timing cannot be combined with --nano or --min");
     if (opts.fast && opts.faster)

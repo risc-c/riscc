@@ -1,10 +1,11 @@
-// riscc_tiny16_full_mulh.v : RISC-C W=16 Full MUL+MULHU experiment.
+// riscc_tiny16_full_mulh.v : RISC-C W=16 Full MUL+MULHU option.
 //
 // The non-serial family member: doc/HARDWARE.md 'Implementation family' (one 17-bit
 // adder/result path, one memory-data staging register, no store staging,
 // constant-vector IRQ path, and a shared iteration loop for shifts/MUL).
-// Full has SLT, LDBS, interrupts, variable shifts, MUL, and experimental
-// three-register MULHU. There is no hardware divide/remainder operation.
+// Full has SLT, LDBS, interrupts, variable shifts, MUL, and paired-result
+// three-register MULHU. There is no hardware divide/remainder
+// operation.
 
 `default_nettype none
 
@@ -172,6 +173,10 @@ module riscc_tiny16 #(
     wire shift_has_more = shift_iteration && !iteration_done;
     wire product_complete =
         in_iterate && product_iteration_op && product_iteration_done;
+    // The completed product is already split between the accumulator and MDR.
+    // MULHU spends one extra writeback cycle: high to ra, then low to rd.
+    wire mulhu_high_write = in_mdr_writeback && mulhu_op;
+    wire mulhu_low_write = in_execute && mulhu_op;
     // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
     // selectors are 000/111, so any ccc bit is the new IE value.
     wire system_group = register_class && (&register_group);
@@ -219,7 +224,7 @@ module riscc_tiny16 #(
     // fetch; ST_INSTRUCTION_CAPTURE then latches it before ST_DECODE.
     wire execute_complete =
         (in_execute && !memory_op && !register_compare && !funnel_left_op) |
-        in_mdr_writeback;
+        (in_mdr_writeback && !mulhu_op);
     wire start_fetch =
         in_fetch_request | execute_complete | in_compare_writeback |
         shift_complete;
@@ -243,14 +248,15 @@ module riscc_tiny16 #(
     wire [15:0] rf_read_data;
     // JAL/JAL16 link into S[ddd] -- the same write address as MTS.
     wire [2:0] rf_write_register =
-        (in_irq_entry | compare_immediate) ? 3'b000 : rd;
+        mulhu_high_write ? ra :
+        ((in_irq_entry | compare_immediate) ? 3'b000 : rd);
     // rf_we qualifies the state; the bank select can keep the decoded MTS
     // value and need not repeat the link-enable check.
     wire rf_write_system_bank = mts_op | in_irq_entry | in_link_writeback;
     wire rf_we =
         (in_link_writeback && link_enabled) | in_compare_writeback |
         in_irq_entry | execute_complete
-        | (in_iterate && immediate_shift_op);
+        | (in_iterate && immediate_shift_op) | mulhu_high_write;
     wire [15:0] rf_wdata = alu_result;
 
     riscc_rf #(
@@ -285,7 +291,7 @@ module riscc_tiny16 #(
     wire alu_a_is_pc = in_decode | in_link_writeback | in_irq_entry;
     wire alu_a_is_zero =
         (in_execute && (immediate_load_group | immediate_logic |
-                        register_logic_op | single_step_shift_op)) |
+                        register_logic_op | single_step_shift_op | mulhu_low_write)) |
         (in_mdr_writeback && !funnel_left_op) |
         in_compare_writeback | (in_jump_commit && jal16_op) |
         (in_iterate && product_iteration_op && !mdr_q[0]) |
@@ -296,7 +302,7 @@ module riscc_tiny16 #(
         rf_read_data;
 
     wire alu_b_is_mdr =
-        (in_execute && alu_b_uses_mdr) | in_mdr_writeback |
+        (in_execute && (alu_b_uses_mdr | mulhu_low_write)) | in_mdr_writeback |
         (in_jump_commit && jal16_op) | shift_left_iteration;
     wire alu_b_is_zero_extended_imm =
         (in_execute && (load_immediate | immediate_arithmetic | immediate_memory)) |
@@ -392,7 +398,8 @@ module riscc_tiny16 #(
             state_q[ST_DECODE] <= in_instruction_capture;
             state_q[ST_OPERAND_LOAD] <= start_operand_load;
             state_q[ST_EXECUTE] <=
-                start_direct_execute | (in_operand_load && !iterative_op);
+                start_direct_execute | (in_operand_load && !iterative_op) |
+                (in_mdr_writeback && mulhu_op);
             state_q[ST_ITERATION_OPERAND_LOAD] <=
                 (in_operand_load && product_iteration_op) |
                 shift_has_more;
@@ -496,7 +503,7 @@ module riscc_tiny16 #(
     localparam integer RISCC_TRACE_W = 16;
     wire        tr_op_done_i = shift_complete;
     wire        tr_commit_i = execute_complete | in_compare_writeback |
-                              tr_op_done_i |
+                              mulhu_high_write | tr_op_done_i |
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry;
     wire [14:0] tr_pc_i = pc_q;

@@ -5,9 +5,10 @@
  * The other profiles use a branchless shift/add loop: turning the multiplier
  * bit into an all-zero/all-one mask avoids an unpredictable branch per bit.
  *
- * __mulsi3 keeps the two 32-bit values in r1:r2 and r3:r4.  On Full, the
- * three cross products only need their low halves; a byte-decomposed product
- * supplies the otherwise unavailable unsigned high half of r1*r3.
+ * __mulsi3 keeps the two 32-bit values in r1:r2 and r3:r4.  On Full, the two
+ * cross products only need their low halves; a byte-decomposed product
+ * supplies the otherwise unavailable unsigned high half of r1*r3.  MDU
+ * obtains that low/high pair directly with MULHU.
  */
 
 #ifdef __RISCC_NANO__
@@ -215,6 +216,28 @@
 
 #ifdef __RISCC_FULL__
         FUNCTION __mulsi3
+#ifdef __RISCC_MULHU__
+        /*
+         * (a1:a0) * (b1:b0) modulo 2^32 is:
+         *
+         *   low  = (a0 * b0)[15:0]
+         *   high = (a0 * b0)[31:16] + a0*b1 + a1*b0.
+         *
+         * Form the cross terms before MULHU overwrites r1 with the high half
+         * of a0*b0.  r5/r6 are callee-saved and become temporary registers;
+         * MDU's paired result otherwise needs no S-register scratch space.
+         */
+        MTS     s5, r5
+        MTS     s6, r6
+        MUL     r5, r1, r4              /* a0*b1, low half */
+        MUL     r6, r2, r3              /* a1*b0, low half */
+        MULHU   r0, r1, r3              /* r0:p0lo, r1:p0hi */
+        ADD     r2, r1, r5
+        ADD     r2, r2, r6
+        MOV     r1, r0
+        MFS     r6, s6
+        MFS     r5, s5
+#else
         /* Preserve callee-saved GPRs in call-clobbered cache registers. */
         MTS     s5, r5
         MTS     s6, r6
@@ -264,6 +287,7 @@
 
         MFS     r6, s6
         MFS     r5, s5
+#endif
         MUL_RETURN
         .size __mulsi3, . - __mulsi3
 #else

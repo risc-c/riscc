@@ -1,9 +1,9 @@
 /*
  * Full IEEE-754 binary32 divide for the Min/Sys/Full profiles.
  *
- * Normalized 24-bit significands feed a 26-round restoring divide.  The
- * quotient is produced directly with guard/round/sticky bits for the shared
- * mainline packer.
+ * Without MDU, normalized 24-bit significands feed a 26-round restoring
+ * divide.  The MDU build instead uses two base-2^16 quotient digits.  Both
+ * produce guard/round/sticky bits directly for the shared mainline packer.
  */
 
         .macro EXTRACT_EXP reg
@@ -45,6 +45,77 @@
         ORI     r1, 1
 .Ldiv_keep\@:
         .endm
+
+#ifdef __RISCC_MDU__
+        /*
+         * One base-2^16 Knuth quotient digit.  r6:r5 holds the normalized
+         * divisor high:low, r4:r3 holds the incoming partial remainder, and
+         * r2 is the next dividend limb.  The quotient digit is kept at -14
+         * from r7.  The private S3 link makes one copy serve both digits.
+         *
+         * DIVU divides the two top partial-remainder limbs by divisor-high.
+         * Normalization makes that limb at least 0x8000, so the standard
+         * estimate needs at most two corrections.
+         */
+        .macro MDU_DIV_DIGIT
+        MTS     s5, r4
+        MTS     s6, r3
+        STW     r2, [r7 - 12]           /* preserve appended limb */
+        DIVU    r4, r3, r6              /* r4:r3 -> estimate remainder:q */
+        STW     r3, [r7 - 14]
+
+.Lmdu_div_check\@:
+        LDW     r1, [r7 - 14]
+        MULHU   r0, r1, r5              /* r0:p.lo, r1:p.hi for q*vlo */
+        STW     r0, [r7 - 16]
+        STW     r1, [r7 - 18]
+        SLTU    r0, r4, r1
+        BNEZ    .Lmdu_div_correct\@
+        SUB     r0, r1, r4
+        BNEZ    .Lmdu_div_ready\@
+        LDW     r3, [r7 - 12]
+        LDW     r0, [r7 - 16]
+        SLTU    r0, r3, r0
+        BNEZ    .Lmdu_div_correct\@
+        JMP8    .Lmdu_div_ready\@
+
+.Lmdu_div_correct\@:
+        LDW     r1, [r7 - 14]
+        ADDI    r1, -1
+        STW     r1, [r7 - 14]
+        ADD     r4, r4, r6              /* estimate remainder += vhi */
+        SLTU    r0, r4, r6
+        BNEZ    .Lmdu_div_ready\@      /* carry: no further correction */
+        JMP8    .Lmdu_div_check\@
+
+.Lmdu_div_ready\@:
+        /* q * (vhi:vlo), represented as three 16-bit product limbs. */
+        LDW     r1, [r7 - 14]
+        MULHU   r0, r1, r6              /* p1 = q*vhi */
+        LDW     r3, [r7 - 18]
+        ADD     r3, r3, r0              /* middle product limb */
+        SLTU    r4, r3, r0              /* carry into top limb */
+        ADD     r1, r1, r4              /* top product limb */
+
+        /* (old remainder : appended limb) - q * divisor. */
+        LDW     r4, [r7 - 12]
+        LDW     r0, [r7 - 16]
+        SLTU    r2, r4, r0
+        SUB     r4, r4, r0              /* new remainder low */
+        MFS     r0, s6
+        ADD     r3, r3, r2
+        SLTU    r2, r3, r2
+        SLTU    r5, r0, r3
+        SUB     r0, r0, r3              /* new remainder high */
+        OR      r2, r2, r5
+        MFS     r3, s5
+        SUB     r3, r3, r1
+        SUB     r3, r3, r2              /* proven zero after correction */
+        MOV     r3, r4                  /* return remainder low */
+        MOV     r4, r0                  /* return remainder high */
+        RET     s3
+        .endm
+#endif
 
         .section .text.__divsf3,"ax",@progbits
         .p2align 1
@@ -188,6 +259,74 @@ __divsf3:
         JMP8    .Lnormalize_right
 
 .Lnormalized:
+#ifdef __RISCC_MDU__
+        /*
+         * Align the 24-bit divisor into a normalized two-limb base-2^16
+         * value.  The quotient below is floor((X << 26) / divisor), where
+         * X is selected in [divisor, 2*divisor), exactly as the restoring
+         * implementation does.  Dividing X<<34 by divisor<<8 leaves that
+         * quotient unchanged and makes two 16-bit quotient digits available.
+         */
+        STW     r5, [r7 - 4]
+        MOV     r5, r3
+        SHLI    r5, r5, 8               /* divisor low limb */
+        MTS     s4, r5
+        MOV     r6, r4
+        SHLI    r6, r6, 8
+        SHRI    r0, r3, 8
+        OR      r6, r6, r0              /* divisor high limb, >= 0x8000 */
+
+        /* Select X and the matching exponent, so divisor <= X < 2*divisor. */
+        SLTU    r0, r2, r4
+        BNEZ    .Lmdu_numerator_less
+        SUB     r0, r2, r4
+        BNEZ    .Lmdu_numerator_ready
+        SLTU    r0, r1, r3
+        BNEZ    .Lmdu_numerator_less
+.Lmdu_numerator_ready:
+        JMP8    .Lmdu_numerator_selected
+.Lmdu_numerator_less:
+        FSL1    r2, r2, r1
+        ADD     r1, r1, r1
+        LDW     r0, [r7 - 4]
+        ADDI    r0, -1
+        STW     r0, [r7 - 4]
+.Lmdu_numerator_selected:
+        /*
+         * X << 34: start the 4-limb dividend with its upper two limbs.
+         * Form X << 2 as a pair with two one-bit funnel steps.  Besides
+         * avoiding large immediate shifts, this is four instructions rather
+         * than splitting r1 >> 14 and ORing it into the high limb.
+         */
+        LDI     r0, 0
+        STW     r0, [r7 - 12]           /* next limb; final limb is zero */
+        FSL1    r4, r2, r1
+        ADD     r3, r1, r1
+        FSL1    r4, r4, r3
+        ADD     r3, r3, r3              /* initial remainder = X << 2 */
+
+        /* The two digits share one local helper; both appended limbs are zero. */
+        LDI     r2, 0
+        JAL16   s3, .Lmdu_div_digit
+        LDW     r0, [r7 - 14]
+        STW     r0, [r7 - 20]
+
+        MFS     r5, s4
+        LDI     r2, 0
+        JAL16   s3, .Lmdu_div_digit
+
+        LDW     r2, [r7 - 20]
+        LDW     r1, [r7 - 14]
+        OR      r0, r3, r4
+        BEQZ    .Lmdu_exact
+        ORI     r1, 1                   /* sticky */
+.Lmdu_exact:
+        LDW     r3, [r7 - 6]
+        LDW     r4, [r7 - 4]
+        LDW     r6, [r7 - 8]
+        LDW     r5, [r7 - 10]
+        TAIL_PACK
+#else
         STW     r5, [r7 - 4]
         MOV     r5, r3                 /* divisor low */
         MOV     r6, r4                 /* divisor high */
@@ -237,4 +376,9 @@ __divsf3:
         LDW     r6, [r7 - 8]
         LDW     r5, [r7 - 10]
         TAIL_PACK                      /* tail call */
+#endif
+#ifdef __RISCC_MDU__
+.Lmdu_div_digit:
+        MDU_DIV_DIGIT
+#endif
         .size __divsf3, . - __divsf3

@@ -1008,8 +1008,8 @@ up5k_tiny_fmax_defs = $(strip $(call tiny_cpp_defs,$(2)) \
 tiny_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2))
 tiny_ecp5_fmax_synth_opts = $(if $(and $(filter 16,$(1)),$(filter full,$(2))),-dff,$(call tiny_fmax_synth_opts,$(1),$(2)))
 
-# The optional /16 MDU variants have independent timing-optimal mappings:
-# MulH benefits from -dff, while MulDiv is both smaller and faster without it.
+# The optional /16 MDU variants use timing-optimal sequential mappings.  The
+# divider control benefits from -dff on iCE40 and an extra ABC pass on ECP5.
 MULH16_FMAX_RTL := rtl/riscc_tiny16_full_mulh.v $(FMAX_TOP) rtl/riscc_rf.vh Makefile
 MULDIV16_FMAX_RTL := rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP) rtl/riscc_rf.vh Makefile
 
@@ -1022,7 +1022,7 @@ build/fmax/ice40/up5k/tiny16-mulh.mhz: $(MULH16_FMAX_RTL)
 
 build/fmax/ice40/up5k/tiny16-muldiv.mhz: $(MULDIV16_FMAX_RTL)
 	@mkdir -p $(@D)
-	@$(YOSYS) -q -p "read_verilog rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ice40 -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(YOSYS) -q -p "read_verilog rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ice40 -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
 	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $(ICE40_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
@@ -1036,7 +1036,7 @@ build/fmax/ecp5/tiny16-mulh.mhz: $(MULH16_FMAX_RTL)
 
 build/fmax/ecp5/tiny16-muldiv.mhz: $(MULDIV16_FMAX_RTL)
 	@mkdir -p $(@D)
-	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc_tiny16_full_muldiv.v $(FMAX_TOP); synth_ecp5 -abc2 -dff -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
 	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $(ECP5_FMAX_SEED) \
 	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
@@ -1281,7 +1281,7 @@ clean:
 distclean: clean
 	rm -rf build/llvm-riscc build/firmware
 
-# ---- Experimental RISC-C LLVM toolchain ------------------------------
+# ---- RISC-C LLVM toolchain -------------------------------------------
 
 # Keep this integration self-contained while the backend lives in the vendor
 # checkout. Override the knobs below to use a different layout, generator, or
@@ -1360,10 +1360,12 @@ RISCC_COMPILER_FLOAT_MAX_INSNS ?= 5000000
 RISCC_COMPILER_BENCHMARK_MAX_INSNS ?= 10000000
 RISCC_LIBC_TERMINATE_MAX_INSNS ?= 256
 RISCC_CPU ?= full
-RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=$(RISCC_CPU)
+RISCC_TARGET_FEATURES ?=
+RISCC_TARGET_FLAGS ?= --target=riscc-none-elf -mcpu=$(RISCC_CPU) $(addprefix -m,$(RISCC_TARGET_FEATURES))
+RISCC_HAS_MDU := $(if $(filter no-mdu,$(RISCC_TARGET_FEATURES)),,$(filter mdu,$(RISCC_TARGET_FEATURES)))
 RISCC_SIM_PROFILE_FLAGS := $(if $(filter nano,$(RISCC_CPU)),--nano, \
 	$(if $(filter min,$(RISCC_CPU)),--min, \
-	$(if $(filter full,$(RISCC_CPU)),--full)))
+	$(if $(filter full,$(RISCC_CPU)),--full $(if $(RISCC_HAS_MDU),--mdu))))
 RISCC_ASFLAGS ?= -ffreestanding
 RISCC_CFLAGS ?= -Os -ffreestanding -fno-builtin -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \

@@ -1,10 +1,10 @@
-// riscc_tiny16_full_muldiv.v : RISC-C W=16 Full MDU experiment.
+// riscc_tiny16_full_muldiv.v : RISC-C W=16 Full MDU option.
 //
 // The non-serial family member: doc/HARDWARE.md 'Implementation family' (one 17-bit
 // adder/result path, one memory-data staging register, no store staging,
 // constant-vector IRQ path, and a shared iteration loop for shifts/MUL/divide).
 // Full has SLT, LDBS, interrupts, variable shifts, full multiply, and
-// experimental three-register MULHU and RF-resident DIVU operations.
+// paired-result MULHU and RF-resident DIVU operations.
 
 `default_nettype none
 
@@ -184,6 +184,10 @@ module riscc_tiny16 #(
     wire shift_has_more = shift_iteration && !iteration_done;
     wire product_complete =
         in_iterate && product_iteration_op && arithmetic_iteration_done;
+    // The completed product is already split between the accumulator and MDR.
+    // MULHU spends one extra writeback cycle: high to ra, then low to rd.
+    wire mulhu_high_write = in_mdr_writeback && mulhu_op;
+    wire mulhu_low_write = in_execute && mulhu_op;
     wire division_loop_quotient =
         in_iteration_operand_load && divu_op;
     wire division_remainder_shift = in_iterate && divu_op;
@@ -195,7 +199,11 @@ module riscc_tiny16 #(
     wire division_quotient_phase =
         division_loop_quotient | division_final_quotient;
     wire division_shift_phase =
-        division_quotient_phase | division_remainder_shift;
+        divu_op && (in_iteration_operand_load | in_execute | in_iterate);
+    // The subtract decision is captured before its conditional RF write.  The
+    // following MDR-writeback clock rereads and recomputes the remainder,
+    // keeping subtract carry-out off the RF-enable/branch-shadow timing path.
+    wire division_remainder_commit = in_mdr_writeback && divu_op;
     wire division_subtract_succeeds;
     // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
     // selectors are 000/111, so any ccc bit is the new IE value.
@@ -247,7 +255,7 @@ module riscc_tiny16 #(
     wire execute_complete =
         (in_execute && !memory_op && !register_compare &&
          !funnel_left_op && !divu_op) |
-        in_mdr_writeback |
+        (in_mdr_writeback && !mulhu_op && !divu_op) |
         division_final_quotient;
     wire start_fetch =
         in_fetch_request | execute_complete | in_compare_writeback |
@@ -264,7 +272,8 @@ module riscc_tiny16 #(
                           (memory_address_ready && store_op) |
                           (in_iteration_operand_load && immediate_shift_op) |
                           division_quotient_phase |
-                          (in_division_read_wait && divu_op);
+                          ((in_division_read_wait | in_division_add) &&
+                           divu_op);
     wire select_read_rb = in_decode && needs_rb_operand;
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
@@ -274,9 +283,10 @@ module riscc_tiny16 #(
     wire [15:0] rf_read_data;
     // JAL/JAL16 link into S[ddd] -- the same write address as MTS.
     wire zero_write_register = in_irq_entry | compare_immediate;
+    wire rf_write_mdu_aux = division_quotient_phase | mulhu_high_write;
     wire [2:0] rf_write_register =
-        ({3{division_quotient_phase}} & ra) |
-        ({3{!division_quotient_phase && !zero_write_register}} & rd);
+        ({3{rf_write_mdu_aux}} & ra) |
+        ({3{!rf_write_mdu_aux && !zero_write_register}} & rd);
     // rf_we qualifies the state; the bank select can keep the decoded MTS
     // value and need not repeat the link-enable check.
     wire rf_write_system_bank = mts_op | in_irq_entry | in_link_writeback;
@@ -285,7 +295,8 @@ module riscc_tiny16 #(
         in_irq_entry | execute_complete
         | (in_iterate && immediate_shift_op) |
         division_shift_phase |
-        (division_remainder_add && division_subtract_succeeds);
+        (division_remainder_commit && funnel_bit_q) |
+        mulhu_high_write;
     wire [15:0] rf_wdata = alu_result;
 
     riscc_rf #(
@@ -320,8 +331,8 @@ module riscc_tiny16 #(
     wire alu_a_is_pc = in_decode | in_link_writeback | in_irq_entry;
     wire alu_a_is_zero =
         (in_execute && (immediate_load_group | immediate_logic |
-                        register_logic_op | single_step_shift_op)) |
-        (in_mdr_writeback && !funnel_left_op) |
+                        register_logic_op | single_step_shift_op | mulhu_low_write)) |
+        (in_mdr_writeback && !funnel_left_op && !divu_op) |
         in_compare_writeback | (in_jump_commit && jal16_op) |
         (in_iterate && product_iteration_op && !mdr_q[0]) |
         shift_right_iteration;
@@ -331,7 +342,7 @@ module riscc_tiny16 #(
         rf_read_data;
 
     wire alu_b_is_mdr =
-        (in_execute && alu_b_uses_mdr) | in_mdr_writeback |
+        (in_execute && (alu_b_uses_mdr | mulhu_low_write)) | in_mdr_writeback |
         (in_jump_commit && jal16_op) | shift_left_iteration |
         division_remainder_add;
     wire alu_b_is_zero_extended_imm =
@@ -345,6 +356,7 @@ module riscc_tiny16 #(
         ({16{(in_iterate && product_iteration_op) |
              mulhu_accumulator_writeback}} &
          multiply_accumulator_q) |
+        ({16{division_shift_phase}} & rf_read_data) |
         {15'h0000, in_compare_writeback && captured_bit_q} |
         ({16{alu_b_is_mdr && !mulhu_accumulator_writeback}} & mdr_q) |
         ({16{alu_b_is_upper_imm}} & upper_immediate) |
@@ -366,9 +378,7 @@ module riscc_tiny16 #(
         (arithmetic_right_shift && rf_read_data[15]);
     wire [15:0] iterative_shift_result =
         {shift_right_input, rf_read_data[15:1]};
-    wire alu_b_is_mdu_rf = division_shift_phase;
     wire [15:0] alu_b =
-        alu_b_is_mdu_rf ? rf_read_data :
         (in_execute && (register_logic_op | immediate_logic)) ? logic_result :
         alu_b_is_shift_result ? iterative_shift_result :
         normal_alu_b;
@@ -378,7 +388,8 @@ module riscc_tiny16 #(
         (register_subtract_or_compare | compare_immediate);
     wire subtract_enable =
         ordinary_subtract |
-        division_remainder_add;
+        division_remainder_add |
+        division_remainder_commit;
     wire sign_extend_immediate =
         (in_execute && (immediate_arithmetic | immediate_memory)) |
         (in_decode && branch_op && branch_taken);
@@ -437,13 +448,12 @@ module riscc_tiny16 #(
             state_q[ST_OPERAND_LOAD] <= start_operand_load;
             state_q[ST_EXECUTE] <=
                 start_direct_execute | (in_operand_load && !iterative_op) |
-                (division_remainder_add &&
-                 arithmetic_iteration_done);
+                (in_mdr_writeback &&
+                 (mulhu_op | (divu_op && arithmetic_iteration_done)));
             state_q[ST_ITERATION_OPERAND_LOAD] <=
                 (in_operand_load && arithmetic_iteration_op) |
                 shift_has_more |
-                (division_remainder_add &&
-                 !arithmetic_iteration_done);
+                (division_remainder_commit && !arithmetic_iteration_done);
             state_q[ST_ITERATE] <=
                 (in_operand_load && immediate_shift_op) |
                 in_iteration_operand_load |
@@ -470,7 +480,8 @@ module riscc_tiny16 #(
             state_q[ST_MDR_WRITEBACK] <=
                 (in_load_capture && !jal16_op) |
                 arithmetic_direct_complete |
-                funnel_left_execute;
+                funnel_left_execute |
+                division_remainder_add;
 
             // Capture the next instruction after its synchronous read.
             if (in_instruction_capture) begin
@@ -511,14 +522,18 @@ module riscc_tiny16 #(
                 iteration_count_q <= iteration_count_q - 4'd1;
             end else if (division_remainder_add) begin
                 funnel_bit_q <= division_subtract_succeeds;
-                if (!arithmetic_iteration_done)
-                    iteration_count_q <= iteration_count_q - 4'd1;
             end else if (shift_left_iteration && !iteration_done) begin
                 mdr_q <= alu_result;
                 iteration_count_q <= iteration_count_q - 4'd1;
             end else if (shift_right_iteration && !iteration_done) begin
                 iteration_count_q <= iteration_count_q - 4'd1;
             end
+
+            // Delay the divide-count update until its registered subtract
+            // result is committed.  The commit state can then test the same
+            // terminal count that the old one-cycle subtract path used.
+            if (division_remainder_commit && !arithmetic_iteration_done)
+                iteration_count_q <= iteration_count_q - 4'd1;
 
             // Save the funnel boundary bit and the less-than result.
             if (funnel_left_execute) begin
@@ -557,7 +572,7 @@ module riscc_tiny16 #(
     localparam integer RISCC_TRACE_W = 16;
     wire        tr_op_done_i = shift_complete;
     wire        tr_commit_i = execute_complete | in_compare_writeback |
-                              tr_op_done_i |
+                              mulhu_high_write | tr_op_done_i |
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry;
     wire [14:0] tr_pc_i = pc_q;

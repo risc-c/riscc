@@ -9,8 +9,9 @@ The source preprocessor supports simple conditional assembly:
 ``.ifdef NAME``, ``.ifndef NAME``, ``.else``, and ``.endif``.  Define symbols
 with ``-D NAME`` on the command line, or select an ISA profile with
 ``--profile min|sys|full|nano``.  The default profile is ``sys``.  A profile
-selection defines its corresponding ``RISCC_*`` symbol; ``full`` also defines
-``RISCC_SYS`` because it includes the system profile.
+selection defines its corresponding ``RISCC_*`` symbol; Full also defines
+``RISCC_SYS``.  Pass ``--mdu`` with the Full profile to define the MDU
+capability symbols.
 """
 import argparse
 import ast
@@ -56,6 +57,8 @@ R_FUNC = {
     "OR": 0x05,
     "XOR": 0x06,
     "MUL": 0x07,
+    "DIVU": 0x10,
+    "MULHU": 0x14,
     "LDWX": 0x08,
     "LDB": 0x0A,
     "STB": 0x0B,
@@ -529,7 +532,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
 
     if op in (
         "ADD", "SUB", "AND", "OR", "XOR", "SLT", "SLTU", "MUL",
-        "FSL1", "FSR1",
+        "DIVU", "MULHU", "FSL1", "FSR1",
     ):
         n_ops(3, f"{op} rd, ra, rb")
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]), R_FUNC[op], reg(operands[2])))
@@ -673,6 +676,8 @@ def main() -> int:
     parser.add_argument("--profile", choices=("min", "sys", "full", "nano"),
                         default="sys",
                         help="profile symbol for conditional assembly (default: sys)")
+    parser.add_argument("--mdu", action="store_true",
+                        help="define MDU capability symbols (requires --profile full)")
     parser.add_argument("input")
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("-D", "--define", action="append", default=[],
@@ -681,9 +686,13 @@ def main() -> int:
 
     try:
         defines = {define_name(name) for name in args.define}
+        if args.mdu and args.profile != "full":
+            raise AsmError("--mdu requires --profile full")
         defines.add(f"RISCC_{args.profile.upper()}")
         if args.profile == "full":
             defines.add("RISCC_SYS")
+        if args.mdu:
+            defines.update(("RISCC_MDU", "RISCC_MULHU", "RISCC_DIVU"))
         with open(args.input, "r", encoding="utf-8") as src:
             image = assemble(src.readlines(), defines)
         with open(args.output, "wb") as out:
