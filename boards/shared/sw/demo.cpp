@@ -24,17 +24,19 @@ constexpr int16_t kJuliaCenterY =
     (kJuliaFirstRow + kJuliaLastRow - 1u) / 2u;
 constexpr uint16_t kJuliaMirrorY =
     kJuliaFirstRow + kJuliaLastRow - 1u;
-// The higher-resolution framebuffers need a smaller per-pixel step to keep
-// the Julia set at a useful scale.  Atum's 16:9 view keeps a little more
-// horizontal context than Icepi's 4:3 view.
-#ifdef RISCC_ATUM_A3
-constexpr int16_t kViewStep = 12;
-#else
-constexpr int16_t kViewStep = 10;
-#endif
-constexpr int16_t kParameterStep = 8;
-constexpr uint16_t kEscapeRadiusSquared = 4096u;
-constexpr uint16_t kMaxIterations = 31u;
+// Both demo boards render the same 320x180 framebuffer, so they share one
+// scale.  This is a 20% wider view than the prior 48-unit step.
+constexpr int16_t kViewStep = 48;
+// Advance c by at most four Q4.12 units after each completed image, giving
+// the exterior path about 1,700 smoothly spaced positions per circuit.
+constexpr int16_t kParameterStep = 4;
+constexpr int16_t kEscapeComponent = 8192;
+constexpr uint16_t kEscapeRadiusSquared = 16384u;
+constexpr uint16_t kMultiplySplitShift = 6u;
+constexpr uint16_t kMultiplyLowMask = 0x003fu;
+constexpr uint16_t kJuliaTileSize = 3u;
+constexpr uint16_t kJuliaTileStep = kJuliaTileSize - 1u;
+constexpr uint16_t kMaxIterations = 127u;
 constexpr uint16_t kClockTicksPerSecond = RISCC_TICK_HZ;
 constexpr uint16_t kTickerPixelsPerSecond = 30u;
 constexpr uint16_t kGlyphWidth = 5u;
@@ -66,6 +68,22 @@ const uint16_t kNibbleMasks[4] =
 const uint8_t kBitMasks[5] =
 {
     0x10u, 0x08u, 0x04u, 0x02u, 0x01u
+};
+// 2x2 ordered screen: the smallest useful halftone cell at this resolution.
+const uint8_t kDitherThresholds[4] =
+{
+    0u, 2u,
+    3u, 1u
+};
+// Palette corrections indexed by the two discarded iteration bits and the
+// ordered-dither threshold.  This is ordinary ordered coverage: it never
+// spans more than one palette step, and exact palette steps remain solid.
+const int8_t kDitherCorrections[4][4] =
+{
+    {0, 0, 0, 0},
+    {1, 0, 0, 0},
+    {1, 1, 0, 0},
+    {1, 1, 1, 0}
 };
 
 #if !defined(RISCC_ATUM_A3) && !defined(RISCC_ICEPI_ZERO)
@@ -149,62 +167,95 @@ constexpr uint16_t kTickerGlyphCount =
     static_cast<uint16_t>(sizeof(kTickerText) / sizeof(kTickerText[0]));
 constexpr uint16_t kTickerWidth = kTickerGlyphCount * kGlyphStride;
 
-const Point kJuliaPath[] =
+// A modest exterior ellipse around the main-cardioid cusp:
+// c(t) = 0.55 + 0.20 * cos(t) + 0.36i * sin(t).  Its control points remain
+// outside the main cardioid and period-two bulb, giving simpler disconnected
+// forms without the large filled interiors that overwhelm a 320x180 view.
+const Point kJuliaControlPoints[] =
 {
-    {-571, 571},  {-746, 309},  {-807, 0},    {-746, -309},
-    {-571, -571}, {-309, -746}, {0, -807},    {309, -746},
-    {571, -571},  {746, -309},  {807, 0},     {746, 309},
-    {571, 571},   {309, 746},   {0, 807},     {-309, 746},
+    {3072, 0},    {3044, 382},   {2962, 737},   {2832, 1043},
+    {2662, 1277}, {2465, 1424},  {2253, 1475},  {2041, 1424},
+    {1843, 1277}, {1674, 1043},  {1543, 737},   {1462, 382},
+    {1434, 0},    {1462, -382},  {1543, -737},  {1674, -1043},
+    {1843, -1277},{2041, -1424}, {2253, -1475}, {2465, -1424},
+    {2662, -1277},{2832, -1043}, {2962, -737},  {3044, -382},
 };
 constexpr uint16_t kJuliaPathCount =
-    static_cast<uint16_t>(sizeof(kJuliaPath) / sizeof(kJuliaPath[0]));
+    static_cast<uint16_t>(sizeof(kJuliaControlPoints) /
+                          sizeof(kJuliaControlPoints[0]));
 
 uint16_t julia_row = kJuliaFirstRow;
 uint16_t ticker_offset;
 uint16_t ticker_tick_remainder;
 uint16_t julia_target = 1u;
-Point julia_c = {-571, 571};
+Point julia_c = {3072, 0};
+Point julia_path_step;
+uint16_t julia_path_step_count;
+uint16_t julia_path_steps_remaining;
+uint16_t julia_path_error_x;
+uint16_t julia_path_error_y;
+uint16_t julia_path_remainder_x;
+uint16_t julia_path_remainder_y;
+int8_t julia_path_sign_x;
+int8_t julia_path_sign_y;
 uint16_t ticker_last_tick;
-// A packed row is needed to emit its byte-reversed, nibble-swapped partner.
-uint8_t julia_row_pixels[kBytesPerRow];
+// One full-width tile row holds one tile-height sample row.
+uint8_t julia_tile_row_pixels[kJuliaTileSize][RISCC_FRAMEBUFFER_WIDTH];
 
-// Equivalent to (left * right) >> 10 without a 32-bit multiply.  Inputs in
-// this demo are well inside the signed-16 range, including after negation.
-int16_t q10_multiply(int16_t left, int16_t right)
+uint16_t magnitude16(int16_t value)
 {
-    uint16_t negative = 0;
-    uint16_t a = static_cast<uint16_t>(left);
-    uint16_t b = static_cast<uint16_t>(right);
+    const uint16_t bits = static_cast<uint16_t>(value);
 
-    if (left < 0)
-    {
-        a = static_cast<uint16_t>(0u - a);
-        negative = 1;
-    }
-    if (right < 0)
-    {
-        b = static_cast<uint16_t>(0u - b);
-        negative ^= 1u;
-    }
-
-    const uint16_t al = a & 0x00ffu;
-    const uint16_t ah = a >> 8;
-    const uint16_t bl = b & 0x00ffu;
-    const uint16_t bh = b >> 8;
-    uint16_t result = static_cast<uint16_t>((al * bl) >> 10);
-
-    result = static_cast<uint16_t>(
-        result + static_cast<uint16_t>(((ah * bl) + (al * bh)) >> 2));
-    result = static_cast<uint16_t>(
-        result + static_cast<uint16_t>((ah * bh) << 6));
-    if (negative)
-    {
-        return static_cast<int16_t>(0u - result);
-    }
-    return static_cast<int16_t>(result);
+    return value < 0 ? static_cast<uint16_t>(0u - bits) : bits;
 }
 
-uint16_t julia_pixel(uint16_t x, uint16_t y)
+// Performs one Q4.12 z = z^2 + c iteration.  Its split products omit only
+// low-by-low terms, each of which is below one Q12 output bit.
+bool julia_step(int16_t &x, int16_t &y, int16_t cx, int16_t cy)
+{
+    const uint16_t mx = magnitude16(x);
+    const uint16_t my = magnitude16(y);
+
+    if (mx >= static_cast<uint16_t>(kEscapeComponent) ||
+        my >= static_cast<uint16_t>(kEscapeComponent))
+    {
+        return true;
+    }
+
+    const uint16_t xh = mx >> kMultiplySplitShift;
+    const uint16_t xl = mx & kMultiplyLowMask;
+    const uint16_t yh = my >> kMultiplySplitShift;
+    const uint16_t yl = my & kMultiplyLowMask;
+    const uint16_t xh2 = static_cast<uint16_t>(xh * xh);
+    const uint16_t yh2 = static_cast<uint16_t>(yh * yh);
+    const uint16_t xhl = static_cast<uint16_t>(xh * xl);
+    const uint16_t yhl = static_cast<uint16_t>(yh * yl);
+    const uint16_t x2 = static_cast<uint16_t>(
+        xh2 + (xhl >> (kMultiplySplitShift - 1u)));
+    const uint16_t y2 = static_cast<uint16_t>(
+        yh2 + (yhl >> (kMultiplySplitShift - 1u)));
+
+    if (static_cast<uint16_t>(x2 + y2) >= kEscapeRadiusSquared)
+    {
+        return true;
+    }
+
+    const uint16_t xy_high = static_cast<uint16_t>(xh * yh);
+    const uint16_t xy_cross = static_cast<uint16_t>(xh * yl + xl * yh);
+    const uint16_t xy = static_cast<uint16_t>(
+        xy_high + (xy_cross >> kMultiplySplitShift));
+    const int16_t signed_xy = (x < 0) != (y < 0)
+        ? static_cast<int16_t>(0u - xy)
+        : static_cast<int16_t>(xy);
+
+    x = static_cast<int16_t>(
+        (static_cast<int16_t>(x2) - static_cast<int16_t>(y2)) + cx);
+    y = static_cast<int16_t>(
+        static_cast<int16_t>(signed_xy * 2) + cy);
+    return false;
+}
+
+uint16_t julia_iterations(uint16_t x, uint16_t y)
 {
     int16_t zx =
         static_cast<int16_t>(
@@ -217,26 +268,37 @@ uint16_t julia_pixel(uint16_t x, uint16_t y)
 
     while (iteration < kMaxIterations)
     {
-        const int16_t zx2 = q10_multiply(zx, zx);
-        const int16_t zy2 = q10_multiply(zy, zy);
-
-        if (static_cast<uint16_t>(zx2 + zy2) >= kEscapeRadiusSquared)
+        if (julia_step(zx, zy, julia_c.x, julia_c.y))
         {
             break;
         }
-
-        const int16_t next_zy = static_cast<int16_t>(
-            static_cast<int16_t>(q10_multiply(zx, zy) * 2) + julia_c.y);
-        zx = static_cast<int16_t>(zx2 - zy2 + julia_c.x);
-        zy = next_zy;
         ++iteration;
     }
 
+    return iteration;
+}
+
+uint8_t julia_output_color(uint16_t iteration, uint16_t x, uint16_t y)
+{
+    if (x == 0u || x == RISCC_FRAMEBUFFER_WIDTH - 1u)
+    {
+        return 0x0fu;
+    }
     if (iteration == kMaxIterations)
     {
-        return 0;
+        return 0u;
     }
-    return iteration & 0x0fu;
+    // Repeat the 16-color, four-substep ramp every 64 escaped iterations.
+    const uint16_t color_iteration = iteration & 0x003fu;
+    const uint16_t base_color = color_iteration >> 2;
+    const uint16_t fraction = color_iteration & 0x0003u;
+    const uint16_t dither_index = (x & 1u) | ((y & 1u) << 1u);
+    const uint16_t threshold = kDitherThresholds[dither_index];
+    const int16_t dithered_color = static_cast<int16_t>(base_color) +
+        kDitherCorrections[fraction][threshold];
+
+    return dithered_color < 0 ? 0u :
+        dithered_color > 15 ? 15u : static_cast<uint8_t>(dithered_color);
 }
 
 void draw_border()
@@ -252,8 +314,8 @@ void draw_border()
     for (uint16_t y = 1; y < RISCC_FRAMEBUFFER_HEIGHT - 1u; ++y)
     {
         volatile uint16_t *const row = framebuffer + y * kWordsPerRow;
-        row[0] |= 0x000fu;
-        row[kWordsPerRow - 1u] |= 0xf000u;
+        row[0] = 0x000fu;
+        row[kWordsPerRow - 1u] = 0xf000u;
     }
 }
 
@@ -323,77 +385,196 @@ void draw_ticker()
     }
 }
 
-int16_t move_towards(int16_t current, int16_t target)
+void begin_julia_path_segment()
 {
-    if (current < target)
-    {
-        current = static_cast<int16_t>(current + kParameterStep);
-        if (current > target)
-        {
-            current = target;
-        }
-    }
-    else if (current > target)
-    {
-        current = static_cast<int16_t>(current - kParameterStep);
-        if (current < target)
-        {
-            current = target;
-        }
-    }
-    return current;
+    const Point target = kJuliaControlPoints[julia_target];
+    const int16_t delta_x = static_cast<int16_t>(target.x - julia_c.x);
+    const int16_t delta_y = static_cast<int16_t>(target.y - julia_c.y);
+    const uint16_t distance_x = magnitude16(delta_x);
+    const uint16_t distance_y = magnitude16(delta_y);
+    const uint16_t distance = distance_x > distance_y ?
+        distance_x : distance_y;
+
+    // Divide the segment into equal DDA steps.  The remainder accumulators
+    // place the occasional extra unit so the endpoint is exact.
+    julia_path_step_count = static_cast<uint16_t>(
+        (distance + kParameterStep - 1u) / kParameterStep);
+    julia_path_steps_remaining = julia_path_step_count;
+    julia_path_step.x = static_cast<int16_t>(
+        delta_x / static_cast<int16_t>(julia_path_step_count));
+    julia_path_step.y = static_cast<int16_t>(
+        delta_y / static_cast<int16_t>(julia_path_step_count));
+    julia_path_remainder_x = static_cast<uint16_t>(
+        distance_x % julia_path_step_count);
+    julia_path_remainder_y = static_cast<uint16_t>(
+        distance_y % julia_path_step_count);
+    julia_path_error_x = 0u;
+    julia_path_error_y = 0u;
+    julia_path_sign_x = delta_x < 0 ? -1 : 1;
+    julia_path_sign_y = delta_y < 0 ? -1 : 1;
 }
 
 void update_julia_parameter()
 {
-    const Point target = kJuliaPath[julia_target];
-
-    julia_c.x = move_towards(julia_c.x, target.x);
-    julia_c.y = move_towards(julia_c.y, target.y);
-    if (julia_c.x == target.x && julia_c.y == target.y)
+    if (julia_path_steps_remaining == 0u)
     {
+        begin_julia_path_segment();
+    }
+
+    julia_c.x = static_cast<int16_t>(julia_c.x + julia_path_step.x);
+    julia_c.y = static_cast<int16_t>(julia_c.y + julia_path_step.y);
+    julia_path_error_x = static_cast<uint16_t>(
+        julia_path_error_x + julia_path_remainder_x);
+    julia_path_error_y = static_cast<uint16_t>(
+        julia_path_error_y + julia_path_remainder_y);
+    if (julia_path_error_x >= julia_path_step_count)
+    {
+        julia_c.x = static_cast<int16_t>(julia_c.x + julia_path_sign_x);
+        julia_path_error_x = static_cast<uint16_t>(
+            julia_path_error_x - julia_path_step_count);
+    }
+    if (julia_path_error_y >= julia_path_step_count)
+    {
+        julia_c.y = static_cast<int16_t>(julia_c.y + julia_path_sign_y);
+        julia_path_error_y = static_cast<uint16_t>(
+            julia_path_error_y - julia_path_step_count);
+    }
+    --julia_path_steps_remaining;
+    if (julia_path_steps_remaining == 0u)
+    {
+        julia_c = kJuliaControlPoints[julia_target];
         ++julia_target;
         if (julia_target == kJuliaPathCount)
         {
-            julia_target = 0;
+            julia_target = 0u;
         }
     }
 }
 
-void draw_julia_row(uint16_t y)
+void store_julia_tile_row_pixel(uint16_t row, uint16_t x, uint8_t iteration)
 {
-    volatile uint8_t *pixel = framebuffer_bytes + y * kBytesPerRow;
-    // z and -z have the same first iterate under z^2 + c.
-    const uint16_t mirror_y = kJuliaMirrorY - y;
+    julia_tile_row_pixels[row][x] = iteration;
+}
 
-    for (uint16_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; x += 2u)
+void write_julia_tile_row(uint16_t y)
+{
+    for (uint16_t row = 0; row < kJuliaTileSize; ++row)
     {
-        uint8_t packed = static_cast<uint8_t>(julia_pixel(x, y));
+        const uint16_t source_y = y + row;
+        const uint16_t mirror_y = kJuliaMirrorY - source_y;
 
-        packed |= static_cast<uint8_t>(julia_pixel(x + 1u, y) << 4);
-        if (x == 0)
-        {
-            packed |= 0x0fu;
-        }
-        if (x == RISCC_FRAMEBUFFER_WIDTH - 2u)
-        {
-            packed |= 0xf0u;
-        }
-        *pixel++ = packed;
-        julia_row_pixels[x / 2u] = packed;
-    }
-    if (mirror_y != y)
-    {
-        volatile uint8_t *mirror_pixel =
-            framebuffer_bytes + mirror_y * kBytesPerRow;
+        volatile uint8_t *const source =
+            framebuffer_bytes + source_y * kBytesPerRow;
 
         for (uint16_t byte = 0; byte < kBytesPerRow; ++byte)
         {
-            const uint8_t packed =
-                julia_row_pixels[kBytesPerRow - 1u - byte];
+            const uint16_t x = byte * 2u;
 
-            *mirror_pixel++ = static_cast<uint8_t>(
-                static_cast<uint8_t>(packed << 4) | (packed >> 4));
+            source[byte] = static_cast<uint8_t>(
+                julia_output_color(julia_tile_row_pixels[row][x], x, source_y) |
+                (julia_output_color(julia_tile_row_pixels[row][x + 1u],
+                                    x + 1u, source_y) << 4));
+        }
+        if (mirror_y != source_y)
+        {
+            volatile uint8_t *const mirror =
+                framebuffer_bytes + mirror_y * kBytesPerRow;
+
+            for (uint16_t byte = 0; byte < kBytesPerRow; ++byte)
+            {
+                const uint16_t source_x =
+                    RISCC_FRAMEBUFFER_WIDTH - byte * 2u - 2u;
+                const uint16_t x = byte * 2u;
+
+                mirror[byte] = static_cast<uint8_t>(
+                    julia_output_color(
+                        julia_tile_row_pixels[row][source_x + 1u],
+                        x, mirror_y) |
+                    (julia_output_color(julia_tile_row_pixels[row][source_x],
+                                        x + 1u, mirror_y) << 4));
+            }
+        }
+    }
+}
+
+void draw_julia_tile(uint16_t x, uint16_t y, uint16_t width)
+{
+    const uint16_t right = x + width - 1u;
+
+    if (x == 0)
+    {
+        for (uint16_t row = 1; row < kJuliaTileSize; ++row)
+        {
+            store_julia_tile_row_pixel(row, 0u, static_cast<uint8_t>(
+                julia_iterations(0u, y + row)));
+        }
+    }
+    const uint8_t top_left = julia_tile_row_pixels[0][x];
+    const uint8_t top_right = julia_tile_row_pixels[0][right];
+    const uint8_t bottom_left = julia_tile_row_pixels[kJuliaTileSize - 1u][x];
+    const uint8_t bottom_right = static_cast<uint8_t>(
+        julia_iterations(right, y + kJuliaTileSize - 1u));
+
+    store_julia_tile_row_pixel(
+        kJuliaTileSize - 1u, right, bottom_right);
+    const bool uniform = top_left == top_right && top_left == bottom_left &&
+        top_left == bottom_right;
+
+    if (uniform)
+    {
+        for (uint16_t row = 1; row < kJuliaTileSize; ++row)
+        {
+            for (uint16_t column = 1; column < width; ++column)
+            {
+                store_julia_tile_row_pixel(row, x + column, top_left);
+            }
+        }
+    }
+    else
+    {
+        for (uint16_t row = 1; row < kJuliaTileSize - 1u; ++row)
+        {
+            for (uint16_t column = 1; column < width; ++column)
+            {
+                store_julia_tile_row_pixel(row, x + column,
+                    static_cast<uint8_t>(julia_iterations(
+                        x + column, y + row)));
+            }
+        }
+        for (uint16_t column = 1; column + 1u < width; ++column)
+        {
+            store_julia_tile_row_pixel(kJuliaTileSize - 1u, x + column,
+                static_cast<uint8_t>(julia_iterations(
+                    x + column, y + kJuliaTileSize - 1u)));
+        }
+    }
+}
+
+void draw_julia_tile_row(uint16_t y)
+{
+    if (y == kJuliaFirstRow)
+    {
+        for (uint16_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; ++x)
+        {
+            store_julia_tile_row_pixel(0u, x, static_cast<uint8_t>(
+                julia_iterations(x, y)));
+        }
+    }
+    for (uint16_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH;
+         x += kJuliaTileStep)
+    {
+        const uint16_t width = RISCC_FRAMEBUFFER_WIDTH - x < kJuliaTileSize ?
+            RISCC_FRAMEBUFFER_WIDTH - x : kJuliaTileSize;
+
+        draw_julia_tile(x, y, width);
+    }
+    write_julia_tile_row(y);
+    if (y + kJuliaTileStep < kJuliaCenterY)
+    {
+        for (uint16_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; ++x)
+        {
+            julia_tile_row_pixels[0][x] =
+                julia_tile_row_pixels[kJuliaTileSize - 1u][x];
         }
     }
 }
@@ -434,15 +615,15 @@ void update_ticker()
 void draw_next_row()
 {
     update_ticker();
-    draw_julia_row(julia_row);
-    if (julia_row == kJuliaCenterY)
+    draw_julia_tile_row(julia_row);
+    if (julia_row + kJuliaTileStep >= kJuliaCenterY)
     {
         julia_row = kJuliaFirstRow;
         update_julia_parameter();
     }
     else
     {
-        ++julia_row;
+        julia_row = static_cast<uint16_t>(julia_row + kJuliaTileStep);
     }
 }
 

@@ -14,6 +14,8 @@ ECP5_FMAX_SEED ?= 1
 ICE40_FMAX_SEED ?= 1
 ECPPACK ?= ecppack
 QUARTUS_SH ?= quartus_sh
+QUARTUS_CDB ?= $(patsubst %quartus_sh,%quartus_cdb,$(QUARTUS_SH))
+QUARTUS_ASM ?= $(patsubst %quartus_sh,%quartus_asm,$(QUARTUS_SH))
 QUARTUS_FLOW_ARGS ?=
 # External tools use the same numeric job count as the invoking Make. A plain
 # `make` is single-threaded; use `make -j16 ...` to give Make, LLVM, and
@@ -680,7 +682,7 @@ $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py
 icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --fast-dsp --fb-window --mhz 50 --max-insns 0
+	$(RISCC_SIM) $< --uart --fast-dsp --fb-icepi --fb-window --mhz 50 --max-insns 0
 
 icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@mkdir -p build/icepi_zero
@@ -749,6 +751,7 @@ ATUM_PROGRAM ?= $(DEMO_PROGRAM)
 ATUM_CPP_OBJECT := $(ATUM_BUILD)/demo.o
 ATUM_ELF := $(ATUM_BUILD)/demo.elf
 ATUM_MEMH := $(ATUM_BUILD)/mem/demo.memh
+ATUM_MIF := $(ATUM_BUILD)/mem/demo.mif
 ATUM_RTLSIM := $(ATUM_BUILD)/rtlsim/Vatum_a3_nano_soc_sim
 ATUM_QUARTUS_BUILD := $(ATUM_BUILD)/quartus
 ATUM_QUARTUS_QPF := $(ATUM_QUARTUS_BUILD)/atum_a3_nano.qpf
@@ -775,12 +778,22 @@ ATUM_PROJECT_FILES := \
   $(ATUM_DIR)/atum_a3_nano.qsf \
   $(ATUM_DIR)/atum_a3_nano.sdc \
   $(ATUM_HW_RTL)
+ATUM_FULL_DEPS := \
+  $(ATUM_PROJECT_FILES) \
+  $(ATUM_QUARTUS_QPF) \
+  $(ATUM_QUARTUS_QSF) \
+  $(RISCC_RF_RTL) \
+  Makefile
 
 $(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py Makefile
 	@mkdir -p $(@D)
 	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 12288
 
-atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH)
+$(ATUM_MIF): $(ATUM_BIN) tools/bin_to_memh.py Makefile
+	@mkdir -p $(@D)
+	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 12288 --format mif
+
+atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH) $(ATUM_MIF)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
 	$(RISCC_SIM) $< --uart --faster --fb-window --fb-scale 4 --mhz 225 --max-insns 0
@@ -804,19 +817,29 @@ $(ATUM_QUARTUS_QSF): $(ATUM_DIR)/atum_a3_nano.qsf
 	@mkdir -p $(@D)
 	cp $< $@
 
-$(ATUM_QUARTUS_MEM): $(ATUM_MEMH) | $(ATUM_QUARTUS_QSF)
+$(ATUM_QUARTUS_MEM): $(ATUM_MEMH) $(ATUM_MIF) | $(ATUM_QUARTUS_QSF)
 	ln -sfn ../mem $@
 
-$(ATUM_SOF): $(ATUM_MEMH) $(ATUM_PROJECT_FILES) $(ATUM_QUARTUS_QPF) $(ATUM_QUARTUS_QSF) $(ATUM_QUARTUS_MEM) $(RISCC_RF_RTL) Makefile
-	# Quartus Pro 26.1's incremental flow may stop after synthesis when only a
-	# source dependency changed.  Explicit stage bounds ensure this target never
-	# reports an older .sof as current.
-	@cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
-	  atum_a3_nano -start dni_ipgenerate -end dni_analysis_and_synthesis
-	@cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
-	  atum_a3_nano -start fitter_plan -end sta_signoff
-	@cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
-	  atum_a3_nano -start assembler
+$(ATUM_SOF): $(ATUM_MEMH) $(ATUM_MIF) $(ATUM_FULL_DEPS) $(ATUM_QUARTUS_MEM)
+	@atum_stale=0; \
+	for atum_dependency in $(ATUM_FULL_DEPS); do \
+	  if test "$$atum_dependency" -nt "$@"; then atum_stale=1; break; fi; \
+	done; \
+	atum_full=1; \
+	if test -f "$@" && test -d "$(ATUM_QUARTUS_BUILD)/qdb" && test $$atum_stale -eq 0; then \
+	  atum_mif=$$(find $(ATUM_QUARTUS_BUILD)/qdb -path '*/mifs/ram0_top_*.hdl.mif' -type f -print -quit); \
+	  if test -n "$$atum_mif" && cp $(ATUM_MIF) "$$atum_mif" && \
+	    (cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_CDB) --update_mif atum_a3_nano && \
+	      RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_ASM) atum_a3_nano); then atum_full=0; fi; \
+	fi; \
+	if test $$atum_full -ne 0; then \
+	  (cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
+	    atum_a3_nano -start dni_ipgenerate -end dni_analysis_and_synthesis) && \
+	  (cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
+	    atum_a3_nano -start fitter_plan -end sta_signoff) && \
+	  (cd $(ATUM_QUARTUS_BUILD) && RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
+	    atum_a3_nano -start assembler); \
+	fi
 	@test -f $@
 	@printf 'Atum A3 Nano SOF: %s\n' '$@'
 

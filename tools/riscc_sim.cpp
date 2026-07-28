@@ -240,6 +240,7 @@ struct Opts
     uint32_t dump_base = 0;
     uint32_t dump_len = 0;
     bool fb_window = false;
+    bool fb_icepi = false;
     int fb_scale = 2;
     std::string fb_dump_png;
 
@@ -266,6 +267,8 @@ struct Opts
 
 FramebufferLayout framebuffer_layout(const Opts &opts)
 {
+    if (opts.fb_icepi)
+        return {0x4000u, 320, 180};
     if (opts.faster)
         return {0x3000u, 320, 180};
     if (opts.fast_dsp)
@@ -1038,7 +1041,7 @@ void print_usage(const char *prog)
         << "  --width W --max-insns N --mhz N --trace --state --dump WADDR LEN --dump-written\n"
         << "    --mhz also selects the 1 kHz timer clock; without it, ISS uses 50 MHz virtual time\n"
         << "  --uart                    UART console: RX from stdin, TX to stdout\n"
-        << "  --fb-window --fb-scale N --fb-dump-png FILE\n";
+        << "  --fb-window [--fb-icepi] --fb-scale N --fb-dump-png FILE\n";
 }
 
 std::string need_arg(int argc, char **argv, int &i, const std::string &opt)
@@ -1129,6 +1132,10 @@ Opts parse_args(int argc, char **argv)
         else if (opt == "--fb-window")
         {
             opts.fb_window = true;
+        }
+        else if (opt == "--fb-icepi")
+        {
+            opts.fb_icepi = true;
         }
         else if (opt == "--fb-scale")
         {

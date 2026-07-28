@@ -108,7 +108,7 @@ make -j16 test-compiler
 | `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast DSP ISS model with its framebuffer window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |
 | `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Faster DSP ISS model with its framebuffer window. |
-| `make atum-a3-demo` | Builds the Atum A3 Nano demo `.sof`; requires Quartus Pro and does not program hardware. |
+| `make atum-a3-demo` | Builds the Atum A3 Nano demo `.sof`; firmware-only changes update the fitted RAM image and reassemble, while RTL or project changes run the full Quartus flow. Requires Quartus Pro and does not program hardware. |
 
 See the Hardware manual before running FPGA flows or programming a board, and
 the Programming manual before building an application image.

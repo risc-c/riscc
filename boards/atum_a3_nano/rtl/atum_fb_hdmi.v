@@ -141,20 +141,22 @@ module atum_fb_hdmi (
         begin
             case (idx)
             4'h0: palette = 24'h02040a;
-            4'h1: palette = 24'h06112b;
-            4'h2: palette = 24'h0a1f4d;
-            4'h3: palette = 24'h0d3274;
-            4'h4: palette = 24'h10499c;
-            4'h5: palette = 24'h1464c4;
-            4'h6: palette = 24'h1a82e6;
-            4'h7: palette = 24'h25a4ff;
-            4'h8: palette = 24'h45bdff;
-            4'h9: palette = 24'h6dd3ff;
-            4'ha: palette = 24'h98e5ff;
-            4'hb: palette = 24'hbdf1ff;
-            4'hc: palette = 24'hd8f8ff;
-            4'hd: palette = 24'heafcff;
-            4'he: palette = 24'hf6feff;
+            // The blue-to-white ramp is spaced at approximately equal
+            // perceived lightness, preserving dark-band contrast.
+            4'h1: palette = 24'h071535;
+            4'h2: palette = 24'h0a2152;
+            4'h3: palette = 24'h0d2f6e;
+            4'h4: palette = 24'h0f3e88;
+            4'h5: palette = 24'h114da2;
+            4'h6: palette = 24'h135ebb;
+            4'h7: palette = 24'h166fd1;
+            4'h8: palette = 24'h1a82e6;
+            4'h9: palette = 24'h2096f5;
+            4'ha: palette = 24'h2daaff;
+            4'hb: palette = 24'h49bfff;
+            4'hc: palette = 24'h6dd3ff;
+            4'hd: palette = 24'h97e5ff;
+            4'he: palette = 24'hc7f4ff;
             default: palette = 24'hffffff;
             endcase
         end
