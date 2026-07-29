@@ -110,7 +110,7 @@ def main() -> int:
             for op in ("LDW", "STW"):
                 for rd in range(8):
                     for base in range(8):
-                        for disp in range(-128, 128):
+                        for disp in range(-128, 128, 2):
                             operands = [f"r{rd}", f"[r{base} + {disp}]"]
                             emit(f"{op.lower()} {', '.join(operands)}", op, operands)
 

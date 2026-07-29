@@ -430,7 +430,7 @@ def final_label_map(labels: Dict[str, Tuple[str, int]], bases: Dict[str, int]) -
 
 
 def enc_mem_i(store: bool, rd: int, ra: int, imm8: int) -> int:
-    return ((1 if store else 0) << 14) | (rd << 11) | (ra << 8) | imm8
+    return (1 << 14) | (rd << 11) | (ra << 8) | (imm8 & 0xFE) | int(store)
 
 
 def enc_i(rd: int, op: int, imm8: int) -> int:
@@ -507,6 +507,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
             raise AsmError(f"{op} expects [ra] or [ra+simm8]")
         ra = reg(mem[0])
         disp = 0 if len(mem) == 1 else eval_expr(mem[1], labels)
+        if disp & 1:
+            raise AsmError(f"{op} simm must be even")
         imm8 = enc_i8(disp, f"{op} simm8")
         return encode_word(enc_mem_i(op == "STW", rd, ra, imm8))
 

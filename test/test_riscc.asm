@@ -94,20 +94,11 @@ br_nz_ok:
     SUB   r0, r5, r1
     BNEZ  fail
 
-    ; Effective-address alignment: odd base plus odd displacement is valid.
-    LDI16 r3, 0x0301
+    ; Compact word displacements are even signed bytes.
+    LDI16 r3, 0x0300
     LDI16 r1, 0x1357
-    STW   r1, [r3+1]
-    LDW   r2, [r3+1]
-    SUB   r0, r2, r1
-    BNEZ  fail
-    STW   r1, [r3-1]
-    LDW   r2, [r3-1]
-    SUB   r0, r2, r1
-    BNEZ  fail
-    LDI16 r3, 0x0301
-    STW   r1, [r3+127]
-    LDW   r2, [r3+127]
+    STW   r1, [r3+126]
+    LDW   r2, [r3+126]
     SUB   r0, r2, r1
     BNEZ  fail
     LDI16 r3, 0x0380
@@ -309,25 +300,15 @@ br_nz_ok:
     SUB   r0, r5, r1
     BNEZ  fail_late
 
-    ; Word alignment applies to the effective address, not separately to
-    ; base or displacement. Exercise odd+odd and both simm8 boundaries.
-    LDI16 r3, 0x0301        ; odd base + odd positive displacement
+    ; Compact word displacements are even signed bytes.
+    LDI16 r3, 0x0300
     LDI16 r1, 0x1357
-    STW   r1, [r3+1]       ; effective address 0x0302
-    LDW   r2, [r3+1]
-    SUB   r0, r2, r1
-    BNEZ  fail_late
-    STW   r1, [r3-1]       ; odd base + odd negative displacement = 0x0300
-    LDW   r2, [r3-1]
-    SUB   r0, r2, r1
-    BNEZ  fail_late
-    LDI16 r3, 0x0301
-    STW   r1, [r3+127]     ; maximum simm8, effective address 0x0380
-    LDW   r2, [r3+127]
+    STW   r1, [r3+126]
+    LDW   r2, [r3+126]
     SUB   r0, r2, r1
     BNEZ  fail_late
     LDI16 r3, 0x0380
-    STW   r1, [r3-128]     ; minimum simm8, effective address 0x0300
+    STW   r1, [r3-128]
     LDW   r2, [r3-128]
     SUB   r0, r2, r1
     BNEZ  fail_late

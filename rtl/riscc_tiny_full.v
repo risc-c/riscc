@@ -109,17 +109,17 @@ module riscc_tiny #(
     // Instruction fields and decode
     // ------------------------------------------------------------------
     reg [15:0] instr_q;
+    reg        register_format_q;
 
     // Contiguous register-format fields: 11 ddd aaa fffff bbb.
-    wire [1:0] op_class = instr_q[15:14];
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group  = ~op_class[1];                   // 00 LDW / 01 STW
-    wire immediate_group = op_class[1] & ~op_class[0];    // 10 immediate/branch
-    wire register_group  = op_class[1] &  op_class[0];    // 11 register
+    wire imm_mem_group = ~instr_q[15];
+    wire immediate_group = instr_q[15] & ~register_format_q;
+    wire register_group = instr_q[15] & register_format_q;
 
     wire branch_group = immediate_group & (aaa == 3'b111) & ~trap_active;
     // A preempted branch is still not an ALU operation; trap writeback and
@@ -225,8 +225,8 @@ module riscc_tiny #(
                         (jal16_target_phase_q & bbb[0]);
     wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
 
-    wire store_op = (imm_mem_group & op_class[0]) | register_store_op;
-    wire load_op = (imm_mem_group & ~op_class[0]) | indexed_mem_op;
+    wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
+    wire load_op = (imm_mem_group & ~instr_q[14]) | indexed_mem_op;
     wire mem_op = store_op | load_op;
     wire byte_access = register_group & f5[1];
     wire sign_extend_byte = f5[2];
@@ -748,8 +748,10 @@ module riscc_tiny #(
         slice_idx_q <= slice_count_en ? slice_idx_next :
                                        {SLICE_BITS{1'b0}};
 
-        if (in_fetch_capture)
-            instr_q <= mem_rdata;
+        if (in_fetch_capture) begin
+            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            register_format_q <= mem_rdata[14];
+        end
 
         if (in_execute & last_slice)
             jal16_target_phase_q <= long_form_op & ~jal16_target_phase_q &
@@ -779,7 +781,8 @@ module riscc_tiny #(
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
     wire [14:0] tr_pc_i = pc_q[14:0];
-    wire [15:0] tr_ir_i = instr_q;
+    wire [15:0] tr_ir_i =
+        {instr_q[15], register_format_q, instr_q[13:0]};
     wire        tr_ie_i = ie_q;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_dst_reg[3];

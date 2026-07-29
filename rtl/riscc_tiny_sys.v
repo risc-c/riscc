@@ -88,16 +88,16 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     reg [15:0] instr_q;
 
-    // Contiguous register-format fields: 11 ddd aaa fffff bbb.
     wire [1:0] op_class = instr_q[15:14];
+    // Contiguous register-format fields: 11 ddd aaa fffff bbb.
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group  = ~op_class[1];                   // 00 LDW / 01 STW
-    wire immediate_group = op_class[1] & ~op_class[0];    // 10 immediate/branch
-    wire register_group  = op_class[1] &  op_class[0];    // 11 register
+    wire imm_mem_group = ~op_class[1];
+    wire immediate_group = op_class[1] & ~op_class[0];
+    wire register_group = op_class[1] & op_class[0];
 
     wire branch_group = immediate_group & (aaa == 3'b111) & ~trap_active;
     // A preempted branch is still not an ALU operation; trap writeback and
@@ -188,8 +188,8 @@ module riscc_tiny #(
                         jal16_target_phase;
     wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
 
-    wire store_op = (imm_mem_group & op_class[0]) | register_store_op;
-    wire load_op = (imm_mem_group & ~op_class[0]) | indexed_mem_op;
+    wire store_op = (imm_mem_group & instr_q[0]) | register_store_op;
+    wire load_op = (imm_mem_group & ~instr_q[0]) | indexed_mem_op;
     wire load_writeback_op = load_op | ldi16_literal_phase;
     wire mem_op = store_op | load_op;
     wire byte_access = register_group & f5[1];

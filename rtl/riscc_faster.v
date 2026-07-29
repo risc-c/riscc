@@ -65,7 +65,7 @@ module riscc_faster #(
     wire [2:0] d_bbb = d_instr_q[2:0];
 
     wire d_imm_memory = ~d_class[1];
-    wire d_imm_store = d_imm_memory & d_class[0];
+    wire d_imm_store = d_imm_memory & d_instr_q[0];
     wire d_immediate = d_class[1] & ~d_class[0];
     wire d_register = &d_class;
     wire d_branch = d_immediate & (d_aaa == 3'b111);

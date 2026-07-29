@@ -60,6 +60,7 @@ module riscc_tiny16_min #(
     // Stored datapath state and instruction decode
     // ------------------------------------------------------------------
     reg [15:0] instruction_q;
+    reg        register_format_q;
     reg [14:0] pc_q;
     reg [15:0] mdr_q;
     // The byte lane and less-than result have disjoint lifetimes.
@@ -67,10 +68,10 @@ module riscc_tiny16_min #(
     reg        r0_zero_q;
     reg        r0_negative_q;
 
-    wire immediate_store_word = !instruction_q[15] && instruction_q[14];
-    wire immediate_class = instruction_q[15] && !instruction_q[14];
-    wire register_class  = instruction_q[15] && instruction_q[14];
     wire immediate_memory = !instruction_q[15];
+    wire immediate_store_word = immediate_memory && instruction_q[14];
+    wire immediate_class = instruction_q[15] && !register_format_q;
+    wire register_class  = instruction_q[15] && register_format_q;
 
     wire [2:0] rd = instruction_q[13:11];
     wire [2:0] ra = instruction_q[10:8];
@@ -346,8 +347,11 @@ module riscc_tiny16_min #(
             state_q[ST_MDR_WRITEBACK] <=
                 in_load_capture | funnel_left_execute;
 
-            if (in_instruction_capture)
-                instruction_q <= mem_rdata;
+            if (in_instruction_capture) begin
+                instruction_q <=
+                    {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+                register_format_q <= mem_rdata[14];
+            end
 
             if (in_instruction_capture |
                 (in_decode && branch_op && branch_taken) |
@@ -376,7 +380,8 @@ module riscc_tiny16_min #(
         writeback_complete | (in_decode && branch_op) |
         memory_write_cycle | in_jump_commit;
     wire [14:0] tr_pc_i = pc_q;
-    wire [15:0] tr_ir_i = instruction_q;
+    wire [15:0] tr_ir_i =
+        {instruction_q[15], register_format_q, instruction_q[13:0]};
     wire        tr_ie_i = 1'b0;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_write_system_bank;

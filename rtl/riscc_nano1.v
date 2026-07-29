@@ -44,6 +44,8 @@ module riscc_nano1 #(
 
     reg [2:0] state_q;
     reg [15:0] instr_q;
+    // Physical bit 14 is retained while instr_q[14] carries compact S.
+    reg        register_format_q;
     reg [15:0] pc_q;
     reg [15:0] addr_q;
     reg [15:0] operand_b_q;
@@ -67,15 +69,14 @@ module riscc_nano1 #(
     // Instruction fields and deliberately loose nano decode
     // ------------------------------------------------------------------
     // Contiguous register-format fields: 11 ddd aaa fffff bbb.
-    wire [1:0] op_class = instr_q[15:14];
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5  = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group   = ~op_class[1];
-    wire immediate_group =  op_class[1] & ~op_class[0];
-    wire register_group  =  op_class[1] &  op_class[0];
+    wire imm_mem_group   = ~instr_q[15];
+    wire immediate_group = instr_q[15] & ~register_format_q;
+    wire register_group  =  instr_q[15] &  register_format_q;
 
     wire branch_group = immediate_group & (aaa == 3'b111);
     wire immediate_write_op = immediate_group & ~branch_group;
@@ -108,7 +109,7 @@ module riscc_nano1 #(
     // Memory decode and serial read stream
     // ------------------------------------------------------------------
     wire mem_op = imm_mem_group | register_memory_op;
-    wire mem_store_decode = imm_mem_group ? op_class[0] : f5[0];
+    wire mem_store_decode = imm_mem_group ? instr_q[14] : f5[0];
     wire store_op = mem_op & mem_store_decode;
     wire load_op = mem_op & ~mem_store_decode;
     wire byte_access = register_memory_op & f5[1];
@@ -293,8 +294,11 @@ module riscc_nano1 #(
 
         bit_idx_q <= serial_active ? bit_idx_next : 4'd0;
 
-        if (in_fetch_capture)
-            instr_q <= mem_rdata;
+        if (in_fetch_capture) begin
+            // Reuse the original high store-decode bit for compact S.
+            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            register_format_q <= mem_rdata[14];
+        end
 
         if (rst) begin
             state_q <= ST_FETCH_WAIT;
@@ -317,7 +321,9 @@ module riscc_nano1 #(
     localparam integer RISCC_TRACE_W = 1;
     wire        tr_commit_i = in_execute & last_bit;
     wire [14:0] tr_pc_i = pc_q[14:0];
-    wire [15:0] tr_ir_i = instr_q;
+    wire [15:0] tr_ir_i = {instr_q[15],
+                            instr_q[15] ? register_format_q : 1'b1,
+                            instr_q[13:0]};
     wire        tr_ie_i = 1'b0;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = 1'b0;

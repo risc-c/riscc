@@ -17,7 +17,7 @@ Author: Arto Vuori <avuori@iki.fi>
 ## 1. RISC-C Base Integer Instruction Set
 
 This chapter describes the RISC-C base integer ISA. The `min` profile defines
-the base instruction set; section 7 summarizes the profile differences.
+the base instruction set; section 8 summarizes the profile differences.
 
 The base ISA uses 16-bit instruction halfwords. Most instructions occupy one
 halfword; the long forms defined in section 5 occupy two. Instruction
@@ -81,8 +81,8 @@ bits of that halfword select one of four major opcode spaces:
 
 | bits `[15:14]` | format bits `[15:0]` | instruction class |
 |---|---|---|
-| `00` | `00 ddd aaa iiiiiiii` | immediate-offset data-word load |
-| `01` | `01 ddd aaa iiiiiiii` | immediate-offset data-word store |
+| `00` | `00 ddd aaa iiiiiiii` | reserved for future ISA extension |
+| `01` | `01 ddd aaa iiiiiii S` | compact immediate-offset data-word load or store |
 | `10` | `10 ddd ooo iiiiiiii` | immediate or branch instruction |
 | `11` | `11 ddd aaa fffff bbb` | register-format instruction |
 
@@ -91,7 +91,7 @@ When present, the named fields retain their positions across formats: `ddd`,
 `iiiiiiii` encodes an immediate value. An instruction may give a field a
 different meaning.
 
-Every base instruction is naturally aligned to two bytes.
+Every instruction is naturally aligned to two bytes.
 
 Bits are numbered from least significant to most significant: bit 0 is the
 least-significant bit of a byte or data word, and bit 15 is the
@@ -176,21 +176,25 @@ accesses have no alignment requirement.
 
 ### 2.3 Load and Store Instructions
 
-The immediate-offset format is:
+The compact immediate-offset word format is:
 
 ```text
-00 ddd aaa iiiiiiii    LDW
-01 ddd aaa iiiiiiii    STW
+01 ddd aaa iiiiiii S
 ```
 
-`aaa` selects `ra`; `simm8` is sign-extended before address calculation.
-For `LDW`, `ddd` selects destination register `rd`; for `STW`, it selects
-source register `rs`.
+`aaa` selects `ra`; `S` selects the access direction. The displacement is:
 
-| opcode | instruction | operation |
+```text
+RC16: simm = sx8({ i[7:1], 0 })
+RC32: simm = sx9({ i[1], i[7:2], 0, 0 })
+```
+
+For `LDW`, `ddd` selects `rd`; for `STW`, it selects `rs`.
+
+| encoding | instruction | operation |
 |---|---|---|
-| `00` | `LDW rd, [ra+simm8]` | `R[d] ← MXLEN[R[a] + sx8(simm8)]` |
-| `01` | `STW rs, [ra+simm8]` | `MXLEN[R[a] + sx8(simm8)] ← R[s]` |
+| `01`, `S=0` | `LDW rd, [ra+simm]` | `R[d] ← MXLEN[R[a] + simm]` |
+| `01`, `S=1` | `STW rs, [ra+simm]` | `MXLEN[R[a] + simm] ← R[s]` |
 
 The register-format is:
 
@@ -212,11 +216,11 @@ instruction defines it as a sub-operation.
 | `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
 
 `LDW` reads one XLEN-bit data word at the effective address formed by adding
-the sign-extended displacement to `ra`. It is subject to the data-word
+the compact signed displacement to `ra`. It is subject to the data-word
 alignment requirement in section 2.2.
 
 `STW` writes the complete XLEN-bit value of `rs` at the effective address
-formed by adding the sign-extended displacement to `ra`. It is subject to the
+formed by adding the compact signed displacement to `ra`. It is subject to the
 data-word alignment requirement in section 2.2.
 
 `LDWX` is subject to the data-word alignment requirement in section 2.2.
@@ -333,11 +337,11 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `01_101` | `SARI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
 | `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
 | `01_111` | `SHLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
-| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 4.1 |
+| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 7.1 |
 | `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
 | `10_010` | `FSR1 rd, ra, rb` | `R[d] ← (R[a] >> 1) \| (R[b][0] << (XLEN-1))` |
 | `10_011` | `FSL1 rd, ra, rb` | `R[d] ← (R[a] << 1) \| R[b][XLEN-1]` |
-| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 4.1 |
+| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 7.1 |
 | `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
@@ -375,47 +379,6 @@ low XLEN-bit portion is the same for signed and unsigned multiplication.
 `min` profile, `SHRI` and `SARI` always shift by one and their `bbb` field
 must be zero; `SHLI` is undefined. `MUL` is available only in the `full`
 profile.
-
-### 4.1 Multiply-Divide Extension
-
-The optional `mdu` extension adds two unsigned primitives in otherwise
-reserved three-register slots:
-
-```text
-MULHU  rl, rh, rb
-DIVU rr, rq, rb
-```
-
-`MULHU` is the paired unsigned multiply. It uses `ddd = rl`, `aaa = rh`, and
-`bbb = rb`; using the input register values:
-
-```text
-P     = R[rh] * R[rb]
-R[rl] ← P[XLEN-1:0]
-R[rh] ← P[2*XLEN-1:XLEN]
-```
-
-`rl` and `rh` must be different registers. `rb` may name either input/output
-register: both multiplier operands are read before either result is written.
-Thus the extension needs no separate low-half multiply instruction; regular
-`MUL` remains the non-destructive low-half operation supplied by `full`.
-
-`DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
-pair `rr:rq` as a two-XLEN-bit unsigned partial dividend. More precisely,
-using the input register values:
-
-```text
-N       = (R[rr] << XLEN) | R[rq]
-divisor = R[rb]
-R[rq]   ← N / divisor
-R[rr]   ← N % divisor
-```
-
-`rr`, `rq`, and `rb` must name different registers. `divisor` must be
-nonzero, and `R[rr] < divisor` is required on entry; this guarantees that the
-quotient fits in XLEN bits. If any of these requirements is not met, the result
-is undefined. These operand restrictions are an exception to the general
-source-before-destination ordering rule.
 
 ## 5. Control Transfer and S-Register Instructions
 
@@ -485,9 +448,10 @@ not taken between its halfwords.
 `target`. Unless `Sd` is `S0`, it writes `pc + 2` to `Sd`, then transfers
 control to `target`. `JMP16 target` is the alias `JAL16 S0, target`.
 
-## 6. Interrupts (`sys` Profile)
+## 6. Interrupts
 
-The `sys` profile defines interrupt entry and return. A platform may provide
+Interrupts are optional and are implemented by some profiles. A platform may
+provide
 one or more interrupt sources and may use an interrupt controller to select
 an interrupt vector. Interrupts are sampled between completed architectural
 instructions, using the value of `IE` resulting from the preceding
@@ -516,21 +480,62 @@ interrupt may be taken before the returned-to instruction executes.
 Reset-vector contents and interrupt synchronization are platform
 responsibilities.
 
-## 7. Profiles
+## 7. Multiply-Divide Instructions Extension
+
+The following optional instructions occupy otherwise reserved three-register
+slots:
+
+```text
+MULHU  rl, rh, rb
+DIVU   rr, rq, rb
+```
+
+`MULHU` is the paired unsigned multiply. It uses `ddd = rl`, `aaa = rh`, and
+`bbb = rb`; using the input register values:
+
+```text
+P     = R[rh] * R[rb]
+R[rl] ← P[XLEN-1:0]
+R[rh] ← P[2*XLEN-1:XLEN]
+```
+
+`rl` and `rh` must be different registers. `rb` may name either input/output
+register: both multiplier operands are read before either result is written.
+Thus the extension needs no separate low-half multiply instruction; regular
+`MUL` remains the non-destructive low-half operation supplied by `full`.
+
+`DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
+pair `rr:rq` as a two-XLEN-bit unsigned partial dividend. More precisely,
+using the input register values:
+
+```text
+N       = (R[rr] << XLEN) | R[rq]
+divisor = R[rb]
+R[rq]   ← N / divisor
+R[rr]   ← N % divisor
+```
+
+`rr`, `rq`, and `rb` must name different registers. `divisor` must be
+nonzero, and `R[rr] < divisor` is required on entry; this guarantees that the
+quotient fits in XLEN bits. If any of these requirements is not met, the result
+is undefined. These operand restrictions are an exception to the general
+source-before-destination ordering rule.
+
+## 8. Profiles
 
 `min`, `sys`, and `full` are ordered ISA subsets: a program using only a
 smaller profile's defined instructions is valid on a larger profile. Each
 mainline profile is available in RC16 and RC32 configurations. `nano` is an
 RC16-only subset profile.
 
-### 7.1 Instruction Availability
+### 8.1 Instruction Availability
 
 An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 
 | instruction | `RC32` | `min` | `sys` | `full` | `nano†` |
 |---|:---:|:---:|:---:|:---:|:---:|
-| `LDW rd, [ra+simm8]` |  | X | X | X | X |
-| `STW rs, [ra+simm8]` |  | X | X | X | X |
+| `LDW rd, [ra+simm]` |  | X | X | X | X |
+| `STW rs, [ra+simm]` |  | X | X | X | X |
 | `LDWX rd, [ra+rb]` |  | X | X | X | X |
 | `LDH rd, [ra+rb]` | X | X | X | X |  |
 | `LDHS rd, [ra+rb]` | X | X | X | X |  |
@@ -565,8 +570,8 @@ An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 | `SARI rd, ra, 1` |  | X | X | X | X |
 | `SARI rd, ra, 2..8` |  |  | X | X |  |
 | `MUL rd, ra, rb` |  |  |  | X |  |
-| `MULHU rl, rh, rb` |  |  |  |  |  |
-| `DIVU rr, rq, rb` |  |  |  |  |  |
+| `MULHU rl, rh, rb` § |  |  |  |  |  |
+| `DIVU rr, rq, rb` § |  |  |  |  |  |
 | `RET Sa` |  | X | X | X |  |
 | `JAL Sd, ra` |  | X | X | X |  |
 | `LDI16 rd, imm16` |  |  | X | X |  |
@@ -578,18 +583,18 @@ An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 | `CLI` |  |  | X | X |  |
 | `STI` |  |  | X | X |  |
 
-† Nano is defined in section 8.
+† Nano is defined in section 9.
 
 ‡ `JAL rd, ra` is Nano's general-register link encoding; its semantics are
-defined in section 8.
+defined in section 9.
 
-The `mdu` extension is optional. It is not required by the `min`, `sys`,
-`full`, or `nano` profile.
+§ `MULHU` and `DIVU` are optional extension instructions; neither is required
+by any profile.
 
 An unaligned halfword or data-word access has undefined behavior unless
 another architectural extension defines it.
 
-## 8. Nano Profile
+## 9. Nano Profile
 
 Nano is a separate reduced RISC-C profile, shown as `nano` in the profile
 table. Its encodings and architectural state differ from the ordered `min`,
@@ -612,7 +617,7 @@ semantics except where this section defines otherwise. An empty `nano` cell
 denotes an undefined Nano encoding; software must not depend on any
 implementation alias.
 
-## 9. Notation
+## 10. Notation
 
 | symbol | meaning |
 |---|---|

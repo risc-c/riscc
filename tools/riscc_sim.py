@@ -286,12 +286,14 @@ class Sim:
         f5 = (ir >> 3) & 0x1F
         bbb = ir & 7
         imm8 = ir & 0xFF
-
-        if opc == 0:                                    # LDW rd, [ra+simm8]
-            self.r[ddd] = self.ldw((self.r[aaa] + sx8(imm8)) & 0xFFFF)
-        elif opc == 1:                                  # STW rd, [ra+simm8]
-            addr = (self.r[aaa] + sx8(imm8)) & 0xFFFF
-            self.stw(addr, self.r[ddd])
+        if opc == 0:
+            raise Undefined("00 prefix is reserved")
+        elif opc == 1:
+            addr = (self.r[aaa] + sx8(imm8 & 0xFE)) & 0xFFFF
+            if ir & 1:
+                self.stw(addr, self.r[ddd])
+            else:
+                self.r[ddd] = self.ldw(addr)
         elif opc == 2:
             if aaa == 0:                                # LDI
                 self.r[ddd] = imm8

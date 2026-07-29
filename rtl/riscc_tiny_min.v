@@ -61,16 +61,16 @@ module riscc_tiny_min #(
     // Decode
     // ------------------------------------------------------------------
     reg [15:0] instr_q;
+    reg        register_format_q;
 
-    wire [1:0] op_class = instr_q[15:14];
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group = ~op_class[1];
-    wire immediate_group = op_class[1] & ~op_class[0];
-    wire register_group = op_class[1] & op_class[0];
+    wire imm_mem_group = ~instr_q[15];
+    wire immediate_group = instr_q[15] & ~register_format_q;
+    wire register_group = instr_q[15] & register_format_q;
 
     wire branch_group = immediate_group & (aaa == 3'b111);
     wire immediate_alu_op = immediate_group & ~branch_group;
@@ -110,8 +110,8 @@ module riscc_tiny_min #(
     wire link_context = system_op & ~bbb[1] & bbb[0];
     wire register_target_op = system_op & ~bbb[1];
 
-    wire store_op = (imm_mem_group & op_class[0]) | register_store_op;
-    wire load_op = (imm_mem_group & ~op_class[0]) | indexed_mem_op;
+    wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
+    wire load_op = (imm_mem_group & ~instr_q[14]) | indexed_mem_op;
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
@@ -407,8 +407,10 @@ module riscc_tiny_min #(
         slice_idx_q <= slice_count_en ?
             slice_idx_next : {SLICE_BITS{1'b0}};
 
-        if (in_fetch_capture)
-            instr_q <= mem_rdata;
+        if (in_fetch_capture) begin
+            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            register_format_q <= mem_rdata[14];
+        end
     end
 
     assign mem_addr = address_stream_q[15:1];
@@ -424,7 +426,8 @@ module riscc_tiny_min #(
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
     wire [14:0] tr_pc_i = pc_q[14:0];
-    wire [15:0] tr_ir_i = instr_q;
+    wire [15:0] tr_ir_i =
+        {instr_q[15], register_format_q, instr_q[13:0]};
     wire tr_ie_i = 1'b0;
     wire tr_rf_we_i = rf_we;
     wire tr_rf_bank_i = rf_dst_reg[3];

@@ -511,9 +511,12 @@ class NanoGen:
         return "\n".join(head + body + tail) + "\n"
 
 
-def assemble(asm_path, bin_path):
-    subprocess.run([sys.executable, os.path.join(HERE, "riscc_asm.py"),
-                    asm_path, "-o", bin_path], check=True,
+def assemble(asm_path, bin_path, profile=None):
+    cmd = [sys.executable, os.path.join(HERE, "riscc_asm.py")]
+    if profile is not None:
+        cmd += ["--profile", profile]
+    cmd += [asm_path, "-o", bin_path]
+    subprocess.run(cmd, check=True,
                    stdout=subprocess.DEVNULL)
 
 
@@ -580,7 +583,7 @@ def make_tiny_case(seed, config, outdir):
     stem = os.path.join(outdir, "fuzz_%s_%d" % (config, seed))
     with open(stem + "_probe.asm", "w") as f:
         f.write(g.emit(None))
-    assemble(stem + "_probe.asm", stem + "_probe.bin")
+    assemble(stem + "_probe.asm", stem + "_probe.bin", config)
     sim = tiny_state(stem + "_probe.bin", config)
     if sim["outcome"] != "DONE":
         raise RuntimeError("probe did not finish (seed %d)" % seed)
@@ -595,7 +598,7 @@ def make_tiny_case(seed, config, outdir):
     g2 = Gen(seed, config)
     with open(stem + ".asm", "w") as f:
         f.write(g2.emit(expect))
-    assemble(stem + ".asm", stem + ".bin")
+    assemble(stem + ".asm", stem + ".bin", config)
     chk = tiny_state(stem + ".bin", config, dump_window=False)
     if chk["outcome"] != "DONE" or chk["result"] != 0x600D:
         raise RuntimeError("self-check failed under ISS (seed %d, result 0x%04X)"
@@ -608,7 +611,7 @@ def make_nano_case(seed, config, outdir):
     stem = os.path.join(outdir, "fuzz_nano_%s_%d" % (config, seed))
     with open(stem + "_probe.asm", "w") as f:
         f.write(g.emit(None))
-    assemble(stem + "_probe.asm", stem + "_probe.bin")
+    assemble(stem + "_probe.asm", stem + "_probe.bin", "nano")
     sim = nano_state(stem + "_probe.bin", config)
     if sim["outcome"] != "DONE":
         raise RuntimeError("nano probe did not finish (seed %d)" % seed)
@@ -621,7 +624,7 @@ def make_nano_case(seed, config, outdir):
     g2 = NanoGen(seed, config)
     with open(stem + ".asm", "w") as f:
         f.write(g2.emit(expect))
-    assemble(stem + ".asm", stem + ".bin")
+    assemble(stem + ".asm", stem + ".bin", "nano")
     chk = nano_state(stem + ".bin", config, dump_window=False)
     if chk["outcome"] != "DONE" or chk["result"] != 0x600D:
         raise RuntimeError("nano self-check failed under ISS (seed %d, result 0x%04X)"

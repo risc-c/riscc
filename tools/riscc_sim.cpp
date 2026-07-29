@@ -563,17 +563,24 @@ struct Sim
         uint16_t func = (ir >> 3) & 0x1f;
         uint16_t rb = ir & 7;
         uint8_t imm8 = static_cast<uint8_t>(ir);
-
         if (opcode == 0)
         {
-            r[rd] = load_word(static_cast<uint16_t>(r[ra] + sign_extend_8(imm8)));
-            instr_cycles = cycle.ldw_imm;
+            throw std::runtime_error("00 prefix is reserved");
         }
         else if (opcode == 1)
         {
-            uint16_t addr = static_cast<uint16_t>(r[ra] + sign_extend_8(imm8));
-            store_word(addr, r[rd]);
-            instr_cycles = cycle.stw_imm;
+            uint16_t addr = static_cast<uint16_t>(
+                r[ra] + sign_extend_8(static_cast<uint8_t>(imm8 & 0xfe)));
+            if (ir & 1)
+            {
+                store_word(addr, r[rd]);
+                instr_cycles = cycle.stw_imm;
+            }
+            else
+            {
+                r[rd] = load_word(addr);
+                instr_cycles = cycle.ldw_imm;
+            }
         }
         else if (opcode == 2)
         {

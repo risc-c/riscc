@@ -86,7 +86,7 @@ module riscc_fast #(
     wire [2:0] x_bbb = x_instr_q[2:0];
 
     wire x_imm_memory = ~x_class[1];
-    wire x_imm_store = x_imm_memory & x_class[0];
+    wire x_imm_store = x_imm_memory & x_instr_q[0];
     wire x_immediate = x_class[1] & ~x_class[0];
     wire x_register = &x_class;
     wire x_branch = x_immediate & (x_aaa == 3'b111);

@@ -48,6 +48,7 @@ module riscc_tiny16 #(
     (* fsm_encoding = "none" *) reg [14:1] state_q;
 
     reg [15:0] instruction_q;
+    reg        register_format_q;
     reg [14:0] pc_q;        // 15-bit word address
     reg [15:0] mdr_q;
     reg        funnel_bit_q;
@@ -76,10 +77,10 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // ST_INSTRUCTION_CAPTURE latches the instruction; ST_DECODE consumes it.
     // The extra state avoids a mem_rdata/instruction mux across the decoder.
-    wire immediate_store_word = !instruction_q[15] && instruction_q[14];
-    wire immediate_class = instruction_q[15] && !instruction_q[14];
-    wire register_class  = instruction_q[15] && instruction_q[14];
     wire immediate_memory = !instruction_q[15];
+    wire immediate_store_word = immediate_memory && instruction_q[14];
+    wire immediate_class = instruction_q[15] && !register_format_q;
+    wire register_class  = instruction_q[15] && register_format_q;
 
     wire [2:0] rd = instruction_q[13:11];
     wire [2:0] ra = instruction_q[10:8];
@@ -443,7 +444,9 @@ module riscc_tiny16 #(
 
             // Capture the next instruction after its synchronous read.
             if (in_instruction_capture) begin
-                instruction_q <= mem_rdata;
+                instruction_q <=
+                    {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+                register_format_q <= mem_rdata[14];
             end
 
             // PC updates are deliberately separate: IRQ entry has priority.
@@ -522,7 +525,9 @@ module riscc_tiny16 #(
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry;
     wire [14:0] tr_pc_i = pc_q;
-    wire [15:0] tr_ir_i = in_irq_entry ? mem_rdata : instruction_q;
+    wire [15:0] tr_instruction =
+        {instruction_q[15], register_format_q, instruction_q[13:0]};
+    wire [15:0] tr_ir_i = in_irq_entry ? mem_rdata : tr_instruction;
     wire        tr_ie_i = interrupt_enable_q;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_write_system_bank;
