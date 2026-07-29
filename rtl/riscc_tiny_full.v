@@ -48,9 +48,21 @@ module riscc_tiny #(
                                                (W == 2) ? 3'd3 : 3'd1;
     localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 : 3'd2;
     localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd5 : 3'd6;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd7 : 3'd5;
-    localparam [2:0] ST_INIT          = 3'd4;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 : 3'd7;
+    localparam [2:0] ST_MEM_XFER      = (W == 1) ?
+`ifdef RISCC_ECP5_BLOCK_RF
+                                                        3'd6 :
+`else
+                                                        3'd7 :
+`endif
+                                                        3'd5;
+    localparam [2:0] ST_INIT          = (W == 4) ? 3'd7 : 3'd4;
+    localparam [2:0] ST_INIT2         = (W == 1) ?
+`ifdef RISCC_ECP5_BLOCK_RF
+                                                        3'd7 :
+`else
+                                                        3'd6 :
+`endif
+                                               (W == 4) ? 3'd4 : 3'd7;
 `else
     localparam [2:0] ST_FETCH_WAIT    = 3'd0;
     localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd2 :
@@ -58,8 +70,9 @@ module riscc_tiny #(
                                                         3'd1;
     localparam [2:0] ST_DECODE        = (W == 1) ? 3'd3 :
                                                (W == 2) ? 3'd2 :
-                                                        3'd3;
-    localparam [2:0] ST_MEM_WAIT      = (W <= 2) ? 3'd1 : 3'd2;
+                                               (W == 4) ? 3'd2 : 3'd3;
+    localparam [2:0] ST_MEM_WAIT      = (W <= 2) ? 3'd1 :
+                                               (W == 4) ? 3'd3 : 3'd2;
     localparam [2:0] ST_EXECUTE       = (W <= 2) ? 3'd5 :
                                                (W == 4) ? 3'd7 : 3'd6;
     // /2 packs its transfer and second-init states more efficiently with
@@ -119,7 +132,7 @@ module riscc_tiny #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-    wire jal16_op = system_op & bbb[2] & ~bbb[1] & bbb[0];
+    wire long_form_op = system_op & bbb[2] & ~bbb[1];
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_00 = ~f5[4] & ~f5[3];
@@ -199,12 +212,18 @@ module riscc_tiny #(
                                  ((W == 2) || (W == 8)) ? 1 : 2;
 `endif
     wire control_ie_value = ddd[CONTROL_IE_BIT];
-    wire return_sets_ie = return_op & control_ie_value;
+`ifdef RISCC_ECP5
+    wire return_sets_ie = return_op & control_ie_value & ~bbb[2];
+`else
+    wire return_sets_ie = return_op & control_ie_value &
+                          ((W == 1) ? f5[1] : ~bbb[2]);
+`endif
     wire return_op = system_op & ~bbb[1] & ~bbb[0];
     wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire link_context = register_jal_op | jal16_target_phase_q;
-    wire register_target_op = system_op & ~bbb[1] & ~(bbb[2] & bbb[0]);
+    wire link_context = register_jal_op |
+                        (jal16_target_phase_q & bbb[0]);
+    wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
 
     wire store_op = (imm_mem_group & op_class[0]) | register_store_op;
     wire load_op = (imm_mem_group & ~op_class[0]) | indexed_mem_op;
@@ -280,7 +299,7 @@ module riscc_tiny #(
     // bbb[0] is the bank-select bit: 0 reads S[aaa], 1 writes S[ddd]
     // (links share MTS's write path; CLI/STI have no RF traffic).
     wire src_system_bank = system_op & ~bbb[0];
-    wire dst_system_bank = system_op &  bbb[0];
+    wire dst_system_bank = system_op & bbb[0];
     wire [3:0] rf_src_reg = {src_system_bank, immediate_group ? ddd : aaa};
     wire [2:0] rf_dst_low = ddd & {3{~(trap_active | cmpi_op)}};
     wire [3:0] rf_dst_reg = {trap_active | dst_system_bank, rf_dst_low};
@@ -311,6 +330,7 @@ module riscc_tiny #(
         byte_lane_offset;
 
     wire writes_rd = immediate_alu_op | register_alu_op | load_op |
+                     (jal16_target_phase_q & ~bbb[0]) |
                      shift_writeback_op | multiply_op | system_move_op |
                      (link_dest_nonzero & link_context);
     wire rf_we = in_execute & (trap_active | writes_rd);
@@ -590,7 +610,8 @@ module riscc_tiny #(
     wire [W-1:0] irq_pc_slice = irq_pc_word[W-1:0];
     wire [W-1:0] next_pc_slice =
         trap_active ? irq_pc_slice :
-        (pc_from_register | jal16_target_phase_q) ? data_stream_q[W-1:0] :
+        (pc_from_register | (jal16_target_phase_q & bbb[0])) ?
+                                                data_stream_q[W-1:0] :
                                                  pc_sum;
 
     always @(posedge clk)
@@ -606,8 +627,9 @@ module riscc_tiny #(
          (slice_idx_q[SLICE_BITS-1] ^ memory_lane_q)) ?
             {W{load_fill_q}} : data_stream_q[W-1:0];
     assign rf_wdata =
-        (trap_active | (system_op & ~bbb[1])) ? link_slice :
-        load_op ? load_slice :
+        (trap_active | register_target_op |
+         (jal16_target_phase_q & bbb[0])) ? link_slice :
+        (load_op | (jal16_target_phase_q & ~bbb[0])) ? load_slice :
         shift_writeback_op ? shift_result_slice :
         alu_result;  // MUL passes write the sum
 
@@ -709,7 +731,7 @@ module riscc_tiny #(
                 if (last_slice & ~repeat_exec)
                     // A first-word JAL16 fetches its target through
                     // MEM_WAIT/MEM_XFER; address_stream_q already holds pc_q.
-                    state_q <= (jal16_op & ~jal16_target_phase_q &
+                    state_q <= (long_form_op & ~jal16_target_phase_q &
                                 ~trap_active) ?
                                ST_MEM_WAIT : ST_FETCH_WAIT;
         endcase
@@ -730,7 +752,7 @@ module riscc_tiny #(
             instr_q <= mem_rdata;
 
         if (in_execute & last_slice)
-            jal16_target_phase_q <= jal16_op & ~jal16_target_phase_q &
+            jal16_target_phase_q <= long_form_op & ~jal16_target_phase_q &
                                   ~trap_active;
         if (rst)
             jal16_target_phase_q <= 1'b0;
@@ -752,7 +774,8 @@ module riscc_tiny #(
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
     wire tr_commit_i = in_execute & last_slice & ~repeat_exec &
-                       ~(jal16_op & ~jal16_target_phase_q & ~trap_active);
+                       ~(long_form_op & ~jal16_target_phase_q &
+                         ~trap_active);
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
     wire [14:0] tr_pc_i = pc_q[14:0];

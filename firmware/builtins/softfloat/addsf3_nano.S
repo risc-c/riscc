@@ -25,7 +25,7 @@ __addsf3:
         STW     r2, [r7 - 8]           /* left sign */
         STW     r4, [r7 - 6]           /* right sign */
 
-        LDI16   r5, 0x7f80
+        LI      r5, 0x7f80
         AND     r6, r2, r5
         MOV     r0, r6
         BNEZ    .Lleft_normal

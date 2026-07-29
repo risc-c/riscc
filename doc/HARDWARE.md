@@ -65,8 +65,8 @@ it omits the mainline S-register/system paths.
 
 All RISC-C/16 sources use one-hot multi-cycle control, synchronous unified
 memory, and a shared MDR stage for second operands, loads, and byte lanes.
-The Sys and Full sources also use that path for `JAL16`; Full adds the
-multiply machinery.
+The Sys and Full sources also use that path for the following halfword of
+`JAL16` and `LDI16`; Full adds the multiply machinery.
 
 ![RISC-C/16 microarchitecture](riscc_tiny16_microarch.svg)
 
@@ -83,9 +83,12 @@ synchronous EBR reads.
 ![RISC-C/fast pipeline](riscc_fast_pipeline.svg)
 
 Faster is a separate three-stage IF/Decode/Execute design for Agilex 3. It
-uses two synchronous MLAB register-file replicas and no bypass network; RAW
-dependencies interlock in Decode. Its default multiplier is a registered DSP
-block, and `RISCC_FASTER_SOFT_MUL` substitutes iterative ALM logic.
+uses two synchronous MLAB register-file replicas with an explicit write-edge
+bypass, so a dependent instruction can issue as its producer writes back. Its
+default multiplier is a registered DSP block, and `RISCC_FASTER_SOFT_MUL`
+substitutes iterative ALM logic. The DSP build retains the compact binary
+side-state encoding; the soft build lets Quartus choose its state encoding and
+uses a separately factored ALU operand path that maps better in fabric.
 
 ![RISC-C/faster pipeline and Execute ownership states](riscc_faster_pipeline.svg)
 
@@ -100,7 +103,9 @@ inferred MLAB RF, while Faster uses two MLAB replicas and a registered DSP.
 Build profiles are selected at build time. Tiny target names use
 `<verb>-<width>-<profile>` for widths `1`, `2`, `4`, `8`, and `16`; Nano uses
 `<verb>-nano`. `full` includes `sys`; Fast and Faster have their own targets.
-Examples: `make test-16-sys`, `make area-2-min`, and `make fmax-8-full`.
+The optional Tiny16 Full cores use the `mulh` and `muldiv` suffixes. Examples:
+`make test-16-sys`, `make test-16-muldiv`, `make area-2-min`, and
+`make fmax-8-full`.
 
 ## 3. Current implementation results
 
@@ -110,43 +115,43 @@ points. Cycle counts follow them as a reference for implementation work.
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 118 | 132 | 161 | 215 | 256 |
-| `sys` | 149 | 163 | 200 | 261 | 282 |
-| `full` | 173 | 193 | 231 | 300 | 334 |
+| `sys` | 151 | 164 | 199 | 261 | 286 |
+| `full` | 173 | 192 | 228 | 299 | 336 |
 | nano | 93 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 480 / 441 |
+| Fast soft / DSP | — | — | — | — | 483 / 449 |
 
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 163 | 172 | 201 | 252 | 281 |
-| `sys` | 192 | 205 | 237 | 293 | 310 |
-| `full` | 213 | 235 | 265 | 331 | 359 |
+| `min` | 162 | 172 | 201 | 252 | 281 |
+| `sys` | 192 | 204 | 238 | 293 | 313 |
+| `full` | 213 | 235 | 267 | 332 | 362 |
 | nano | 114 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 497 / 457 |
+| Fast soft / DSP | — | — | — | — | 498 / 462 |
 
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 123 | 132 | 165 | 230 | 276 |
-| `sys` | 152 | 163 | 202 | 274 | 306 |
-| `full` | 172 | 194 | 230 | 312 | 354 |
+| `min` | 120 | 132 | 165 | 218 | 257 |
+| `sys` | 153 | 164 | 202 | 261 | 289 |
+| `full` | 172 | 195 | 231 | 302 | 339 |
 | nano | 93 | — | — | — | — |
 
 | Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 75.5 | 89.0 | 91.1 | 116.6 | 133.9 |
-| `sys` | 91.0 | 95.7 | 112.0 | 133.0 | 155.4 |
-| `full` | 102.0 | 106.8 | 142.0 | 171.1 | 169.0 |
+| `sys` | 91.0 | 95.7 | 112.0 | 133.0 | 155.0 |
+| `full` | 102.0 | 106.8 | 138.0 | 171.1 | 170.5 |
 | nano | 75.5 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 285.0 / 261.0 |
-| Faster DSP / soft | — | — | — | — | 349.0 / 339.0 |
+| Fast soft / DSP | — | — | — | — | 265.1 / 243.2 |
+| Faster DSP / soft | — | — | — | — | 334.0 / 317.5 |
 
 
 ### Mainline clock rate and throughput
 
 | Fmax (MHz) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 35.07 | 30.19 | 27.32 | 26.13 | 26.19 | 31.56 | 23.17 | 21.27 | — | — |
-| ECP5 LFE5U-25F | 102.12 | 104.42 | 81.04 | 82.24 | 88.64 | 104.07 | 67.82 | 66.13 | — | — |
-| Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 217.34 | 306.37 | 195.73 | 152.46 | 251.45 | 247.71 |
+| iCE40 UP5K | 36.66 | 33.16 | 31.49 | 29.06 | 30.39 | 34.69 | 24.84 | 22.40 | — | — |
+| ECP5 LFE5U-25F | 111.07 | 107.82 | 95.15 | 89.00 | 90.28 | 116.21 | 71.25 | 67.40 | — | — |
+| Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 232.34 | 306.37 | 195.66 | 155.01 | 233.05 | 239.29 |
 
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
 profile; Fast and Faster use `full`.
@@ -159,24 +164,29 @@ benchmarks; the command prints the current Agilex characterization alongside
 them. The Fast Agilex characterization defines
 `RISCC_FAST_AGILEX` to select the equivalent control-selector copy that packs
 best on that family. The Fast and Faster points use a 4 ns target with Quartus
-High Performance Effort. Faster has validation and benchmark targets but no
+High Performance Effort. The Tiny16 Sys and Full area-oriented points use
+Quartus Aggressive Area. Faster has validation and benchmark targets but no
 standalone open-FPGA area/Fmax target.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 0.98 | 1.56 | 2.42 | 3.62 | 6.24 | 1.02 | 12.87 | 14.40 | — | — |
-| ECP5 | 2.86 | 5.38 | 7.17 | 11.39 | 21.13 | 3.35 | 37.67 | 44.78 | — | — |
-| Agilex 3 | 8.58 | 14.67 | 24.44 | 34.32 | 51.81 | 9.88 | 108.72 | 103.24 | 119.62 | 103.86 |
+| iCE40 UP5K | 0.99 | 1.65 | 2.70 | 3.92 | 7.10 | 1.12 | 13.45 | 14.78 | — | — |
+| ECP5 | 3.01 | 5.38 | 8.17 | 12.01 | 21.11 | 3.75 | 38.58 | 44.49 | — | — |
+| Agilex 3 | 8.28 | 14.19 | 23.72 | 33.45 | 54.32 | 9.87 | 105.93 | 102.31 | 132.87 | 117.05 |
 
 | Benchmark MIPS/kLUT4 (kLE on Agilex) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 6.6 | 9.5 | 12.1 | 13.9 | 22.1 | 10.9 | 26.8 | 32.7 | — | — |
-| ECP5 block RF | 18.8 | 33.0 | 35.5 | 41.6 | 69.1 | 36.1 | 75.8 | 98.0 | — | — |
-| ECP5 LUTRAM RF | 14.9 | 26.3 | 30.3 | 38.9 | 68.2 | 29.4 | 75.8 | 98.0 | — | — |
-| Agilex 3 (kLE) | 32.0 | 52.0 | 74.0 | 87.5 | 113.0 | 44.4 | 129.3 | 134.1 | 116.2 | 103.8 |
+| iCE40 UP5K | 6.6 | 10.1 | 13.6 | 15.0 | 24.8 | 12.0 | 27.8 | 32.9 | — | — |
+| ECP5 block RF | 19.7 | 32.8 | 40.4 | 46.0 | 73.0 | 40.3 | 77.5 | 96.3 | — | — |
+| ECP5 LUTRAM RF | 15.7 | 26.4 | 34.3 | 41.0 | 67.4 | 32.9 | 77.5 | 96.3 | — | — |
+| Agilex 3 (kLE) | 30.8 | 50.2 | 71.8 | 85.3 | 118.8 | 44.3 | 135.5 | 142.6 | 134.9 | 125.0 |
 
 The Agilex throughput and efficiency rows are derived from the post-fit area
-and Fmax characterizations above.
+and Fmax characterizations above. The common mainline benchmark retires 3085
+instructions; Nano's software-multiply version retires 8418 instructions.
+When comparing ISA revisions with different dynamic instruction counts, Fmax
+divided by benchmark cycles is the corresponding fixed-workload throughput
+measure.
 
 ### Cycle counts
 
@@ -186,13 +196,13 @@ Faster implement `full` only; Nano runs its separate profile.
 | Validation cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `min` | 5516 | 3076 | 1856 | 1246 | 732 | — | — | — | — | — |
-| `sys` | 9011 | 4971 | 2967 | 1965 | 1194 | — | — | — | — | — |
-| `full` | 10973 | 6013 | 3541 | 2297 | 1376 | — | 558 | 478 | 685 | 755 |
+| `sys` | 9730 | 5290 | 3086 | 1984 | 1161 | — | — | — | — | — |
+| `full` | 11734 | 6350 | 3666 | 2316 | 1340 | — | 562 | 482 | 525 | 595 |
 | `nano` | — | — | — | — | — | 3659 | — | — | — | — |
 
 | Common benchmark cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13276 | 261136 | 5698 | 4674 | 6653 | 7549 |
+| `test_riscc_bench` | 113961 | 61873 | 35925 | 22855 | 13196 | 261136 | 5698 | 4674 | 5411 | 6307 |
 
 ### Full multiply/divide options
 
@@ -201,15 +211,20 @@ implementations are provided by the separate `/16` multi-cycle sources.
 
 | Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
 |---|---:|---:|---:|
-| Full (`MUL`) | 334 | 359 | 354 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 344 | 374 | 369 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 383 | 410 | 407 |
+| Full (`MUL`) | 336 | 362 | 339 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 353 | 379 | 357 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 389 | 413 | 386 |
 
 | Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
 |---|---:|---:|
-| Full (`MUL`) | 23.06 | 79.37 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 22.51 | 80.13 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 22.34 | 74.60 |
+| Full (`MUL`) | 26.04 | 82.69 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 23.98 | 82.84 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 23.51 | 81.57 |
+
+`test-all` runs the normal Full ISA image and an extension-specific
+MULHU/DIVU image on both optional cores. The aggregate area and Fmax tables
+include these cores as well as the Fast and Faster soft/DSP configurations on
+their supported FPGA families.
 
 `MULHU` writes its high half to `rh` and its low half to `rl`.  The Tiny16
 implementations retain the product across one extra writeback cycle so both writes
@@ -511,13 +526,13 @@ normal development flow.
 
 The shared controller keeps the level-sensitive peripheral-to-CPU interrupt
 behind a register, breaking the UART/timer-to-CPU combinational path at the
-cost of one system clock of interrupt latency. The 32 KiB unified
+cost of one system clock of interrupt latency. The 24 KiB unified
 program/data RAM remains on the existing shared interface, with no cache, wait
 state, or extra memory pipeline stage. The Quartus Pro 26.1 post-fit demo uses
-637 ALMs, 21 M20K blocks, one DSP block, and two IOPLLs. Both the 225 MHz
-system and 148.5 MHz pixel-clock constraints meet setup timing (0.028 ns and
-3.491 ns slack respectively); the system hold slack is 0.022 ns and its
-restricted Fmax is 226.45 MHz.
+719.3 ALMs, 27 M20K blocks, one DSP block, and two IOPLLs. The 148.5 MHz pixel
+clock meets setup with 3.240 ns slack; the 225 MHz system target currently has
+-0.672 ns setup slack. Their hold slacks are 0.056 ns and 0.020 ns,
+respectively. The system-clock restricted Fmax is 195.47 MHz.
 
 ![Video capture of RISC-C running on Atum A3 Nano](riscc_on_atum-a3.jpg)
 

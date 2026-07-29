@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="870" viewBox="0 0 1000 870"
      role="img" aria-labelledby="title desc">
   <title id="title">RISC-C/faster pipeline, synchronous register file, and Execute states</title>
-  <desc id="desc">RISC-C/faster has IF, Decode and synchronous register file, and Execute and commit stages. Decode drives a replicated two-read MLAB register file. At the D to X edge the register file captures source addresses and its registered outputs become the Execute operands alongside registered controls. Every completed instruction writes back through the RF's one write port; ST_LOAD formats the synchronous memory response before using that port. A steady-state timing view shows independent instructions advancing one per clock. Execute owns LOAD, SHIFT, MUL, and JAL16 side states.</desc>
+  <desc id="desc">RISC-C/faster has IF, Decode and synchronous register file, and Execute and commit stages. Decode drives a replicated two-read MLAB register file. At the D to X edge the register file captures source addresses and its registered outputs become the Execute operands alongside registered controls. A write-edge bypass supplies a producer's result to a dependent read. Every completed instruction writes back through the RF's one write port; ST_LOAD formats the synchronous memory response before using that port. A steady-state timing view shows independent instructions advancing one per clock. Execute owns LOAD, SHIFT, MUL, and long-form side states.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
@@ -54,7 +54,7 @@
 
   <rect class="panel" x="30" y="94" width="940" height="310" rx="12"/>
   <text class="panel-title" x="52" y="124">Three-stage in-order pipeline</text>
-  <text class="subtitle" x="948" y="124" text-anchor="end">no bypass · no fourth writeback stage</text>
+  <text class="subtitle" x="948" y="124" text-anchor="end">write-edge RAW bypass · no fourth writeback stage</text>
 
   <rect class="stage" x="53" y="170" width="165" height="105" rx="9"/>
   <text class="stage-title" x="135.5" y="197" text-anchor="middle">IF</text>
@@ -73,7 +73,7 @@
   <text class="rf-title" x="587.5" y="195" text-anchor="middle">Synchronous 2R / 1W RF</text>
   <text class="body" x="587.5" y="221" text-anchor="middle">2 × 16×16 MLAB copies</text>
   <text class="body" x="587.5" y="245" text-anchor="middle">sample addr on d_issue</text>
-  <text class="body" x="587.5" y="266" text-anchor="middle">rdataA/B → X · 1W commit</text>
+  <text class="body" x="587.5" y="266" text-anchor="middle">rdataA/B → X · RAW bypass · 1W commit</text>
 
   <rect class="stage" x="770" y="170" width="178" height="105" rx="9"/>
   <text class="stage-title" x="859" y="197" text-anchor="middle">X: Execute + commit</text>
@@ -88,11 +88,11 @@
   <path class="writeback" d="M 770 254 H 710"/>
   <text class="small" x="740" y="273" text-anchor="middle">writeback</text>
   <path class="control" d="M 770 275 V 294 H 440 V 268"/>
-  <text class="small" x="605" y="309" text-anchor="middle">RAW hold: Decode waits, then rereads RF</text>
+  <text class="small" x="605" y="309" text-anchor="middle">a dependent Decode read receives same-edge writeback</text>
 
   <rect class="memory" x="315" y="321" width="370" height="62" rx="9"/>
   <text class="stage-title" x="500" y="347" text-anchor="middle">Unified synchronous memory</text>
-  <text class="body" x="500" y="371" text-anchor="middle">fetch · data · JAL16 — data/JAL16 has priority</text>
+  <text class="body" x="500" y="371" text-anchor="middle">fetch · data · long forms — Execute requests have priority</text>
 
   <path class="flow" d="M 135.5 275 V 303 H 390 V 321"/>
   <text class="small" x="255" y="296" text-anchor="middle">fetch</text>
@@ -167,6 +167,6 @@
   <text class="state-title" x="600" y="792" text-anchor="middle">MUL</text>
   <text class="small" x="600" y="815" text-anchor="middle">DSP capture · soft 15 steps</text>
   <rect class="side" x="735" y="770" width="190" height="54" rx="8"/>
-  <text class="state-title" x="830" y="792" text-anchor="middle">JAL16</text>
-  <text class="small" x="830" y="815" text-anchor="middle">target + link → redirect</text>
+  <text class="state-title" x="830" y="792" text-anchor="middle">LONG</text>
+  <text class="small" x="830" y="815" text-anchor="middle">JAL16 / LDI16 response</text>
 </svg>

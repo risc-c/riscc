@@ -798,6 +798,14 @@ struct Sim
                 store_byte(r[ra], r[rd]);
                 instr_cycles = cycle.direct_store;
             }
+            else if (func == 0x1d && rb == 4 && ra == 0)
+            {
+                if (!opts.has_sys())
+                    throw std::runtime_error("sys-profile op in min");
+                r[rd] = mem[pc_next & 0x7fff];
+                pc_next = static_cast<uint16_t>((pc_next + 1) & 0x7fff);
+                instr_cycles = cycle.jump16;
+            }
             else if (func == 0x1f)
             {
                 if (opts.nano)
@@ -849,7 +857,7 @@ struct Sim
                     s[rd] = r[ra];
                     instr_cycles = cycle.direct;
                 }
-                else if (rb == 5)
+                else if (rb == 5 && ra == 0)
                 {
                     if (!opts.has_sys())
                         throw std::runtime_error("sys-profile op in min");

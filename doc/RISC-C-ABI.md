@@ -79,7 +79,7 @@ compiler may move it to another register or spill it to the stack.
 
 The public call forms are `JAL16 S7, target` for a direct call, `JAL S7,
 register` for an indirect call, and `RET S7` for return. The link value and a
-function pointer are instruction-word addresses.
+function pointer are instruction addresses.
 
 A compiler gives a direct-only local function the private `S3` link register;
 all direct callers and the callee then use that same register.
@@ -88,7 +88,7 @@ the public `S7` convention. This private convention is internal to one object
 and does not change its ABI.
 
 Nano calls use `JAL r6, register`; direct calls first materialize the
-instruction-word address in a GPR. A Nano return uses `JAL r0, register`.
+instruction address in a GPR. A Nano return uses `JAL r0, register`.
 The return-address operand may be any GPR holding the saved incoming link;
 `r0` as the destination suppresses creation of a new link.
 
@@ -148,15 +148,17 @@ PIC TLS, and shared links are not supported.
 ## 6. Code and data pointers
 
 Data pointers are 16-bit byte addresses in data memory. Function pointers
-are 16-bit values containing a zero-extended 15-bit instruction-word address.
-Zero is the null pointer representation in each pointer domain.
+are 16-bit instruction addresses. Zero is the null pointer representation in
+each pointer domain.
 
 An ordinary C runtime conversion from a function pointer to an object pointer
-maps the word address to a byte address by shifting left one. The inverse
-conversion shifts a byte address right one. These conversions are
-implementation-defined and do not make instruction memory readable through a
-data pointer. ABI v1 does not support link-time constant initializers that
-cross these pointer domains.
+maps the instruction address to a byte address by shifting left one and
+retaining the low 16 bits. The inverse conversion shifts a byte address right
+one. These conversions are implementation-defined, cannot faithfully
+represent the upper half of the instruction address space as data pointers,
+and do not make instruction memory readable through a data pointer. ABI v1
+does not support link-time constant initializers that cross these pointer
+domains.
 
 ELF symbol values and section offsets remain byte based. Code relocations
 therefore validate two-byte alignment and encode a code-word value; data

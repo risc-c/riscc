@@ -87,7 +87,7 @@ __riscc_pack_sf:
         SLTU    r0, r4, r5
         BNEZ    .Lsubnormal_test
         LDI     r1, 0
-        LDI16   r2, 0x7f80
+        LI      r2, 0x7f80
         OR      r2, r2, r3
         JMP8    .Lreturn
 

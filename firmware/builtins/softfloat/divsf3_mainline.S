@@ -174,11 +174,11 @@ __divsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LDI16   r2, 0x7fc0
+        LI      r2, 0x7fc0
         JMP8    .Lspecial_return
 .Linfinity:
         LDI     r1, 0
-        LDI16   r2, 0x7f80
+        LI      r2, 0x7f80
         LDW     r0, [r7 - 6]
         OR      r2, r2, r0
         JMP8    .Lspecial_return
@@ -212,13 +212,13 @@ __divsf3:
         OR      r0, r3, r4
         BNEZ    .Lnonzero_operands
         LDI     r1, 0
-        LDI16   r2, 0x7f80
+        LI      r2, 0x7f80
         LDW     r0, [r7 - 6]
         OR      r2, r2, r0
         JMP8    .Lfinite_return
 .Lfinite_qnan:
         LDI     r1, 0
-        LDI16   r2, 0x7fc0
+        LI      r2, 0x7fc0
         JMP8    .Lfinite_return
 .Lfinite_zero:
         LDI     r1, 0

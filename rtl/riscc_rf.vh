@@ -21,7 +21,11 @@ module riscc_rf #(
     // Select explicitly when the single 18-kbit sysMEM block is preferable to
     // distributed RAM.  This preserves the original ECP5 implementation and
     // makes the block-RAM/LUTRAM trade measurable from one RTL source.
-    (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+    // A write-address collision can occur only while the corresponding read
+    // result is dead.  Let the mapper use the block RAM's native collision
+    // behavior instead of adding a read-first bypass network.
+    (* ram_style = "block", no_rw_check *)
+    reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [WIDTH-1:0] rdata_q;
 
     assign rdata = rdata_q;

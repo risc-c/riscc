@@ -121,11 +121,11 @@ __mulsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LDI16   r2, 0x7fc0
+        LI      r2, 0x7fc0
         JMP8    .Lspecial_return
 .Linfinity:
         LDI     r1, 0
-        LDI16   r2, 0x7f80
+        LI      r2, 0x7f80
         LDW     r0, [r7 - 10]
         OR      r2, r2, r0
 

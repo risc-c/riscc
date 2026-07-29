@@ -47,6 +47,10 @@ def write_project(directory: Path, name: str, root: Path, rtl: Path,
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{name}.qpf").write_text(
         f'QUARTUS_VERSION = "26.1"\nPROJECT_REVISION = "{name}"\n')
+    optimization_mode = (
+        "AGGRESSIVE AREA" if name in ("sys16", "full16")
+        else "HIGH PERFORMANCE EFFORT"
+    )
     qsf = [
         'set_global_assignment -name FAMILY "Agilex 3"',
         f"set_global_assignment -name DEVICE {DEVICE}",
@@ -57,7 +61,7 @@ def write_project(directory: Path, name: str, root: Path, rtl: Path,
         "set_global_assignment -name VERILOG_MACRO RISCC_INFERRED_SYNC_RF",
         f"set_global_assignment -name SDC_FILE {directory / (name + '.sdc')}",
         f"set_global_assignment -name NUM_PARALLEL_PROCESSORS {jobs}",
-        'set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"',
+        f'set_global_assignment -name OPTIMIZATION_MODE "{optimization_mode}"',
         'set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"',
     ]
     qsf.extend(f"set_global_assignment -name VERILOG_MACRO {macro}"

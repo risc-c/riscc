@@ -68,6 +68,7 @@ R_FUNC = {
     "SHLI": 0x0F,
     "FSL1": 0x13,
     "FSR1": 0x12,
+    "LDI16": 0x1D,
     "SYS": 0x1F,
 }
 
@@ -76,7 +77,7 @@ R_FUNC = {
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
 SYS_SUB = {"RET": 0, "JAL": 1, "MFS": 2, "MTS": 3,
-           "JAL16": 5, "IE": 6}
+           "LDI16": 4, "JAL16": 5, "IE": 6}
 CONTROL_CCC = {"RET": 0, "RETI": 7, "CLI": 0, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
@@ -262,9 +263,9 @@ def parse_section_name(text: str) -> str:
     return name
 
 
-def to_word_addr(value: int, what: str) -> int:
+def to_instruction_addr(value: int, what: str) -> int:
     if value & 1:
-        raise AsmError(f"{what} must be word-aligned: {value:#x}")
+        raise AsmError(f"{what} must be 2-byte-aligned: {value:#x}")
     return (value >> 1) & 0xFFFF
 
 
@@ -444,7 +445,8 @@ def enc_branch(cc: int, rel8: int) -> int:
     return enc_i(cc, 7, rel8)
 
 
-def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -> bytes:
+def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
+                pseudo_ldi16: bool = False) -> bytes:
     op = op.upper()
 
     def n_ops(count: int, usage: str) -> None:
@@ -452,7 +454,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
             raise AsmError(f"{op} requires {count} operand(s): {usage}")
 
     if op in ("JAL16", "CALL16", "JMP16"):
-        # Two-word direct jump-and-link: word 1 is the target word address.
+        # Two-halfword direct jump-and-link: the second halfword is the target
+        # instruction address.
         # Sd == S0 writes no link; CALL16 = JAL16 S7, JMP16 = JAL16 S0.
         if op == "JAL16":
             n_ops(2, "JAL16 Sd, target")
@@ -463,7 +466,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
             sd = 7 if op == "CALL16" else 0
             target = eval_expr(operands[0], labels)
         return (encode_word(enc_r(sd, 0, R_FUNC["SYS"], SYS_SUB["JAL16"]))
-                + encode_word(to_word_addr(target, f"{op} target")))
+                + encode_word(to_instruction_addr(target, f"{op} target")))
 
     if op in ("RET", "RETS", "RETI", "ERET"):
         # RET Sa: pc = S[aaa], IE untouched; RETI Sa also sets IE.
@@ -486,8 +489,11 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         n_ops(2, "LDI16 rd, imm16")
         rd = reg(operands[0])
         imm = eval_expr(operands[1], labels) & 0xFFFF
-        return encode_word(enc_i(rd, I_OP["LUI"], (imm >> 8) & 0xFF)) + \
-            encode_word(enc_i(rd, I_OP["ORI"], imm & 0xFF))
+        if pseudo_ldi16:
+            return encode_word(enc_i(rd, I_OP["LUI"], (imm >> 8) & 0xFF)) + \
+                encode_word(enc_i(rd, I_OP["ORI"], imm & 0xFF))
+        return encode_word(enc_r(rd, 0, R_FUNC["LDI16"],
+                                 SYS_SUB["LDI16"])) + encode_word(imm)
 
     if op == "NOP":
         n_ops(0, "NOP")
@@ -508,14 +514,15 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         n_ops(2, f"{op} rd, imm8")
         rd = reg(operands[0])
         value = eval_expr(operands[1], labels)
-        imm = enc_i8(value, f"{op} simm8") if op in ("ADDI", "ADDI8", "CMPI", "CMPI8") else enc_u8(value & 0xFF, f"{op} imm8")
+        imm = enc_i8(value, f"{op} simm8") if op in ("ADDI", "ADDI8", "CMPI", "CMPI8") else \
+            enc_u8(value & 0xFF, f"{op} imm8")
         return encode_word(enc_i(rd, I_OP[op], imm))
 
     if op in BR_CC:
         n_ops(1, f"{op} target")
         target = eval_expr(operands[0], labels)
         if target & 1:
-            raise AsmError(f"{op} target must be word-aligned: {target:#x}")
+            raise AsmError(f"{op} target must be 2-byte-aligned: {target:#x}")
         rel = (target >> 1) - ((pc >> 1) + 1)
         return encode_word(enc_branch(BR_CC[op], enc_i8(rel, f"{op} rel8")))
 
@@ -609,13 +616,16 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
     raise AsmError(f"unknown instruction: {op}")
 
 
-def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int]) -> bytes:
+def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int],
+              pseudo_ldi16: bool = False) -> bytes:
     pc = bases[item.section] + item.offset
     if item.kind == "INSN":
         if pc & 1:
-            raise AsmError(f"line {item.lineno}: instruction address not word-aligned")
+            raise AsmError(
+                f"line {item.lineno}: instruction address not 2-byte-aligned")
         try:
-            return encode_insn(item.op, item.operands, labels, pc)
+            return encode_insn(item.op, item.operands, labels, pc,
+                               pseudo_ldi16)
         except AsmError as exc:
             raise AsmError(f"line {item.lineno}: {exc}") from exc
     if item.kind == "BYTE":
@@ -639,8 +649,10 @@ def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int]) -> byte
 
 
 def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
-    filtered = preprocess_source(lines, defines or set())
+    active_defines = defines or set()
+    filtered = preprocess_source(lines, active_defines)
     items, label_defs = parse_source(filtered)
+    pseudo_ldi16 = bool(active_defines & {"RISCC_MIN", "RISCC_NANO"})
     bases = layout_sections(items)
     labels = final_label_map(label_defs, bases)
 
@@ -650,7 +662,7 @@ def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
 
     blobs = {name: bytearray(sizes[name]) for name in SECTION_ORDER}
     for item in items:
-        data = emit_item(item, labels, bases)
+        data = emit_item(item, labels, bases, pseudo_ldi16)
         if len(data) != item.size:
             raise AsmError(
                 f"line {item.lineno}: internal size mismatch for {item.op}: "

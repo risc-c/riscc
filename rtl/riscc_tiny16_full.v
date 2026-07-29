@@ -93,9 +93,12 @@ module riscc_tiny16 #(
     wire immediate_arithmetic = immediate_class &&
                                 !immediate_opcode[2] && immediate_opcode[1];
     wire compare_immediate = immediate_arithmetic & immediate_opcode[0];
-    // JAL16 Sd (register-indirect group, bbb=101): two words, second word
-    // is the target. Sd == S0 writes no link (JMP16 = JAL16 S0).
-    wire jal16_op = system_group && rb[2] && !rb[1] && rb[0];
+    // The bbb=100/101 long forms share the following halfword fetch.
+    wire long_form_op = system_group && rb[2] && !rb[1];
+`ifndef RISCC_INFERRED_SYNC_RF
+    wire ldi16_op = long_form_op && !rb[0];
+`endif
+    wire jal16_op = long_form_op && rb[0];
     wire link_enabled = |rd;    // Sd == S0: no link written (plain jump)
     wire immediate_logic = immediate_class && immediate_opcode[2] &&
                            !(immediate_opcode[1] && immediate_opcode[0]);
@@ -169,7 +172,8 @@ module riscc_tiny16 #(
     wire control_ie_value = rd[2];
     wire return_sets_ie = return_op && rd[2];
     wire interrupt_enable_op = system_group && rb[2] && rb[1];
-    wire return_op = system_group && ~rb[1] && ~rb[0];
+    wire return_op = system_group && register_opcode[1] &&
+                     ~rb[1] && ~rb[0];
     wire mfs_op = system_group && ~rb[2] && rb[1] && ~rb[0];
     wire mts_op = system_group && ~rb[2] && rb[1] && rb[0];
 
@@ -237,10 +241,19 @@ module riscc_tiny16 #(
         (in_irq_entry | compare_immediate) ? 3'b000 : rd;
     // rf_we qualifies the state; the bank select can keep the decoded MTS
     // value and need not repeat the link-enable check.
-    wire rf_write_system_bank = mts_op | in_irq_entry | in_link_writeback;
+    wire rf_write_system_bank = mts_op | in_irq_entry |
+`ifdef RISCC_INFERRED_SYNC_RF
+                                (in_link_writeback && rb[0]);
+`else
+                                in_link_writeback;
+`endif
     wire rf_we =
-        (in_link_writeback && link_enabled) | in_compare_writeback |
-        in_irq_entry | execute_complete
+`ifdef RISCC_INFERRED_SYNC_RF
+        (in_link_writeback && link_enabled) |
+`else
+        (in_link_writeback && link_enabled && !ldi16_op) |
+`endif
+        in_compare_writeback | in_irq_entry | execute_complete
         | (in_iterate && immediate_shift_op)
         ;
     wire [15:0] rf_wdata = alu_result;
@@ -336,7 +349,7 @@ module riscc_tiny16 #(
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
     wire alu_carry_in =
-        in_decode | subtract_enable | (in_link_writeback && jal16_op) |
+        in_decode | subtract_enable | (in_link_writeback && long_form_op) |
         (in_mdr_writeback && funnel_left_op && funnel_bit_q);
     wire [16:0] alu_sum_ext = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                               {16'h0000, alu_carry_in};
@@ -394,11 +407,11 @@ module riscc_tiny16 #(
             state_q[ST_MEMORY_ACCESS] <= memory_address_ready;
             state_q[ST_LOAD_CAPTURE] <=
                 (in_memory_access && !store_op) |
-                (in_link_writeback && jal16_op);
+                (in_link_writeback && long_form_op);
             state_q[ST_LINK_WRITEBACK] <=
-                start_register_call | (in_decode && jal16_op);
+                start_register_call | (in_decode && long_form_op);
             state_q[ST_JUMP_COMMIT] <=
-                (in_link_writeback && !jal16_op) |
+                (in_link_writeback && !long_form_op) |
                 (in_load_capture && jal16_op) | (in_decode && return_op);
             state_q[ST_COMPARE_WRITEBACK] <= in_execute && register_compare;
             state_q[ST_IRQ_ENTRY] <= take_interrupt;
@@ -412,7 +425,8 @@ module riscc_tiny16 #(
             end
 
             // PC updates are deliberately separate: IRQ entry has priority.
-            if (in_decode | in_jump_commit) begin
+            if (in_decode | in_jump_commit |
+                (in_link_writeback && !rb[0])) begin
                 pc_q <= alu_result[14:0];
             end
             if (in_irq_entry) begin

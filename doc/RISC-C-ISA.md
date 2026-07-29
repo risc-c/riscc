@@ -1,9 +1,6 @@
 # RISC-C Instruction Set Architecture
 
-RISC-C is an open 16-bit instruction set architecture for compact systems
-that need a tiny controller. It defines three ordered mainline
-profiles: `min`, `sys`, and `full`, plus the incompatible subset `nano`
-profile.
+RISC-C is an open ISA for compact systems that need a tiny controller.
 
 This document is the RISC-C ISA specification. It defines the architectural
 state, instruction encodings and semantics, memory-access rules, interrupt
@@ -17,43 +14,44 @@ Version: `v0.17.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
-### Versioning
-
-RISC-C version identifiers have the form `vMAJOR.MINOR.PATCH`.
-`MAJOR`, `MINOR`, and `PATCH` are non-negative decimal integers with no
-leading zeros except for zero itself. A major version changes the ISA in an
-incompatible way; a minor version adds compatible ISA features or
-clarifications; a patch version makes compatible corrections or editorial
-changes.
-
 ## 1. RISC-C Base Integer Instruction Set
 
 This chapter describes the RISC-C base integer ISA. The `min` profile defines
 the base instruction set; section 7 summarizes the profile differences.
 
+The base ISA uses 16-bit instruction halfwords. Most instructions occupy one
+halfword; the long forms defined in section 5 occupy two. Instruction
+addresses are measured in halfwords. The mainline ISA is
+parameterized by the `XLEN` data word size: RC16 has `XLEN = 16` and RC32 has
+`XLEN = 32`. Unless a rule names a narrower access or field explicitly, an
+operation on a register, an S-register, or a data word is `XLEN` bits wide.
+
+The mainline configurations each provide the ordered `min`, `sys`, and `full`
+profiles. Nano is an RC16-only subset profile.
+
 ### 1.1 Architectural State
 
 | state | width | description |
 |---|---:|---|
-| `r0..r7` | 16 | general-purpose registers |
-| `S0..S7` | 16 | S registers |
-| `pc` | 15 | program counter, in word addresses |
+| `r0..r7` | XLEN | general-purpose registers |
+| `S0..S7` | XLEN | S registers |
+| `pc` | XLEN | program counter, in instruction addresses |
 | `IE` | 1 | interrupt-enable bit (`sys` profile) |
 
 There are no arithmetic condition codes and no architectural zero register.
-All `r`- and S-register writes retain their low 16 bits. Program counter
-updates retain their low 15 bits.
+All `r`- and S-register writes retain their low XLEN bits. Program-counter
+updates retain their low XLEN bits.
 
 `r0` has no special storage behavior. All short conditional branches test
 `r0`, and `CMPI` always writes its result to `r0`.
 
-`MFS` and `MTS` let software read and write `S0..S7` as ordinary 16-bit
+`MFS` and `MTS` let software read and write `S0..S7` as ordinary XLEN-bit
 storage. `JAL` uses an S-register destination for its link, and `RET` uses an
 S-register operand for its return address. The `sys` profile additionally
-provides `JAL16`, `RETI`, `CLI`, and `STI`. Only `S0` has special
+provides `RETI`, `CLI`, and `STI`. Only `S0` has special
 architectural treatment:
 
-- In `JAL` and `JAL16`, destination `S0` suppresses the link write.
+- In `JAL`, destination `S0` suppresses the link write.
 - In the `sys` profile, `S0` is `EPC`, the interrupt return program
   counter.
 
@@ -67,9 +65,9 @@ general-register and S-register values are unspecified following reset.
 Unless an instruction explicitly assigns `pc`, execution continues at
 `pc_next`.
 
-When a 15-bit code address is written to an S-register, it is zero-extended
-to 16 bits. This applies to link addresses written by `JAL` and `JAL16` and
-to the interrupt return address written to `S0`.
+Instruction addresses, S-register values, and general-register values are all
+XLEN bits wide. This applies to link addresses written by `JAL` and to the
+interrupt return address written to `S0`.
 
 All named source operands and effective-address operands are read from the
 architectural state before an instruction writes any architectural
@@ -78,14 +76,13 @@ source register.
 
 ### 1.2 Instruction Length and Major Opcodes
 
-Instructions are encoded in 16-bit words. `JAL16` is the only instruction
-that occupies two words. The two most-significant bits select one of four
-major opcode spaces:
+Each instruction begins with one 16-bit halfword. The two most-significant
+bits of that halfword select one of four major opcode spaces:
 
 | bits `[15:14]` | format bits `[15:0]` | instruction class |
 |---|---|---|
-| `00` | `00 ddd aaa iiiiiiii` | immediate-offset word load |
-| `01` | `01 ddd aaa iiiiiiii` | immediate-offset word store |
+| `00` | `00 ddd aaa iiiiiiii` | immediate-offset data-word load |
+| `01` | `01 ddd aaa iiiiiiii` | immediate-offset data-word store |
 | `10` | `10 ddd ooo iiiiiiii` | immediate or branch instruction |
 | `11` | `11 ddd aaa fffff bbb` | register-format instruction |
 
@@ -94,13 +91,13 @@ When present, the named fields retain their positions across formats: `ddd`,
 `iiiiiiii` encodes an immediate value. An instruction may give a field a
 different meaning.
 
-All instruction addresses are word addresses, so every instruction is
-naturally aligned.
+Every base instruction is naturally aligned to two bytes.
 
 Bits are numbered from least significant to most significant: bit 0 is the
-least-significant bit of a byte or word, and bit 15 is the most-significant
-bit of a word. Instruction-format diagrams show the most-significant bit at
-the left. Byte order does not change bit numbering within a byte.
+least-significant bit of a byte or data word, and bit 15 is the
+most-significant bit of a 16-bit instruction or instruction-memory halfword.
+Instruction-format diagrams show the most-significant bit at the left. Byte
+order does not change bit numbering within a byte.
 
 Unless explicitly defined otherwise, unused instruction fields must be zero
 in portable software. Encodings with nonzero unused fields, encodings marked
@@ -113,27 +110,32 @@ behavior.
 
 ## 2. Address Spaces and Memory Access
 
-RISC-C has separate architectural code and data address spaces. A code
-address selects a 16-bit instruction word, while a data address selects an
-8-bit byte. Thus a 15-bit code address selects one of 32768 instruction
-words, whereas a 16-bit data address selects one of 65536 bytes. Code and
-data may be implemented with separate physical memories or with a shared
-physical memory; that choice does not change the two architectural addressing
-conventions. A program must explicitly convert a byte address to a word
-address before using it as an indirect control-flow destination.
+RISC-C has separate architectural instruction and data address spaces. An
+instruction address selects a 16-bit instruction-memory halfword, while a
+data address selects an 8-bit byte. An XLEN-bit instruction address therefore
+selects `2^XLEN` instruction-memory halfwords, and an XLEN-bit data address
+selects `2^XLEN` bytes. RC16 consequently has a 128 KiB architectural
+instruction address space. Instruction and data memory may be implemented
+with separate physical memories or with a shared physical memory; that choice
+does not change the two architectural addressing conventions. An
+implementation with a smaller instruction memory may implement only its
+required low instruction-address bits; its treatment of addresses outside that
+range is platform-defined. A program must explicitly convert a byte address
+to an instruction address before using it as an indirect control-flow
+destination.
 
-The ISA does not require or prohibit self-modifying code. If code and data
-share physical storage, the implementation or platform must define when a
-store through the data interface becomes visible to instruction fetches.
-Programs that modify instructions must use the applicable platform
-synchronization mechanism before executing the modified words.
+The ISA does not require or prohibit modification of instruction memory. If
+instruction and data memory share physical storage, the implementation or
+platform must define when a store through the data interface becomes visible
+to instruction fetches. Programs that modify instruction memory must use the
+applicable platform synchronization mechanism before executing the modified
+instructions.
 
-Data memory is little-endian: at byte address `2n`, the byte is the low byte
-of word `n`; at byte address `2n+1`, it is the high byte.
-Effective data addresses use 16-bit addition and wrap modulo 2^16.
+Data memory is little-endian. Effective data addresses use XLEN-bit addition
+and wrap modulo `2^XLEN`.
 
-When represented as bytes, instruction words are also little-endian: the
-low byte of an instruction word precedes its high byte.
+When represented as bytes, instruction-memory halfwords are little-endian:
+the low byte precedes the high byte.
 
 ### 2.1 Memory Ordering, Atomicity, and Coherence
 
@@ -143,10 +145,12 @@ implementation may execute or buffer accesses internally in another order,
 provided this does not change the behavior observed by that core.
 
 A byte load or store to ordinary data memory is an indivisible 8-bit access.
-An aligned word load or store is an indivisible 16-bit access. No observer
-may observe only part of an aligned word store or a word value assembled from
-parts of two different aligned word stores. Byte stores may independently
-replace either byte of a word as specified by the byte-access semantics.
+An aligned halfword load or store is an indivisible 16-bit access, and an
+aligned data-word load or store is an indivisible XLEN-bit access. No observer
+may observe only part of an aligned data-word store or a data-word value
+assembled from parts of two different aligned data-word stores. Byte stores
+may independently replace either byte of a halfword as specified by the
+byte-access semantics.
 
 The order and time at which memory accesses become visible to other cores,
 devices, DMA engines, or external agents are platform-defined. RISC-C does
@@ -162,11 +166,13 @@ are platform-defined.
 
 ### 2.2 Alignment
 
-`LDW`, `STW`, and `LDWX` require an even effective byte address. The
-effective address, rather than an individual base or displacement, determines
-alignment. An odd word address has undefined behavior; software must not
-depend on whether an implementation traps, rounds the address, or performs
-another action. Byte accesses have no alignment requirement.
+`LDH`, `LDHS`, and `STH` require a two-byte-aligned effective address.
+`LDW`, `STW`, and `LDWX` require an effective address aligned to `XLEN / 8`
+bytes: two bytes in RC16 and four bytes in RC32. The effective address,
+rather than an individual base or displacement, determines alignment. An
+unaligned access has undefined behavior; software must not depend on whether
+an implementation traps, rounds the address, or performs another action. Byte
+accesses have no alignment requirement.
 
 ### 2.3 Load and Store Instructions
 
@@ -183,8 +189,8 @@ source register `rs`.
 
 | opcode | instruction | operation |
 |---|---|---|
-| `00` | `LDW rd, [ra+simm8]` | `R[d] = M16[R[a] + sx8(simm8)]` |
-| `01` | `STW rs, [ra+simm8]` | `M16[R[a] + sx8(simm8)] = R[s]` |
+| `00` | `LDW rd, [ra+simm8]` | `R[d] ← MXLEN[R[a] + sx8(simm8)]` |
+| `01` | `STW rs, [ra+simm8]` | `MXLEN[R[a] + sx8(simm8)] ← R[s]` |
 
 The register-format is:
 
@@ -192,31 +198,34 @@ The register-format is:
 11 ddd aaa fffff bbb
 ```
 
-`ddd` and `aaa` select `rd` or `rs` and `ra`; `bbb` selects `rb`. For
-`STB`, `ddd` selects source register `rs` and `bbb` must be zero.
+`ddd` and `aaa` select `rd` or `rs` and `ra`; `bbb` selects `rb` unless the
+instruction defines it as a sub-operation.
 
 | `fffff` | instruction | operation |
 |---|---|---|
-| `01_000` | `LDWX rd, [ra+rb]` | `R[d] = M16[R[a] + R[b]]` |
-| `01_010` | `LDB rd, [ra+rb]` | `R[d] = zx8(M8[R[a] + R[b]])` |
-| `01_011` | `STB rs, [ra]` | `M8[R[a]] = R[s][7:0]` |
-| `01_110` | `LDBS rd, [ra+rb]` | `R[d] = sx8(M8[R[a] + R[b]])` |
+| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
+| `01_001` | `LDH rd, [ra+rb]` | `R[d] ← zx16(M16[R[a] + R[b]])` |
+| `01_010` | `LDB rd, [ra+rb]` | `R[d] ← zx8(M8[R[a] + R[b]])` |
+| `01_011`, `bbb=000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
+| `01_011`, `bbb=001` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
+| `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
+| `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
 
-`LDW` reads a 16-bit word at the effective address formed by adding the
-sign-extended displacement to `ra`. It is subject to the word-alignment
-requirement in section 2.2.
+`LDW` reads one XLEN-bit data word at the effective address formed by adding
+the sign-extended displacement to `ra`. It is subject to the data-word
+alignment requirement in section 2.2.
 
-`STW` writes the complete 16-bit value of `rs` at the effective address
+`STW` writes the complete XLEN-bit value of `rs` at the effective address
 formed by adding the sign-extended displacement to `ra`. It is subject to the
-word-alignment requirement in section 2.2.
+data-word alignment requirement in section 2.2.
 
-`LDWX` is subject to the word-alignment requirement in section 2.2. `STB`
-stores the low byte of its source register; its `bbb` field is reserved and
-must be zero in portable software.
+`LDWX` is subject to the data-word alignment requirement in section 2.2.
+`LDH`, `LDHS`, and `STH` are subject to the halfword-alignment requirement.
+`STB` stores the low byte of its source register.
 
 `LDB` reads a byte at the effective address formed by adding `ra` and `rb`,
-then zero-extends it to 16 bits. `LDBS` uses the same effective address and
-sign-extends the loaded byte to 16 bits. Neither byte load has an alignment
+then zero-extends it to XLEN bits. `LDBS` uses the same effective address and
+sign-extends the loaded byte to XLEN bits. Neither byte load has an alignment
 requirement.
 
 ## 3. Immediate and Branch Instructions
@@ -233,19 +242,20 @@ implicitly `r0`.
 
 | `ooo` | instruction | operation |
 |---|---|---|
-| `000` | `LDI rd, imm8` | `R[d] = zx8(imm8)` |
-| `001` | `LUI rd, imm8` | `R[d] = imm8 << 8` |
-| `010` | `ADDI rd, simm8` | `R[d] = R[d] + sx8(simm8)` |
-| `011` | `CMPI rs, simm8` | `R[0] = R[s] - sx8(simm8)` |
-| `100` | `ANDI rd, imm8` | `R[d] = R[d] & zx8(imm8)` |
-| `101` | `ORI rd, imm8` | `R[d] = R[d] \| zx8(imm8)` |
-| `110` | `XORI rd, imm8` | `R[d] = R[d] ^ zx8(imm8)` |
+| `000` | `LDI rd, imm8` | `R[d] ← zx8(imm8)` |
+| `001` | `LUI rd, imm8` | `R[d] ← zxXLEN(imm8 << 8)` |
+| `010` | `ADDI rd, simm8` | `R[d] ← R[d] + sx8(simm8)` |
+| `011` | `CMPI rs, simm8` | `R[0] ← R[s] - sx8(simm8)` |
+| `100` | `ANDI rd, imm8` | `R[d] ← R[d] & zx8(imm8)` |
+| `101` | `ORI rd, imm8` | `R[d] ← R[d] \| zx8(imm8)` |
+| `110` | `XORI rd, imm8` | `R[d] ← R[d] ^ zx8(imm8)` |
 | `111` | branch group | specified below |
 
 `LDI` writes the zero-extended 8-bit immediate to `rd`.
 
-`LUI` writes the 8-bit immediate into bits `[15:8]` of `rd` and clears bits
-`[7:0]`.
+`LUI` writes the 8-bit immediate into bits `[15:8]` of `rd` and clears every
+other result bit. Its result therefore always fits in the low 16 bits, in
+both RC16 and RC32.
 
 `ADDI` adds a sign-extended immediate to the old value of `rd`.
 
@@ -261,8 +271,8 @@ The branch-group format is:
 10 ccc 111 rrrrrrrr
 ```
 
-`rel8` is a signed displacement in instruction words, relative to the next
-instruction:
+`rel8` is a signed displacement in instruction addresses, relative to the
+next instruction:
 
 ```text
 pc_target = pc_next + sx8(rel8)
@@ -272,8 +282,8 @@ pc_target = pc_next + sx8(rel8)
 |---|---|---|
 | `000` | `BEQZ rel8` | branch if `R[0] == 0` |
 | `001` | `BNEZ rel8` | branch if `R[0] != 0` |
-| `010` | `BLTZ rel8` | branch if `R[0][15] == 1` |
-| `011` | `BGEZ rel8` | branch if `R[0][15] == 0` |
+| `010` | `BLTZ rel8` | branch if `R[0][XLEN-1] == 1` |
+| `011` | `BGEZ rel8` | branch if `R[0][XLEN-1] == 0` |
 | `100` | `JMP8 rel8` | unconditional branch |
 | `101..111` | reserved | undefined |
 
@@ -283,15 +293,15 @@ pc_target = pc_next + sx8(rel8)
 `BNEZ` branches when `r0` is nonzero. Otherwise, execution continues at
 `pc_next`.
 
-`BLTZ` branches when bit 15 of `r0` is one. Otherwise, execution continues
-at `pc_next`.
+`BLTZ` branches when the sign bit of `r0` is one. Otherwise, execution
+continues at `pc_next`.
 
-`BGEZ` branches when bit 15 of `r0` is zero. Otherwise, execution continues
-at `pc_next`.
+`BGEZ` branches when the sign bit of `r0` is zero. Otherwise, execution
+continues at `pc_next`.
 
 `JMP8` always transfers control to `pc_target`.
 
-For a taken branch, `pc = pc_target`; otherwise `pc = pc_next`.
+For a taken branch, `pc ← pc_target`; otherwise `pc ← pc_next`.
 
 ## 4. Register-Format Instructions
 
@@ -306,35 +316,37 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 
 | `fffff` | instruction | operation |
 |---|---|---|
-| `00_000` | `ADD rd, ra, rb` | `R[d] = R[a] + R[b]` |
-| `00_001` | `SUB rd, ra, rb` | `R[d] = R[a] - R[b]` |
-| `00_010` | `SLT rd, ra, rb` | `R[d] = (signed16(R[a]) < signed16(R[b])) ? 1 : 0` |
-| `00_011` | `SLTU rd, ra, rb` | `R[d] = (R[a] < R[b]) ? 1 : 0` |
-| `00_100` | `AND rd, ra, rb` | `R[d] = R[a] & R[b]` |
-| `00_101` | `OR rd, ra, rb` | `R[d] = R[a] \| R[b]` |
-| `00_110` | `XOR rd, ra, rb` | `R[d] = R[a] ^ R[b]` |
-| `00_111` | `MUL rd, ra, rb` | `R[d] = (R[a] * R[b])[15:0]` |
-| `01_000` | `LDWX rd, [ra+rb]` | `R[d] = M16[R[a] + R[b]]` |
-| `01_001` | reserved | undefined |
-| `01_010` | `LDB rd, [ra+rb]` | `R[d] = zx8(M8[R[a] + R[b]])` |
-| `01_011` | `STB rs, [ra]` | `M8[R[a]] = R[s][7:0]` |
-| `01_100` | `SHRI rd, ra, imm` | `R[d] = R[a] >> (bbb + 1)` |
-| `01_101` | `SARI rd, ra, imm` | `R[d] = signed16(R[a]) >>> (bbb + 1)` |
-| `01_110` | `LDBS rd, [ra+rb]` | `R[d] = sx8(M8[R[a] + R[b]])` |
-| `01_111` | `SHLI rd, ra, imm` | `R[d] = R[a] << (bbb + 1)` |
+| `00_000` | `ADD rd, ra, rb` | `R[d] ← R[a] + R[b]` |
+| `00_001` | `SUB rd, ra, rb` | `R[d] ← R[a] - R[b]` |
+| `00_010` | `SLT rd, ra, rb` | `R[d] ← (signedXLEN(R[a]) < signedXLEN(R[b])) ? 1 : 0` |
+| `00_011` | `SLTU rd, ra, rb` | `R[d] ← (R[a] < R[b]) ? 1 : 0` |
+| `00_100` | `AND rd, ra, rb` | `R[d] ← R[a] & R[b]` |
+| `00_101` | `OR rd, ra, rb` | `R[d] ← R[a] \| R[b]` |
+| `00_110` | `XOR rd, ra, rb` | `R[d] ← R[a] ^ R[b]` |
+| `00_111` | `MUL rd, ra, rb` | `R[d] ← (R[a] * R[b])[XLEN-1:0]` |
+| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
+| `01_001` | `LDH rd, [ra+rb]` | `R[d] ← zx16(M16[R[a] + R[b]])` |
+| `01_010` | `LDB rd, [ra+rb]` | `R[d] ← zx8(M8[R[a] + R[b]])` |
+| `01_011`, `bbb=000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
+| `01_011`, `bbb=001` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
+| `01_100` | `SHRI rd, ra, imm` | `R[d] ← R[a] >> (bbb + 1)` |
+| `01_101` | `SARI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
+| `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
+| `01_111` | `SHLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
 | `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 4.1 |
-| `10_010` | `FSR1 rd, ra, rb` | `R[d] = (R[a] >> 1) \| (R[b][0] << 15)` |
-| `10_011` | `FSL1 rd, ra, rb` | `R[d] = (R[a] << 1) \| R[b][15]` |
+| `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
+| `10_010` | `FSR1 rd, ra, rb` | `R[d] ← (R[a] >> 1) \| (R[b][0] << (XLEN-1))` |
+| `10_011` | `FSL1 rd, ra, rb` | `R[d] ← (R[a] << 1) \| R[b][XLEN-1]` |
 | `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 4.1 |
-| `10_001`, `10_101..11_110` | reserved | undefined |
+| `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
 The load and store instructions in this table are described in section 2.3.
 
-`ADD` adds the two source registers and writes the low 16 bits of the result
+`ADD` adds the two source registers and writes the low XLEN bits of the result
 to `rd`.
 
-`SUB` subtracts `rb` from `ra` and writes the low 16 bits of the result to
+`SUB` subtracts `rb` from `ra` and writes the low XLEN bits of the result to
 `rd`.
 
 `SLT` and `SLTU` perform signed and unsigned less-than comparisons,
@@ -345,8 +357,9 @@ it writes zero.
 and `rb`, then write the result to `rd`.
 
 `FSL1` and `FSR1` are one-bit funnel shifts. `FSL1` shifts `ra` left and
-inserts bit 15 of `rb` at bit 0. `FSR1` shifts `ra` right and inserts bit 0 of
-`rb` at bit 15. Both source registers are read before `rd` is written, so
+inserts the sign-position bit of `rb` at bit 0. `FSR1` shifts `ra` right and
+inserts bit 0 of `rb` at the sign position. Both source registers are read
+before `rd` is written, so
 `rd` may name either source register.
 
 `SHLI` and `SHRI` shift `ra` left and right, respectively, inserting zeros
@@ -355,8 +368,8 @@ into the vacated bits. Their shift count is `bbb+1`.
 `SARI` shifts `ra` right and copies the original sign bit into vacated high
 bits. Its shift count is `bbb+1`.
 
-`MUL` writes the low 16 bits of the product of `ra` and `rb` to `rd`. The low
-half is the same for signed and unsigned multiplication.
+`MUL` writes the low XLEN bits of the product of `ra` and `rb` to `rd`. This
+low XLEN-bit portion is the same for signed and unsigned multiplication.
 
 `SHLI`, `SHRI`, and `SARI` encode shift counts from 1 through 8. In the
 `min` profile, `SHRI` and `SARI` always shift by one and their `bbb` field
@@ -378,8 +391,8 @@ DIVU rr, rq, rb
 
 ```text
 P     = R[rh] * R[rb]
-R[rl] = P[15:0]
-R[rh] = P[31:16]
+R[rl] ← P[XLEN-1:0]
+R[rh] ← P[2*XLEN-1:XLEN]
 ```
 
 `rl` and `rh` must be different registers. `rb` may name either input/output
@@ -388,25 +401,25 @@ Thus the extension needs no separate low-half multiply instruction; regular
 `MUL` remains the non-destructive low-half operation supplied by `full`.
 
 `DIVU` uses `ddd = rr`, `aaa = rq`, and `bbb = rb`. It treats the register
-pair `rr:rq` as a two-word unsigned partial dividend. More precisely, using
-the input register values:
+pair `rr:rq` as a two-XLEN-bit unsigned partial dividend. More precisely,
+using the input register values:
 
 ```text
-N       = (R[rr] << 16) | R[rq]
+N       = (R[rr] << XLEN) | R[rq]
 divisor = R[rb]
-R[rq]   = N / divisor
-R[rr]   = N % divisor
+R[rq]   ← N / divisor
+R[rr]   ← N % divisor
 ```
 
 `rr`, `rq`, and `rb` must name different registers. `divisor` must be
 nonzero, and `R[rr] < divisor` is required on entry; this guarantees that the
-quotient fits in 16 bits. If any of these requirements is not met, the result
+quotient fits in XLEN bits. If any of these requirements is not met, the result
 is undefined. These operand restrictions are an exception to the general
 source-before-destination ordering rule.
 
 ## 5. Control Transfer and S-Register Instructions
 
-The control and S-register group has the following format:
+Most control and S-register instructions have the following format:
 
 ```text
 11 ddd aaa 11111 bbb
@@ -417,10 +430,10 @@ following control-selector values are defined:
 
 | `bbb` | `ddd` | instruction | profile | operation |
 |---|---|---|---|---|
-| `000` | `000` | `RET Sa` | all | `pc = S[a][14:0]` |
-| `000` | `111` | `RETI Sa` | sys | `IE = 1`; `pc = S[a][14:0]` |
-| `110` | `000` | `CLI` | sys | `IE = 0` |
-| `110` | `111` | `STI` | sys | `IE = 1` |
+| `000` | `000` | `RET Sa` | all | `pc ← S[a]` |
+| `000` | `111` | `RETI Sa` | sys | `IE ← 1`; `pc ← S[a]` |
+| `110` | `000` | `CLI` | sys | `IE ← 0` |
+| `110` | `111` | `STI` | sys | `IE ← 1` |
 
 All other `ddd` values in those two `bbb` rows are reserved and undefined.
 `aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
@@ -429,15 +442,18 @@ The remaining `bbb` values have the following definitions:
 
 | `bbb` | instruction | profile | operation |
 |---|---|---|---|
-| `001` | `JAL Sd, ra` | all | if `d != 0`, `S[d] = pc_next`; `pc = R[a][14:0]` |
-| `010` | `MFS rd, Sa` | all | `R[d] = S[a]` |
-| `011` | `MTS Sd, ra` | all | `S[d] = R[a]` |
+| `001` | `JAL Sd, ra` | all | if `d != 0`, `S[d] ← pc_next`; `pc ← R[a]` |
+| `010` | `MFS rd, Sa` | all | `R[d] ← S[a]` |
+| `011` | `MTS Sd, ra` | all | `S[d] ← R[a]` |
 | `100` | reserved |  | undefined |
-| `101` | `JAL16 Sd` | sys | specified below |
+| `101` | `JAL16 Sd, target` | sys | specified below |
 | `111` | reserved |  | undefined |
 
-`RET` transfers control through the low 15 bits of its S-register operand. It
-does not change `IE`.
+`JAL16` requires `aaa = 0`; other `aaa` values in its row are reserved and
+undefined.
+
+`RET` transfers control through its S-register operand. It does not change
+`IE`.
 
 `RETI` transfers control through its S-register operand and sets `IE` to one.
 
@@ -445,25 +461,29 @@ does not change `IE`.
 
 `STI` sets `IE` to one.
 
-`JAL` transfers control through the low 15 bits of `ra` and, unless `Sd` is
-`S0`, writes the word address of the following instruction to `Sd`. Thus,
+`JAL` transfers control through `ra` and, unless `Sd` is `S0`, writes the
+instruction address of the following instruction to `Sd`. Thus,
 `JAL S0, ra` is a register-indirect jump without a link write.
 
 `MFS` copies the selected S-register to `rd`.
 
 `MTS` copies `ra` to the selected S-register.
 
-`JAL16` consumes two instruction words:
+The long forms have these first-halfword encodings:
 
-```text
-11 ddd 000 11111 101    first word
-tttttttttttttttt        target word address
-```
+| encoding | instruction | profile |
+|---|---|---|
+| `11 ddd 000 11101 100` | `LDI16 rd, imm16` | sys |
+| `11 ddd 000 11111 101` | `JAL16 Sd, target` | sys |
 
-The `aaa` field in the first word must be zero. If `ddd` is nonzero,
-`JAL16` sets `S[d] = pc_next`, where `pc_next` is the word after its second
-word. It then sets `pc = target[14:0]`. Target bit 15 is reserved and must
-be zero in portable code.
+Both long forms occupy two consecutive instruction halfwords. `LDI16` uses
+the following halfword as `imm16`, writes `zx16(imm16)` to `rd`, and continues
+at `pc + 2`. Each long form is one architectural instruction; interrupts are
+not taken between its halfwords.
+
+`JAL16` uses the following halfword as the absolute instruction address
+`target`. Unless `Sd` is `S0`, it writes `pc + 2` to `Sd`, then transfers
+control to `target`. `JMP16 target` is the alias `JAL16 S0, target`.
 
 ## 6. Interrupts (`sys` Profile)
 
@@ -473,22 +493,20 @@ an interrupt vector. Interrupts are sampled between completed architectural
 instructions, using the value of `IE` resulting from the preceding
 instruction. A maskable interrupt is taken only when that value is one.
 
-At an interrupt boundary, `pc` is the word address of the next instruction
-that would have executed had the interrupt not been taken. On entry:
+At an interrupt boundary, `pc` is the instruction address of the next
+instruction that would have executed had the interrupt not been taken.
+On entry:
 
 ```text
-S[0] = pc
-IE = 0
-pc = interrupt_vector
+S[0] ← pc
+IE ← 0
+pc ← interrupt_vector
 ```
 
-`interrupt_vector` is the 15-bit word address selected for the accepted
-interrupt. Its value, the number of vectors and sources, source priority,
-level or edge triggering, interrupt acknowledgement, and controller behavior
-are platform-defined.
-
-`JAL16` is one architectural instruction. An interrupt cannot be taken
-between its first and second words.
+`interrupt_vector` is the XLEN-bit instruction address selected for the
+accepted interrupt. Its value, the number of vectors and sources,
+source priority, level or edge triggering, interrupt acknowledgement, and
+controller behavior are platform-defined.
 
 `CLI` clears `IE`, so no interrupt can be taken before the following
 instruction. `STI` sets `IE`, so an interrupt may be taken before the
@@ -501,85 +519,91 @@ responsibilities.
 ## 7. Profiles
 
 `min`, `sys`, and `full` are ordered ISA subsets: a program using only a
-smaller profile's defined instructions is valid on a larger profile. `nano`
-is an incompatible RISC-C subset profile; it is not upward-compatible with
-the mainline profiles.
+smaller profile's defined instructions is valid on a larger profile. Each
+mainline profile is available in RC16 and RC32 configurations. `nano` is an
+RC16-only subset profile.
 
-| instruction | `min` | `sys` | `full` | `nano†` |
-|---|:---:|:---:|:---:|:---:|
-| `LDW rd, [ra+simm8]` | X | X | X | X |
-| `STW rs, [ra+simm8]` | X | X | X | X |
-| `LDWX rd, [ra+rb]` | X | X | X | X |
-| `LDB rd, [ra+rb]` | X | X | X | X |
-| `LDBS rd, [ra+rb]` | X | X | X |  |
-| `STB rs, [ra]` | X | X | X | X |
-| `LDI rd, imm8` | X | X | X | X |
-| `LUI rd, imm8` | X | X | X | X |
-| `ADDI rd, simm8` | X | X | X | X |
-| `CMPI rs, simm8` | X | X | X |  |
-| `ANDI rd, imm8` | X | X | X | X |
-| `ORI rd, imm8` | X | X | X | X |
-| `XORI rd, imm8` | X | X | X | X |
-| `BEQZ rel8` | X | X | X | X |
-| `BNEZ rel8` | X | X | X | X |
-| `BLTZ rel8` | X | X | X | X |
-| `BGEZ rel8` | X | X | X | X |
-| `JMP8 rel8` | X | X | X | X |
-| `ADD rd, ra, rb` | X | X | X | X |
-| `SUB rd, ra, rb` | X | X | X | X |
-| `SLT rd, ra, rb` | X | X | X |  |
-| `SLTU rd, ra, rb` | X | X | X | X |
-| `AND rd, ra, rb` | X | X | X | X |
-| `OR rd, ra, rb` | X | X | X | X |
-| `XOR rd, ra, rb` | X | X | X | X |
-| `FSL1 rd, ra, rb` | X | X | X |  |
-| `FSR1 rd, ra, rb` | X | X | X |  |
-| `SHLI rd, ra, 1..8` |  | X | X |  |
-| `SHRI rd, ra, 1` | X | X | X | X |
-| `SHRI rd, ra, 2..8` |  | X | X |  |
-| `SARI rd, ra, 1` | X | X | X | X |
-| `SARI rd, ra, 2..8` |  | X | X |  |
-| `MUL rd, ra, rb` |  |  | X |  |
-| `MULHU rl, rh, rb` |  |  |  |  |
-| `DIVU rr, rq, rb` |  |  |  |  |
-| `RET Sa` | X | X | X |  |
-| `JAL Sd, ra` | X | X | X |  |
-| `JAL rd, ra` ‡ |  |  |  | X |
-| `MFS rd, Sa` | X | X | X |  |
-| `MTS Sd, ra` | X | X | X |  |
-| `RETI Sa` |  | X | X |  |
-| `JAL16 Sd, target` |  | X | X |  |
-| `CLI` |  | X | X |  |
-| `STI` |  | X | X |  |
+### 7.1 Instruction Availability
 
-† Nano is an incompatible subset profile; its encodings and architectural
-state differ from the mainline profiles and are defined in section 8.
+An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 
-‡ `JAL rd, ra` is Nano's incompatible general-register link encoding; its
-semantics are defined in section 8.
+| instruction | `RC32` | `min` | `sys` | `full` | `nano†` |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `LDW rd, [ra+simm8]` |  | X | X | X | X |
+| `STW rs, [ra+simm8]` |  | X | X | X | X |
+| `LDWX rd, [ra+rb]` |  | X | X | X | X |
+| `LDH rd, [ra+rb]` | X | X | X | X |  |
+| `LDHS rd, [ra+rb]` | X | X | X | X |  |
+| `LDB rd, [ra+rb]` |  | X | X | X | X |
+| `LDBS rd, [ra+rb]` |  | X | X | X |  |
+| `STB rs, [ra]` |  | X | X | X | X |
+| `STH rs, [ra]` | X | X | X | X |  |
+| `LDI rd, imm8` |  | X | X | X | X |
+| `LUI rd, imm8` |  | X | X | X | X |
+| `ADDI rd, simm8` |  | X | X | X | X |
+| `CMPI rs, simm8` |  | X | X | X |  |
+| `ANDI rd, imm8` |  | X | X | X | X |
+| `ORI rd, imm8` |  | X | X | X | X |
+| `XORI rd, imm8` |  | X | X | X | X |
+| `BEQZ rel8` |  | X | X | X | X |
+| `BNEZ rel8` |  | X | X | X | X |
+| `BLTZ rel8` |  | X | X | X | X |
+| `BGEZ rel8` |  | X | X | X | X |
+| `JMP8 rel8` |  | X | X | X | X |
+| `ADD rd, ra, rb` |  | X | X | X | X |
+| `SUB rd, ra, rb` |  | X | X | X | X |
+| `SLT rd, ra, rb` |  | X | X | X |  |
+| `SLTU rd, ra, rb` |  | X | X | X | X |
+| `AND rd, ra, rb` |  | X | X | X | X |
+| `OR rd, ra, rb` |  | X | X | X | X |
+| `XOR rd, ra, rb` |  | X | X | X | X |
+| `FSL1 rd, ra, rb` |  | X | X | X |  |
+| `FSR1 rd, ra, rb` |  | X | X | X |  |
+| `SHLI rd, ra, 1..8` |  |  | X | X |  |
+| `SHRI rd, ra, 1` |  | X | X | X | X |
+| `SHRI rd, ra, 2..8` |  |  | X | X |  |
+| `SARI rd, ra, 1` |  | X | X | X | X |
+| `SARI rd, ra, 2..8` |  |  | X | X |  |
+| `MUL rd, ra, rb` |  |  |  | X |  |
+| `MULHU rl, rh, rb` |  |  |  |  |  |
+| `DIVU rr, rq, rb` |  |  |  |  |  |
+| `RET Sa` |  | X | X | X |  |
+| `JAL Sd, ra` |  | X | X | X |  |
+| `LDI16 rd, imm16` |  |  | X | X |  |
+| `JAL16 Sd, target` |  |  | X | X |  |
+| `JAL rd, ra` ‡ |  |  |  |  | X |
+| `MFS rd, Sa` |  | X | X | X |  |
+| `MTS Sd, ra` |  | X | X | X |  |
+| `RETI Sa` |  |  | X | X |  |
+| `CLI` |  |  | X | X |  |
+| `STI` |  |  | X | X |  |
+
+† Nano is defined in section 8.
+
+‡ `JAL rd, ra` is Nano's general-register link encoding; its semantics are
+defined in section 8.
 
 The `mdu` extension is optional. It is not required by the `min`, `sys`,
 `full`, or `nano` profile.
 
-An unaligned word access has undefined behavior unless another architectural
-extension defines it.
+An unaligned halfword or data-word access has undefined behavior unless
+another architectural extension defines it.
 
 ## 8. Nano Profile
 
-Nano is an incompatible reduced RISC-C subset profile, shown as `nano` in
-the profile table. It is not a member of the ordered `min`, `sys`, and `full`
-profile family. A Nano binary is not generally valid for a mainline RISC-C
-profile, and a mainline binary is not generally valid for Nano.
+Nano is a separate reduced RISC-C profile, shown as `nano` in the profile
+table. Its encodings and architectural state differ from the ordered `min`,
+`sys`, and `full` profile family.
 
 Nano has only `r0..r7` and `pc` as architectural state. It has no S-register
-bank, `IE`, `EPC`, or interrupt entry. Code and data addressing, byte order,
-alignment, and the memory model are otherwise the same as for mainline
-RISC-C. Its defined instruction subset is shown in the `nano` column of the
-profile table.
+bank, `IE`, `EPC`, or interrupt entry. It uses RC16 widths. Instruction and
+data addressing, byte order, alignment, and the memory model are otherwise
+the same as for mainline RISC-C. Its defined instruction subset is shown in
+the `nano` column of the profile table.
 
 Nano redefines the register-indirect `JAL` encoding as
 `JAL rd, ra`: it writes `pc_next` to general register `rd` and transfers
-control through `R[a][14:0]`. With `rd = r0`, no link is written; this is a
+control through `R[a]`. With `rd = r0`, no link is written; this is a
 plain register jump. Assemblers may spell these forms as `CALL rd, ra` and
 `JMP ra`, respectively.
 
@@ -593,12 +617,16 @@ implementation alias.
 | symbol | meaning |
 |---|---|
 | `R[x]`, `S[x]` | general register or S-register `x` |
-| `M16[a]`, `M8[a]` | 16-bit word or 8-bit byte at byte address `a` |
-| `pc_next` | next instruction word address (`pc+1`, or `pc+2` for `JAL16`) |
+| `MXLEN[a]` | XLEN-bit data word at byte address `a` |
+| `M16[a]`, `M8[a]` | 16-bit halfword or 8-bit byte at byte address `a` |
+| `pc_next` | instruction address immediately following the current instruction |
+| `x ← y` | write value `y` to architectural state `x` |
+| `x = y` | define temporary value `x` as `y` |
 | `sx8`, `zx8` | sign-extend 8 bits; zero-extend 8 bits |
-| `signed16(x)` | interpret 16-bit value `x` as a signed two's-complement integer |
+| `sx16`, `zx16` | sign-extend 16 bits; zero-extend 16 bits |
+| `signedXLEN(x)` | interpret XLEN-bit value `x` as a signed two's-complement integer |
 | `x >>> n` | arithmetic right shift of signed value `x` by `n` bits |
 | `x[h:l]` | bit field |
 
-Arithmetic register results wrap modulo 2^16. `M16` accesses are subject to
-the alignment rule in section 2.2.
+Arithmetic register results wrap modulo `2^XLEN`. `M16` and `MXLEN` accesses
+are subject to the alignment rules in section 2.2.

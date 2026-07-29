@@ -16,12 +16,12 @@ feature_check_callee_saved:
         STW     r5, [r7+0]
         STW     r6, [r7+2]
 
-        LDI16   r5, 0x55aa
+        LI      r5, 0x55aa
         LDI     r1, 7
-        LDI16   r0, code(feature_abi_pressure)
+        LI      r0, code(feature_abi_pressure)
         JAL     r6, r0
 
-        LDI16   r0, 0x55aa
+        LI      r0, 0x55aa
         SUB     r0, r5, r0
         BNEZ    .Lr5_failed_nano
         LDI     r1, 0
@@ -46,20 +46,20 @@ feature_check_callee_saved:
         MFS     r0, S7
         STW     r0, [r7+4]
 
-        LDI16   r5, 0x55aa
-        LDI16   r6, 0xaa55
+        LI      r5, 0x55aa
+        LI      r6, 0xaa55
         LDI     r1, 7
 #ifdef __RISCC_MIN__
-        LDI16   r0, code(feature_abi_pressure)
+        LI      r0, code(feature_abi_pressure)
         CALL    r0
 #else
         CALL16  feature_abi_pressure
 #endif
 
-        LDI16   r0, 0x55aa
+        LI      r0, 0x55aa
         SUB     r0, r5, r0
         BNEZ    .Lr5_failed
-        LDI16   r0, 0xaa55
+        LI      r0, 0xaa55
         SUB     r0, r6, r0
         BNEZ    .Lr6_failed
         LDI     r1, 0

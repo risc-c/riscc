@@ -3,8 +3,8 @@
 // Fetch and execute overlap. ECP5 uses an asynchronous two-read LUTRAM RF;
 // iCE40 uses two synchronous EBR copies and stalls on a preceding-result RAW.
 // Results write directly from execute without a forwarding network.
-// Memory, shifts, and soft MUL use small side states; JAL16 consumes the
-// sequential target word already present in the fetch-response slot.
+// Memory, shifts, and soft MUL use small side states. JAL16 and LDI16 consume
+// the following halfword already present in the fetch-response slot.
 
 `default_nettype none
 
@@ -147,12 +147,14 @@ module riscc_fast #(
 `else
     wire x_control_ie_value = x_ddd[1];
 `endif
-    wire x_return = x_system & ~x_bbb[1] & ~x_bbb[0];
+    wire x_return = x_system & ~x_bbb[2] & ~x_bbb[1] & ~x_bbb[0];
     wire x_return_sets_ie = x_return & x_control_ie_value;
     wire x_link_jump = x_system & ~x_bbb[1] & x_bbb[0];
     wire x_jal = x_link_jump & ~x_bbb[2];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
-    wire x_jal16 = x_link_jump & x_bbb[2];
+    wire x_long_form = x_system & x_bbb[2] & ~x_bbb[1];
+    wire x_jal16 = x_long_form & x_bbb[0];
+    wire x_ldi16 = x_long_form & ~x_bbb[0];
     wire x_ie_control = x_system & x_bbb[2] & x_bbb[1];
 
     wire [3:0] x_src_a = x_branch ? 4'h0 :
@@ -216,10 +218,11 @@ module riscc_fast #(
     wire load_high_lane = side_count_q[0];
     wire saved_load_byte = side_aux_q[3];
     wire saved_load_signed = side_aux_q[4];
-    wire [7:0] load_low_byte = (saved_load_byte & load_high_lane) ?
+    wire format_load_byte = in_load & saved_load_byte;
+    wire [7:0] load_low_byte = (format_load_byte & load_high_lane) ?
         mem_rdata[15:8] : mem_rdata[7:0];
     wire load_byte_sign = load_high_lane ? mem_rdata[15] : mem_rdata[7];
-    wire [7:0] load_high_byte = saved_load_byte ?
+    wire [7:0] load_high_byte = format_load_byte ?
         {8{saved_load_signed & load_byte_sign}} : mem_rdata[15:8];
     wire [15:0] load_value = {load_high_byte, load_low_byte};
 
@@ -316,10 +319,19 @@ module riscc_fast #(
         x_jal16 ? 16'h0001 : 16'h0000;
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
+`ifndef RISCC_FAST_AGILEX
+        (in_load | (normal_x & x_ldi16)) ? load_value :
+`else
         in_load ? load_value :
+`endif
         normal_x ? run_result : 16'h0000;
 `else
+`ifndef RISCC_FAST_AGILEX
+    wire [15:0] alu_b = (normal_x & x_ldi16) ? load_value :
+        normal_x ? run_result :
+`else
     wire [15:0] alu_b = normal_x ? run_result :
+`endif
         state_q[1] ?
             (state_q[0] ? shift_step : {side_data_q[14:0], 1'b0}) :
         ~state_q[0] ? load_value : 16'h0000;
@@ -348,6 +360,9 @@ module riscc_fast #(
     wire unsigned_less = ~alu_carry_out;
     wire x_compare = x_reg_alu_group & ~x_f5[2] & x_f5[1];
     wire [15:0] execute_result =
+`ifdef RISCC_FAST_AGILEX
+        (normal_x && x_ldi16) ? mem_rdata :
+`endif
 `ifdef RISCC_FAST_DSP
         (normal_x && x_multiply) ? direct_mul_result :
 `endif
@@ -358,12 +373,12 @@ module riscc_fast #(
     wire x_branch_taken = x_ddd[2] |
         ((x_ddd[1] ? rf_a[15] : x_r0_zero) ^ x_ddd[0]);
 `ifdef RISCC_FAST_SYNC_RF
-    wire x_jal16_wait = normal_x & x_jal16 & ~fetch_pending_q;
+    wire x_long_wait = normal_x & x_long_form & ~fetch_pending_q;
     wire x_jal16_execute = x_jal16 & fetch_pending_q;
     wire x_redirect = normal_x &
         ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
 `else
-    wire x_jal16_wait = run_x & x_jal16 & ~fetch_pending_q;
+    wire x_long_wait = run_x & x_long_form & ~fetch_pending_q;
     wire x_jal16_execute = run_x & x_jal16 & fetch_pending_q;
     wire x_redirect = run_x &
         ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
@@ -374,7 +389,9 @@ module riscc_fast #(
     // ------------------------------------------------------------------
     // Commit, hazards, and RF writeback
     // ------------------------------------------------------------------
-    wire x_result_we = x_imm_alu | x_shift | x_funnel |
+    wire x_result_we =
+        x_ldi16 |
+        x_imm_alu | x_shift | x_funnel |
 `ifdef RISCC_FAST_DSP
         x_reg_alu | x_multiply |
 `else
@@ -409,7 +426,7 @@ module riscc_fast #(
     wire [15:0] side_data_input = alu_result;
 `endif
     wire run_commit = normal_x & ~x_side_start &
-                      ~x_jal16_wait;
+                      ~x_long_wait;
     wire side_commit = in_load | shift_finish | mul_finish;
     wire commit_valid = take_irq | run_commit | side_commit;
 
@@ -509,11 +526,11 @@ module riscc_fast #(
     wire frontend_side_finish = shift_finish;
     assign accept_fetch = fetch_pending_q &
         ((in_run & ~rf_wait_cycle & ~x_redirect & ~take_irq &
+          ~(normal_x & x_ldi16) &
           (~x_side_start | x_shift_start | x_load_start)) |
          (frontend_side_finish & ~x_valid_q));
     wire fetch_hold = rf_wait_cycle |
         (in_shift & (~shift_finish | x_valid_q));
-
     assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
     assign mem_we = run_data_port & x_store;
     wire store_byte = x_load_byte;
@@ -535,7 +552,8 @@ module riscc_fast #(
             trace_pc_live_q <= 15'd2;
             trace_ie_live_q <= 1'b0;
         end else if (run_commit) begin
-            trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
+            trace_pc_live_q <= x_redirect ? x_redirect_pc :
+                               x_pc_q + (x_ldi16 ? 15'd2 : 15'd1);
             if (x_ie_control | x_return_sets_ie)
                 trace_ie_live_q <= x_control_ie_value;
         end else if (side_commit) begin
@@ -563,8 +581,7 @@ module riscc_fast #(
         end
 `endif
 
-        // Start a side state from X.  The younger D instruction is retained,
-        // except for JAL16 which is an unconditional redirect.
+        // Start a side state from X. The younger D instruction is retained.
         if (x_side_start) begin
 `ifdef RISCC_TRACE
             side_pc_q <= x_pc_q;
@@ -611,7 +628,7 @@ module riscc_fast #(
                 x_rf_wait_q <= 1'b0;
             end else begin
 `endif
-            x_valid_q <= (~take_irq & x_jal16_wait) | accept_fetch;
+            x_valid_q <= (~take_irq & x_long_wait) | accept_fetch;
             if (accept_fetch) begin
                 x_pc_q <= fetch_pending_pc_q;
                 x_instr_q <= mem_rdata;
@@ -645,7 +662,8 @@ module riscc_fast #(
             fetch_pc_q <= fetch_pc_q + 1'b1;
 `ifdef RISCC_FAST_SYNC_RF
         else if (issue_fetch && ~x_shift_start &&
-                 ~incoming_rf_hazard && ~(in_load && x_rf_wait_q))
+                 ~incoming_rf_hazard &&
+                 ~(in_load && x_rf_wait_q))
 `else
         else if (issue_fetch && ~x_shift_start)
 `endif
@@ -761,7 +779,7 @@ module riscc_fast_rf (
 `else
     // Keep the storage as an ordinary asynchronous-read MLAB and provide
     // Fast's write-first architectural view with a registered last-write
-    // overlay.  Crucially, `we` itself is not in the read mux: the executing
+    // overlay. Crucially, `we` itself is not in the read mux: the executing
     // instruction must still see the old operand before its write edge.
     (* ramstyle = "MLAB, no_rw_check" *) reg [15:0] mem [0:15];
     reg        last_we_q;

@@ -47,7 +47,7 @@ __divsf3:
         XOR     r0, r2, r4
         STW     r0, [r7 - 6]
 
-        LDI16   r5, 0x7f80
+        LI      r5, 0x7f80
         AND     r6, r2, r5
         MOV     r0, r6
         BNEZ    .Lnumerator_normal
@@ -64,7 +64,7 @@ __divsf3:
 
         /* Division by exponent-zero denominator. */
         LDI     r1, 0
-        LDI16   r2, 0x7f80
+        LI      r2, 0x7f80
 .Learly_sign:
         LDW     r0, [r7 - 6]
         BGEZ    .Learly_return
@@ -79,7 +79,7 @@ __divsf3:
         /* Biased result exponent: a_exp - b_exp + 127. */
         LDW     r6, [r7 - 4]
         SUB     r6, r6, r0
-        LDI16   r5, 0x3f80
+        LI      r5, 0x3f80
         ADD     r6, r6, r5
         STW     r6, [r7 - 4]
 

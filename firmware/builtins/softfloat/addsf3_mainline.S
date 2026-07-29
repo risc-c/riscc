@@ -90,7 +90,7 @@ __addsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LDI16   r2, 0x7fc0
+        LI      r2, 0x7fc0
 .Lspecial_return:
         LDW     r6, [r7 - 10]
         LDW     r5, [r7 - 12]

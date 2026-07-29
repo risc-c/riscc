@@ -84,7 +84,7 @@ __mulsf3:
         STW     r0, [r7 - 8]
 
         /* Exponent-zero operands, including subnormals, flush to zero. */
-        LDI16   r5, 0x7f80
+        LI      r5, 0x7f80
         AND     r0, r2, r5
         BNEZ    .Lcheck_right
 

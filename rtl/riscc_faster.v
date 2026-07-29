@@ -2,11 +2,10 @@
 //
 // The pipeline is IF, Decode/RF, Execute.  Decode drives two replicated
 // synchronous MLAB register files; their registered read outputs are the
-// Execute operands.  There is deliberately no bypass network.  A decoded
-// instruction that reads the live Execute destination remains in D through
-// the producer's write edge, then repeats its RF read on the following edge.
+// Execute operands. A write-edge bypass lets a dependent decoded instruction
+// issue with its producer instead of repeating the RF read one cycle later.
 //
-// Loads, iterative shifts, MUL, and JAL16 use short Execute substates.  MUL
+// Loads, iterative shifts, MUL, and long forms use short Execute substates. MUL
 // uses a registered DSP by default; RISCC_FASTER_SOFT_MUL selects an iterative
 // fabric implementation.  The instruction, destination, and operands remain
 // owned by X until the operation commits.  The unified synchronous memory
@@ -30,14 +29,18 @@ module riscc_faster #(
     localparam [2:0] ST_LOAD  = 3'd1;
     localparam [2:0] ST_SHIFT = 3'd2;
     localparam [2:0] ST_MUL   = 3'd3;
-    localparam [2:0] ST_JAL16 = 3'd4;
+    localparam [2:0] ST_LONG  = 3'd4;
 
+`ifdef RISCC_FASTER_SOFT_MUL
     reg [2:0] state_q;
+`else
+    (* syn_encoding = "user" *) reg [2:0] state_q;
+`endif
     wire in_run   = state_q == ST_RUN;
     wire in_load  = state_q == ST_LOAD;
     wire in_shift = state_q == ST_SHIFT;
     wire in_mul   = state_q == ST_MUL;
-    wire in_jal16 = state_q == ST_JAL16;
+    wire in_long  = state_q == ST_LONG;
 
     reg interrupt_enable_q;
 
@@ -88,22 +91,18 @@ module riscc_faster #(
     wire d_load = d_memory & ~d_store;
     wire d_link_jump = d_system & ~d_bbb[1] & d_bbb[0];
     wire d_jal = d_link_jump & ~d_bbb[2];
+    wire d_even_control = d_system & ~d_bbb[1] & ~d_bbb[0];
     wire d_jal16 = d_link_jump & d_bbb[2];
+    wire d_ldi16 = d_even_control & d_bbb[2];
     // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Register the direct
     // IE-control plane; Execute adds RETI using the retained ccc field.
-    wire d_return = d_system & ~d_bbb[1] & ~d_bbb[0];
+    wire d_return = d_even_control & ~d_bbb[2];
     wire d_move = d_system & ~d_bbb[2] & d_bbb[1];
     wire d_ie_control = d_system & d_bbb[2] & d_bbb[1];
     wire d_load_byte = d_reg_memory & d_f5[1];
     wire d_signed_byte = d_indexed_memory & d_f5[2];
     wire d_cmpi = d_imm_alu & (d_aaa == 3'b011);
 
-    // Broad don't-care terms match riscc_fast's area-tuned source decode.
-    // They can cause harmless extra stalls for reserved encodings.
-    wire d_uses_a = ~d_class[1] | d_register |
-        (d_immediate & (d_aaa[1] | d_aaa[2]));
-    wire d_uses_b = d_imm_store | d_reg_store | d_reg_alu_group | d_funnel |
-                    d_indexed_memory;
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
         d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
@@ -112,7 +111,7 @@ module riscc_faster #(
     wire [3:0] d_src_b = {1'b0,
         d_src_b_is_ddd ? d_ddd : d_bbb};
 
-    wire d_result_we = d_imm_alu | d_shift | d_funnel |
+    wire d_result_we = d_ldi16 | d_imm_alu | d_shift | d_funnel |
                        d_reg_alu | d_multiply |
                        d_move | (d_link_jump & (|d_ddd));
     wire d_we = d_load | d_result_we;
@@ -156,9 +155,12 @@ module riscc_faster #(
     reg x_store_q;
     reg x_load_byte_q;
     reg x_signed_byte_q;
-    reg x_return_q;
+    reg x_even_control_q;
     reg x_jal_q;
     reg x_jal16_q;
+`ifdef RISCC_FASTER_SOFT_MUL
+    reg x_ldi_fast_q;
+`endif
     reg x_move_q;
     reg x_ie_control_q;
 `ifdef RISCC_FASTER_SOFT_MUL
@@ -209,9 +211,14 @@ module riscc_faster #(
     wire x_store = x_store_q;
     wire x_load_byte = x_load_byte_q;
     wire x_signed_byte = x_signed_byte_q;
-    wire x_return = x_return_q;
+    wire x_return = x_even_control_q & ~x_bbb[2];
     wire x_jal = x_jal_q;
-    wire x_jal16 = x_jal16_q;
+    wire x_jal16 = x_jal16_q
+`ifndef RISCC_FASTER_SOFT_MUL
+                       & ~x_even_control_q
+`endif
+                       ;
+    wire x_ldi16 = x_even_control_q & x_bbb[2];
     wire x_link_jump = x_jal | x_jal16;
     wire x_move = x_move_q;
     wire x_ie_control = x_ie_control_q;
@@ -310,7 +317,11 @@ module riscc_faster #(
     wire run_rf_b = x_reg_arithmetic | x_indexed_memory;
     wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
 `endif
-    wire [15:0] run_result = run_logic ? x_logic_result :
+    wire [15:0] run_result =
+`ifdef RISCC_FASTER_SOFT_MUL
+        x_ldi16 ? d_instr_q :
+`endif
+        run_logic ? x_logic_result :
         run_imm_s ? x_imm_s :
         run_rf_b ? rf_b :
         run_short_imm ? immediate_result :
@@ -318,25 +329,42 @@ module riscc_faster #(
         (x_shift | x_funnel) ? x_shift_step :
         x_jal16 ? 16'h0001 : 16'h0000;
 
+`ifdef RISCC_FASTER_SOFT_MUL
+    // Keep the fabric build's address/arithmetic operand off the general
+    // writeback-result mux. The existing registered result classes provide
+    // the two selects without another major-opcode decode.
+    wire [15:0] alu_b = x_run_rf_b_q ? rf_b :
+                        x_run_imm_s_q ? x_imm_s : 16'h0000;
+`else
+    // Sharing the result mux with the DSP build's adder maps substantially
+    // smaller than a separate operand mux on Agilex.
+    wire [15:0] alu_b = run_result;
+`endif
+
     wire alu_subtract = normal_x &
         ((x_imm_arithmetic & x_aaa[0]) |
          (x_reg_arithmetic & (|x_f3[1:0])));
     wire alu_carry_in = alu_subtract |
         (normal_x & (x_branch | x_link_jump));
-    wire [15:0] adjusted_alu_b = run_result ^ {16{alu_subtract}};
+    wire [15:0] adjusted_alu_b = alu_b ^ {16{alu_subtract}};
     wire [16:0] alu_sum = {1'b0, alu_a} +
                           {1'b0, adjusted_alu_b} +
                           {{16{1'b0}}, alu_carry_in};
     wire [15:0] alu_result = alu_sum[15:0];
     wire alu_carry_out = alu_sum[16];
-    wire alu_overflow = (alu_a[15] ^ run_result[15]) &
+    wire alu_overflow = (alu_a[15] ^ alu_b[15]) &
                         (alu_result[15] ^ alu_a[15]);
     wire signed_less = alu_result[15] ^ alu_overflow;
     wire unsigned_less = ~alu_carry_out;
     wire x_compare = x_reg_alu_group & ~x_f3[2] & x_f3[1];
     wire [15:0] execute_result = x_compare ?
         {15'h0000, x_f3[0] ? unsigned_less : signed_less} :
+`ifdef RISCC_FASTER_SOFT_MUL
+        (x_run_imm_s_q | x_run_rf_b_q | x_link_jump) ?
+            alu_result : run_result;
+`else
         alu_result;
+`endif
 
     wire [15:0] x_effective_address = alu_result;
     wire [14:0] x_pc_plus1 = x_pc_q + 15'd1;
@@ -351,9 +379,14 @@ module riscc_faster #(
     wire x_load_start = normal_x & x_memory & ~x_store;
     wire x_shift_start = normal_x & x_shift & (|x_bbb);
     wire x_mul_start = normal_x & x_multiply;
-    wire x_jal16_start = normal_x & x_jal16;
+    wire x_long_start = normal_x &
+`ifdef RISCC_FASTER_SOFT_MUL
+                        (x_jal16 | (x_ldi16 & ~x_ldi_fast_q));
+`else
+                        x_jal16_q;
+`endif
     wire x_side_start = x_load_start | x_shift_start |
-                        x_mul_start | x_jal16_start;
+                        x_mul_start | x_long_start;
 
     wire run_commit = normal_x & ~x_side_start;
     wire load_commit = in_load;
@@ -363,14 +396,16 @@ module riscc_faster #(
 `else
     wire mul_commit = in_mul;
 `endif
-    wire jal16_commit = in_jal16;
+    wire long_commit = in_long;
     wire commit_valid = run_commit | load_commit | shift_commit |
-                        mul_commit | jal16_commit;
+                        mul_commit | long_commit;
 
     wire run_redirect = run_commit &
         ((x_branch & x_branch_taken) | x_jal | x_return);
-    wire x_redirect = run_redirect | jal16_commit;
-    wire [14:0] x_redirect_pc = jal16_commit ? mem_rdata[14:0] :
+    wire x_redirect = run_redirect | long_commit;
+    wire [14:0] long_redirect_pc = x_ldi16 ? x_pc_plus2 :
+                                               mem_rdata[14:0];
+    wire [14:0] x_redirect_pc = long_commit ? long_redirect_pc :
         x_branch ? alu_result[14:0] : rf_a[14:0];
     wire frontend_flush = take_irq | x_redirect;
     wire [14:0] frontend_redirect_pc = take_irq ? 15'd2 :
@@ -378,11 +413,8 @@ module riscc_faster #(
 
     wire x_finish = take_irq | commit_valid;
     wire x_slot_available = ~x_valid_q | x_finish;
-    wire d_data_hazard = d_valid_q & x_valid_q & x_we_q &
-        ((d_uses_a & (d_src_a == x_dst_q)) |
-         (d_uses_b & (d_src_b == x_dst_q)));
     wire d_issue = d_valid_q & x_slot_available &
-                   ~d_data_hazard & ~frontend_flush;
+                   ~frontend_flush;
     wire d_can_accept = ~d_valid_q | d_issue;
 
     // ------------------------------------------------------------------
@@ -394,7 +426,11 @@ module riscc_faster #(
         {{8{x_signed_byte & load_byte[7]}}, load_byte} : mem_rdata;
 
     wire [15:0] run_write_data = x_jal ?
-        {1'b0, x_pc_plus1} : execute_result;
+        {1'b0, x_pc_plus1} :
+`ifndef RISCC_FASTER_SOFT_MUL
+        x_ldi16 ? d_instr_q :
+`endif
+        execute_result;
 `ifdef RISCC_FASTER_SOFT_MUL
     wire [15:0] mul_write_data = mul_step;
 `else
@@ -407,7 +443,9 @@ module riscc_faster #(
 `else
         in_mul ? mul_write_data :
 `endif
-        in_jal16 ? {1'b0, x_pc_plus2} : run_write_data;
+        in_long ?
+            (x_ldi16 ? mem_rdata : {1'b0, x_pc_plus2}) :
+        run_write_data;
     wire rf_we = take_irq | (commit_valid & x_we_q);
     wire [3:0] rf_waddr = take_irq ? 4'h8 : x_dst_q;
     wire [15:0] rf_wdata = take_irq ? {1'b0, x_pc_q} : commit_data;
@@ -424,15 +462,16 @@ module riscc_faster #(
     // Unified memory and IF bookkeeping
     // ------------------------------------------------------------------
     wire x_memory_request = normal_x & x_memory;
-    wire x_port_request = x_memory_request | x_jal16_start;
+    wire x_port_request = x_memory_request | x_long_start;
 
     wire f_accept = f_pending_q & d_can_accept & ~frontend_flush;
+    wire f_literal_accept = f_accept & d_issue & d_ldi16;
     wire f_response_held = f_pending_q & ~d_can_accept;
     wire [14:0] fetch_request_pc = f_response_held ?
                                    f_pending_pc_q : f_pc_q;
 
     assign mem_addr = x_memory_request ? x_effective_address[15:1] :
-                      x_jal16_start ? x_pc_plus1 : fetch_request_pc;
+                      x_long_start ? x_pc_plus1 : fetch_request_pc;
     assign mem_we = x_memory_request & x_store;
     assign mem_wdata = x_load_byte ? {2{rf_b[7:0]}} : rf_b;
     assign mem_wmask = x_load_byte ?
@@ -470,9 +509,16 @@ module riscc_faster #(
             x_store_q <= d_store;
             x_load_byte_q <= d_load_byte;
             x_signed_byte_q <= d_signed_byte;
-            x_return_q <= d_return;
+            x_even_control_q <= d_even_control;
             x_jal_q <= d_jal;
+`ifdef RISCC_FASTER_SOFT_MUL
             x_jal16_q <= d_jal16;
+            x_ldi_fast_q <= d_ldi16 & f_pending_q;
+`else
+            // Reuse JAL16's side-state bit for the rare LDI16 whose pending
+            // sequential literal response was displaced by a data request.
+            x_jal16_q <= d_jal16 | (d_ldi16 & ~f_pending_q);
+`endif
             x_move_q <= d_move;
             x_ie_control_q <= d_ie_control;
 `ifdef RISCC_FASTER_SOFT_MUL
@@ -508,8 +554,8 @@ module riscc_faster #(
 `else
             side_data_q <= x_mul_result;
 `endif
-        end else if (x_jal16_start) begin
-            state_q <= ST_JAL16;
+        end else if (x_long_start) begin
+            state_q <= ST_LONG;
 `ifdef RISCC_FASTER_SOFT_MUL
         end else if (in_mul & ~mul_finish) begin
             side_data_q <= mul_step;
@@ -525,13 +571,19 @@ module riscc_faster #(
             x_valid_q <= d_issue;
         end
 
+        // The response following a decoded LDI16 is its literal, not another
+        // instruction. D is otherwise idle until LDI16 commits, so retain it
+        // in the existing instruction register.
+        if (f_literal_accept)
+            d_instr_q <= mem_rdata;
+
         // Architectural IE changes only at completed instruction boundaries.
         if (take_irq)
             interrupt_enable_q <= 1'b0;
         else if (normal_x & x_ie_write)
             interrupt_enable_q <= x_ddd[2];
 
-        // Fetch request/response tags.  A data/JAL16 request invalidates the
+        // Fetch request/response tags. A data/long-form request invalidates the
         // following mem_rdata as an instruction response.  If a blocked
         // response was displaced, rewind the sequential request pointer.
         if (frontend_flush) begin
@@ -550,7 +602,7 @@ module riscc_faster #(
 
         if (frontend_flush) begin
             d_valid_q <= 1'b0;
-        end else if (f_accept) begin
+        end else if (f_accept && ~f_literal_accept) begin
             d_valid_q <= 1'b1;
             d_pc_q <= f_pending_pc_q;
             d_instr_q <= mem_rdata;
@@ -570,8 +622,9 @@ module riscc_faster #(
 endmodule
 
 // Two synchronous one-read/one-write copies provide the two architectural
-// read ports.  The core never consumes a colliding read: a RAW match suppresses
-// read_en through the producer's write edge, then repeats the read next cycle.
+// read ports. A decoded successor can read on its producer's write edge. The
+// explicit bypass keeps the MLABs in no-read-during-write mode; inferring the
+// RAM's native new-data mode adds a much slower pass-through path on Agilex.
 module riscc_faster_rf (
     input  wire        clk,
     input  wire        read_en,
@@ -593,8 +646,8 @@ module riscc_faster_rf (
 
     always @(posedge clk) begin
         if (read_en) begin
-            rdata_a_q <= mem_a[raddr_a];
-            rdata_b_q <= mem_b[raddr_b];
+            rdata_a_q <= (we && (waddr == raddr_a)) ? wdata : mem_a[raddr_a];
+            rdata_b_q <= (we && (waddr == raddr_b)) ? wdata : mem_b[raddr_b];
         end
         if (we) begin
             mem_a[waddr] <= wdata;
