@@ -287,7 +287,15 @@ class Sim:
         bbb = ir & 7
         imm8 = ir & 0xFF
         if opc == 0:
-            raise Undefined("00 prefix is reserved")
+            if not self.sys_tier:
+                raise Undefined("long instruction outside sys profile")
+            if aaa != 7 or imm8 != 0:
+                raise Undefined("long instruction encoding reserved")
+            extension = self.mem[pc_next & 0x7FFF]
+            pc_next = (pc_next + 1) & 0x7FFF
+            if ddd != 0:                                # JAL16 Sd, target
+                self.s[ddd] = (self.pc + 2) & 0xFFFF
+            pc_next = extension & 0x7FFF
         elif opc == 1:
             addr = (self.r[aaa] + sx8(imm8 & 0xFE)) & 0xFFFF
             if ir & 1:
@@ -400,11 +408,6 @@ class Sim:
                 if bbb != 0:
                     raise Undefined("STB sub-op reserved")
                 self.stb(self.r[aaa], self.r[ddd])
-            elif f5 == 0x1D and bbb == 4 and aaa == 0:  # LDI16 rd, imm16
-                if not self.sys_tier:
-                    raise Undefined("sys-profile op in min")
-                self.r[ddd] = self.mem[pc_next & 0x7FFF]
-                pc_next = (pc_next + 1) & 0x7FFF
             elif f5 == 0x1F:                            # S/control group
                 if self.nano:
                     if bbb != 1:
@@ -433,13 +436,6 @@ class Sim:
                     self.r[ddd] = self.s[aaa]
                 elif bbb == 3:                          # MTS Sd, ra
                     self.s[ddd] = self.r[aaa]
-                elif bbb == 5 and aaa == 0:       # JAL16 Sd (two halfwords)
-                    if not self.sys_tier:
-                        raise Undefined("sys-profile op in min")
-                    target = self.mem[pc_next & 0x7FFF]
-                    if ddd != 0:
-                        self.s[ddd] = (self.pc + 2) & 0xFFFF
-                    pc_next = target & 0x7FFF
                 elif bbb == 6:                          # CLI / STI
                     if not self.sys_tier:
                         raise Undefined("sys-profile op in min")

@@ -76,7 +76,7 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // ST_INSTRUCTION_CAPTURE latches the instruction; ST_DECODE consumes it.
     // The extra state avoids a mem_rdata/instruction mux across the decoder.
-    wire immediate_memory = !instruction_q[15];
+    wire immediate_memory = !instruction_q[15] && register_format_q;
     wire immediate_store_word = immediate_memory && instruction_q[14];
     wire immediate_class = instruction_q[15] && !register_format_q;
     wire register_class  = instruction_q[15] && register_format_q;
@@ -95,9 +95,8 @@ module riscc_tiny16 #(
     wire immediate_arithmetic = immediate_class &&
                                 !immediate_opcode[2] && immediate_opcode[1];
     wire compare_immediate = immediate_arithmetic & immediate_opcode[0];
-    // The bbb=100/101 long forms share the following halfword fetch.
-    wire long_form_op = system_group && rb[2] && !rb[1];
-    wire jal16_op = long_form_op && rb[0];
+    wire long_form_op = !instruction_q[15] && !register_format_q;
+    wire jal16_op = long_form_op;
     wire link_enabled = |rd;    // Sd == S0: no link written (plain jump)
     wire immediate_logic = immediate_class && immediate_opcode[2] &&
                            !(immediate_opcode[1] && immediate_opcode[0]);
@@ -230,7 +229,7 @@ module riscc_tiny16 #(
     // rf_we qualifies the state; the bank select can keep the decoded MTS
     // value and need not repeat the link-enable check.
     wire rf_write_system_bank = mts_op | in_irq_entry |
-                                (in_link_writeback && rb[0]);
+        (in_link_writeback && (jal_register_op || jal16_op));
     wire rf_we =
         (in_link_writeback && link_enabled) |
         in_compare_writeback | in_irq_entry | execute_complete
@@ -259,7 +258,7 @@ module riscc_tiny16 #(
     wire byte_lane_q = captured_bit_q;
     wire [7:0] selected_load_byte = byte_lane_q ?
                                     mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = byte_memory_op ?
+    wire [15:0] load_result = long_form_op ? mem_rdata : byte_memory_op ?
         {{8{signed_byte_load && selected_load_byte[7]}}, selected_load_byte} :
         mem_rdata;
 
@@ -327,7 +326,7 @@ module riscc_tiny16 #(
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
     wire alu_carry_in =
-        in_decode | subtract_enable | (in_link_writeback && rb[2]) |
+        in_decode | subtract_enable | (in_link_writeback && long_form_op) |
         (in_mdr_writeback && funnel_left_op && funnel_bit_q);
     wire [16:0] alu_sum_ext = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                               {16'h0000, alu_carry_in};
@@ -385,11 +384,11 @@ module riscc_tiny16 #(
             state_q[ST_MEMORY_ACCESS] <= memory_address_ready;
             state_q[ST_LOAD_CAPTURE] <=
                 (in_memory_access && !store_op) |
-                (in_link_writeback && rb[2]);
+                (in_link_writeback && long_form_op);
             state_q[ST_LINK_WRITEBACK] <=
                 start_register_call | (in_decode && long_form_op);
             state_q[ST_JUMP_COMMIT] <=
-                (in_link_writeback && !rb[2]) |
+                (in_link_writeback && !long_form_op) |
                 (in_load_capture && jal16_op) | (in_decode && return_op);
             state_q[ST_COMPARE_WRITEBACK] <= in_execute && register_compare;
             state_q[ST_IRQ_ENTRY] <= take_interrupt;

@@ -168,5 +168,5 @@
   <text class="small" x="600" y="815" text-anchor="middle">DSP capture · soft 15 steps</text>
   <rect class="side" x="735" y="770" width="190" height="54" rx="8"/>
   <text class="state-title" x="830" y="792" text-anchor="middle">LONG</text>
-  <text class="small" x="830" y="815" text-anchor="middle">JAL16 / LDI16 response</text>
+  <text class="small" x="830" y="815" text-anchor="middle">JAL16 target response</text>
 </svg>

@@ -68,7 +68,6 @@ R_FUNC = {
     "SHLI": 0x0F,
     "FSL1": 0x13,
     "FSR1": 0x12,
-    "LDI16": 0x1D,
     "SYS": 0x1F,
 }
 
@@ -76,8 +75,7 @@ R_FUNC = {
 # 000 for the IE-preserving/clearing form and 111 for the IE-setting form.
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
-SYS_SUB = {"RET": 0, "JAL": 1, "MFS": 2, "MTS": 3,
-           "LDI16": 4, "JAL16": 5, "IE": 6}
+SYS_SUB = {"RET": 0, "JAL": 1, "MFS": 2, "MTS": 3, "IE": 6}
 CONTROL_CCC = {"RET": 0, "RETI": 7, "CLI": 0, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
@@ -445,8 +443,12 @@ def enc_branch(cc: int, rel8: int) -> int:
     return enc_i(cc, 7, rel8)
 
 
-def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
-                pseudo_ldi16: bool = False) -> bytes:
+def enc_long(rd: int, op: int, imm16: int) -> bytes:
+    head = (rd << 11) | (op << 8)
+    return encode_word(head) + encode_word(imm16)
+
+
+def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -> bytes:
     op = op.upper()
 
     def n_ops(count: int, usage: str) -> None:
@@ -465,8 +467,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
             n_ops(1, f"{op} target")
             sd = 7 if op == "CALL16" else 0
             target = eval_expr(operands[0], labels)
-        return (encode_word(enc_r(sd, 0, R_FUNC["SYS"], SYS_SUB["JAL16"]))
-                + encode_word(to_instruction_addr(target, f"{op} target")))
+        return enc_long(sd, 7,
+                        to_instruction_addr(target, f"{op} target"))
 
     if op in ("RET", "RETS", "RETI", "ERET"):
         # RET Sa: pc = S[aaa], IE untouched; RETI Sa also sets IE.
@@ -489,11 +491,8 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
         n_ops(2, "LDI16 rd, imm16")
         rd = reg(operands[0])
         imm = eval_expr(operands[1], labels) & 0xFFFF
-        if pseudo_ldi16:
-            return encode_word(enc_i(rd, I_OP["LUI"], (imm >> 8) & 0xFF)) + \
-                encode_word(enc_i(rd, I_OP["ORI"], imm & 0xFF))
-        return encode_word(enc_r(rd, 0, R_FUNC["LDI16"],
-                                 SYS_SUB["LDI16"])) + encode_word(imm)
+        return encode_word(enc_i(rd, I_OP["LUI"], (imm >> 8) & 0xFF)) + \
+            encode_word(enc_i(rd, I_OP["ORI"], imm & 0xFF))
 
     if op == "NOP":
         n_ops(0, "NOP")
@@ -618,16 +617,14 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
     raise AsmError(f"unknown instruction: {op}")
 
 
-def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int],
-              pseudo_ldi16: bool = False) -> bytes:
+def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int]) -> bytes:
     pc = bases[item.section] + item.offset
     if item.kind == "INSN":
         if pc & 1:
             raise AsmError(
                 f"line {item.lineno}: instruction address not 2-byte-aligned")
         try:
-            return encode_insn(item.op, item.operands, labels, pc,
-                               pseudo_ldi16)
+            return encode_insn(item.op, item.operands, labels, pc)
         except AsmError as exc:
             raise AsmError(f"line {item.lineno}: {exc}") from exc
     if item.kind == "BYTE":
@@ -654,7 +651,6 @@ def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
     active_defines = defines or set()
     filtered = preprocess_source(lines, active_defines)
     items, label_defs = parse_source(filtered)
-    pseudo_ldi16 = bool(active_defines & {"RISCC_MIN", "RISCC_NANO"})
     bases = layout_sections(items)
     labels = final_label_map(label_defs, bases)
 
@@ -664,7 +660,7 @@ def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
 
     blobs = {name: bytearray(sizes[name]) for name in SECTION_ORDER}
     for item in items:
-        data = emit_item(item, labels, bases, pseudo_ldi16)
+        data = emit_item(item, labels, bases)
         if len(data) != item.size:
             raise AsmError(
                 f"line {item.lineno}: internal size mismatch for {item.op}: "

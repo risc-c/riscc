@@ -75,7 +75,7 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // ST_INSTRUCTION_CAPTURE latches the instruction; ST_DECODE consumes it.
     // The extra state avoids a mem_rdata/instruction mux across the decoder.
-    wire immediate_memory = !instruction_q[15];
+    wire immediate_memory = !instruction_q[15] && register_format_q;
     wire immediate_store_word = immediate_memory && instruction_q[14];
     wire immediate_class = instruction_q[15] && !register_format_q;
     wire register_class  = instruction_q[15] && register_format_q;
@@ -94,12 +94,8 @@ module riscc_tiny16 #(
     wire immediate_arithmetic = immediate_class &&
                                 !immediate_opcode[2] && immediate_opcode[1];
     wire compare_immediate = immediate_arithmetic & immediate_opcode[0];
-    // The bbb=100/101 long forms share the following halfword fetch.
-    wire long_form_op = system_group && rb[2] && !rb[1];
-`ifndef RISCC_INFERRED_SYNC_RF
-    wire ldi16_op = long_form_op && !rb[0];
-`endif
-    wire jal16_op = long_form_op && rb[0];
+    wire long_form_op = !instruction_q[15] && !register_format_q;
+    wire jal16_op = long_form_op;
     wire link_enabled = |rd;    // Sd == S0: no link written (plain jump)
     wire immediate_logic = immediate_class && immediate_opcode[2] &&
                            !(immediate_opcode[1] && immediate_opcode[0]);
@@ -243,17 +239,9 @@ module riscc_tiny16 #(
     // rf_we qualifies the state; the bank select can keep the decoded MTS
     // value and need not repeat the link-enable check.
     wire rf_write_system_bank = mts_op | in_irq_entry |
-`ifdef RISCC_INFERRED_SYNC_RF
-                                (in_link_writeback && rb[0]);
-`else
                                 in_link_writeback;
-`endif
     wire rf_we =
-`ifdef RISCC_INFERRED_SYNC_RF
         (in_link_writeback && link_enabled) |
-`else
-        (in_link_writeback && link_enabled && !ldi16_op) |
-`endif
         in_compare_writeback | in_irq_entry | execute_complete
         | (in_iterate && immediate_shift_op)
         ;
@@ -280,7 +268,7 @@ module riscc_tiny16 #(
     wire byte_lane_q = captured_bit_q;
     wire [7:0] selected_load_byte = byte_lane_q ?
                                     mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = byte_memory_op ?
+    wire [15:0] load_result = long_form_op ? mem_rdata : byte_memory_op ?
         {{8{signed_byte_load && selected_load_byte[7]}}, selected_load_byte} :
         mem_rdata;
 
@@ -428,8 +416,7 @@ module riscc_tiny16 #(
             end
 
             // PC updates are deliberately separate: IRQ entry has priority.
-            if (in_decode | in_jump_commit |
-                (in_link_writeback && !rb[0])) begin
+            if (in_decode | in_jump_commit) begin
                 pc_q <= alu_result[14:0];
             end
             if (in_irq_entry) begin

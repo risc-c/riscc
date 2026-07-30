@@ -10,17 +10,17 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.17.0`.
+Version: `v0.18.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
 ## 1. RISC-C Base Integer Instruction Set
 
 This chapter describes the RISC-C base integer ISA. The `min` profile defines
-the base instruction set; section 8 summarizes the profile differences.
+the base instruction set; section 9 summarizes the profile differences.
 
 The base ISA uses 16-bit instruction halfwords. Most instructions occupy one
-halfword; the long forms defined in section 5 occupy two. Instruction
+halfword; some optional and extended instructions occupy two. Instruction
 addresses are measured in halfwords. The mainline ISA is
 parameterized by the `XLEN` data word size: RC16 has `XLEN = 16` and RC32 has
 `XLEN = 32`. Unless a rule names a narrower access or field explicitly, an
@@ -76,12 +76,13 @@ source register.
 
 ### 1.2 Instruction Length and Major Opcodes
 
-Each instruction begins with one 16-bit halfword. The two most-significant
-bits of that halfword select one of four major opcode spaces:
+Most instructions occupy one 16-bit halfword; some optional and extended
+instructions occupy two. The two most-significant bits of the first halfword
+select one of four major opcode spaces:
 
 | bits `[15:14]` | format bits `[15:0]` | instruction class |
 |---|---|---|
-| `00` | `00 ddd aaa iiiiiiii` | reserved for future ISA extension |
+| `00` | `00 ...` | long instruction |
 | `01` | `01 ddd aaa iiiiiii S` | compact immediate-offset data-word load or store |
 | `10` | `10 ddd ooo iiiiiiii` | immediate or branch instruction |
 | `11` | `11 ddd aaa fffff bbb` | register-format instruction |
@@ -337,11 +338,11 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `01_101` | `SARI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
 | `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
 | `01_111` | `SHLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
-| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 7.1 |
+| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; section 8 |
 | `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
 | `10_010` | `FSR1 rd, ra, rb` | `R[d] ← (R[a] >> 1) \| (R[b][0] << (XLEN-1))` |
 | `10_011` | `FSL1 rd, ra, rb` | `R[d] ← (R[a] << 1) \| R[b][XLEN-1]` |
-| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 7.1 |
+| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; section 8 |
 | `10_101..11_110` | reserved | undefined |
 | `11_111` | control and S-register group | section 5 |
 
@@ -391,29 +392,25 @@ Most control and S-register instructions have the following format:
 For `bbb = 000` and `bbb = 110`, `ddd` is a control selector. Only the
 following control-selector values are defined:
 
-| `bbb` | `ddd` | instruction | profile | operation |
-|---|---|---|---|---|
-| `000` | `000` | `RET Sa` | all | `pc ← S[a]` |
-| `000` | `111` | `RETI Sa` | sys | `IE ← 1`; `pc ← S[a]` |
-| `110` | `000` | `CLI` | sys | `IE ← 0` |
-| `110` | `111` | `STI` | sys | `IE ← 1` |
+| `bbb` | `ddd` | instruction | operation |
+|---|---|---|---|
+| `000` | `000` | `RET Sa` | `pc ← S[a]` |
+| `000` | `111` | `RETI Sa` | `IE ← 1`; `pc ← S[a]` |
+| `110` | `000` | `CLI` | `IE ← 0` |
+| `110` | `111` | `STI` | `IE ← 1` |
 
 All other `ddd` values in those two `bbb` rows are reserved and undefined.
 `aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
 
 The remaining `bbb` values have the following definitions:
 
-| `bbb` | instruction | profile | operation |
-|---|---|---|---|
-| `001` | `JAL Sd, ra` | all | if `d != 0`, `S[d] ← pc_next`; `pc ← R[a]` |
-| `010` | `MFS rd, Sa` | all | `R[d] ← S[a]` |
-| `011` | `MTS Sd, ra` | all | `S[d] ← R[a]` |
-| `100` | reserved |  | undefined |
-| `101` | `JAL16 Sd, target` | sys | specified below |
-| `111` | reserved |  | undefined |
-
-`JAL16` requires `aaa = 0`; other `aaa` values in its row are reserved and
-undefined.
+| `bbb` | instruction | operation |
+|---|---|---|
+| `001` | `JAL Sd, ra` | if `d != 0`, `S[d] ← pc_next`; `pc ← R[a]` |
+| `010` | `MFS rd, Sa` | `R[d] ← S[a]` |
+| `011` | `MTS Sd, ra` | `S[d] ← R[a]` |
+| `100..101` | reserved | undefined |
+| `111` | reserved | undefined |
 
 `RET` transfers control through its S-register operand. It does not change
 `IE`.
@@ -432,23 +429,23 @@ instruction address of the following instruction to `Sd`. Thus,
 
 `MTS` copies `ra` to the selected S-register.
 
-The long forms have these first-halfword encodings:
+## 6. Long Instructions
 
-| encoding | instruction | profile |
+The currently defined long form has this encoding:
+
+| first halfword | second halfword | instruction |
 |---|---|---|
-| `11 ddd 000 11101 100` | `LDI16 rd, imm16` | sys |
-| `11 ddd 000 11111 101` | `JAL16 Sd, target` | sys |
+| `00 ddd 111 00000000` | `target[15:0]` | `JAL16 Sd, target` |
 
-Both long forms occupy two consecutive instruction halfwords. `LDI16` uses
-the following halfword as `imm16`, writes `zx16(imm16)` to `rd`, and continues
-at `pc + 2`. Each long form is one architectural instruction; interrupts are
-not taken between its halfwords.
+The unused low byte of the first halfword must be zero; other values are
+undefined. `JAL16` occupies two consecutive instruction halfwords and is one
+architectural instruction; interrupts are not taken between its halfwords.
 
-`JAL16` uses the following halfword as the absolute instruction address
-`target`. Unless `Sd` is `S0`, it writes `pc + 2` to `Sd`, then transfers
-control to `target`. `JMP16 target` is the alias `JAL16 S0, target`.
+Unless `Sd` is `S0`, `JAL16` writes `pc + 2` to `Sd`, then transfers control
+to the absolute instruction address `target`. `JMP16 target` is the alias
+`JAL16 S0, target`.
 
-## 6. Interrupts
+## 7. Interrupts
 
 Interrupts are optional and are implemented by some profiles. A platform may
 provide
@@ -480,7 +477,7 @@ interrupt may be taken before the returned-to instruction executes.
 Reset-vector contents and interrupt synchronization are platform
 responsibilities.
 
-## 7. Multiply-Divide Instructions Extension
+## 8. Multiply-Divide Instructions Extension
 
 The following optional instructions occupy otherwise reserved three-register
 slots:
@@ -521,14 +518,14 @@ quotient fits in XLEN bits. If any of these requirements is not met, the result
 is undefined. These operand restrictions are an exception to the general
 source-before-destination ordering rule.
 
-## 8. Profiles
+## 9. Profiles
 
 `min`, `sys`, and `full` are ordered ISA subsets: a program using only a
 smaller profile's defined instructions is valid on a larger profile. Each
 mainline profile is available in RC16 and RC32 configurations. `nano` is an
 RC16-only subset profile.
 
-### 8.1 Instruction Availability
+### 9.1 Instruction Availability
 
 An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 
@@ -574,7 +571,6 @@ An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 | `DIVU rr, rq, rb` § |  |  |  |  |  |
 | `RET Sa` |  | X | X | X |  |
 | `JAL Sd, ra` |  | X | X | X |  |
-| `LDI16 rd, imm16` |  |  | X | X |  |
 | `JAL16 Sd, target` |  |  | X | X |  |
 | `JAL rd, ra` ‡ |  |  |  |  | X |
 | `MFS rd, Sa` |  | X | X | X |  |
@@ -583,10 +579,10 @@ An `X` in the `RC32` column marks an instruction absent from RC16 and Nano.
 | `CLI` |  |  | X | X |  |
 | `STI` |  |  | X | X |  |
 
-† Nano is defined in section 9.
+† Nano is defined in section 10.
 
 ‡ `JAL rd, ra` is Nano's general-register link encoding; its semantics are
-defined in section 9.
+defined in section 10.
 
 § `MULHU` and `DIVU` are optional extension instructions; neither is required
 by any profile.
@@ -594,7 +590,7 @@ by any profile.
 An unaligned halfword or data-word access has undefined behavior unless
 another architectural extension defines it.
 
-## 9. Nano Profile
+## 10. Nano Profile
 
 Nano is a separate reduced RISC-C profile, shown as `nano` in the profile
 table. Its encodings and architectural state differ from the ordered `min`,
@@ -617,7 +613,7 @@ semantics except where this section defines otherwise. An empty `nano` cell
 denotes an undefined Nano encoding; software must not depend on any
 implementation alias.
 
-## 10. Notation
+## 11. Notation
 
 | symbol | meaning |
 |---|---|

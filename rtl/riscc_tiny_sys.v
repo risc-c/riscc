@@ -95,7 +95,7 @@ module riscc_tiny #(
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group = ~op_class[1];
+    wire imm_mem_group = ~op_class[1] & op_class[0];
     wire immediate_group = op_class[1] & ~op_class[0];
     wire register_group = op_class[1] & op_class[0];
 
@@ -110,7 +110,7 @@ module riscc_tiny #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-    wire long_form_op = system_op & bbb[2] & ~bbb[1];
+    wire long_form_op = ~op_class[1] & ~op_class[0];
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_00 = ~f5[4] & ~f5[3];
@@ -182,15 +182,14 @@ module riscc_tiny #(
     wire return_op = system_op & ~bbb[1] & ~bbb[0];
     wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire jal16_target_phase = jal16_target_phase_q & bbb[0];
-    wire ldi16_literal_phase = jal16_target_phase_q & ~bbb[0];
+    wire jal16_target_phase = jal16_target_phase_q;
     wire link_context = register_jal_op |
                         jal16_target_phase;
     wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
 
     wire store_op = (imm_mem_group & instr_q[0]) | register_store_op;
     wire load_op = (imm_mem_group & ~instr_q[0]) | indexed_mem_op;
-    wire load_writeback_op = load_op | ldi16_literal_phase;
+    wire load_writeback_op = load_op;
     wire mem_op = store_op | load_op;
     wire byte_access = register_group & f5[1];
     wire sign_extend_byte = f5[2];
@@ -260,7 +259,7 @@ module riscc_tiny #(
     // bbb[0] is the bank-select bit: 0 reads S[aaa], 1 writes S[ddd]
     // (links share MTS's write path; CLI/STI have no RF traffic).
     wire src_system_bank = system_op & ~bbb[0];
-    wire dst_system_bank = system_op & bbb[0];
+    wire dst_system_bank = (system_op & bbb[0]) | jal16_target_phase;
     wire [3:0] rf_src_reg = {src_system_bank, immediate_group ? ddd : aaa};
     wire [2:0] rf_dst_low = ddd & {3{~(trap_active | cmpi_op)}};
     wire [3:0] rf_dst_reg = {trap_active | dst_system_bank, rf_dst_low};

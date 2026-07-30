@@ -89,7 +89,9 @@ int main(int argc, char **argv)
         }
     }
 
-    std::printf("Atum compiler UART FAIL: %s\n", capture.output.c_str());
+    std::printf("Atum compiler UART FAIL: %s (tx=%u, rx=%u, fb=%u)\n",
+                capture.output.c_str(), top->dbg_uart_tx_count,
+                top->dbg_uart_rx_count, top->dbg_fb_writes);
     delete top;
     return 1;
 }

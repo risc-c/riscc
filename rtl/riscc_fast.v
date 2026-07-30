@@ -3,8 +3,8 @@
 // Fetch and execute overlap. ECP5 uses an asynchronous two-read LUTRAM RF;
 // iCE40 uses two synchronous EBR copies and stalls on a preceding-result RAW.
 // Results write directly from execute without a forwarding network.
-// Memory, shifts, and soft MUL use small side states. JAL16 and LDI16 consume
-// the following halfword already present in the fetch-response slot.
+// Memory, shifts, and soft MUL use small side states. JAL16 consumes the
+// following halfword already present in the fetch-response slot.
 
 `default_nettype none
 
@@ -85,7 +85,7 @@ module riscc_fast #(
     wire [4:0] x_f5 = x_instr_q[7:3];
     wire [2:0] x_bbb = x_instr_q[2:0];
 
-    wire x_imm_memory = ~x_class[1];
+    wire x_imm_memory = ~x_class[1] & x_class[0];
     wire x_imm_store = x_imm_memory & x_instr_q[0];
     wire x_immediate = x_class[1] & ~x_class[0];
     wire x_register = &x_class;
@@ -149,12 +149,11 @@ module riscc_fast #(
 `endif
     wire x_return = x_system & ~x_bbb[2] & ~x_bbb[1] & ~x_bbb[0];
     wire x_return_sets_ie = x_return & x_control_ie_value;
-    wire x_link_jump = x_system & ~x_bbb[1] & x_bbb[0];
-    wire x_jal = x_link_jump & ~x_bbb[2];
+    wire x_jal = x_system & ~x_bbb[2] & ~x_bbb[1] & x_bbb[0];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
-    wire x_long_form = x_system & x_bbb[2] & ~x_bbb[1];
-    wire x_jal16 = x_long_form & x_bbb[0];
-    wire x_ldi16 = x_long_form & ~x_bbb[0];
+    wire x_long_form = ~x_class[1] & ~x_class[0];
+    wire x_jal16 = x_long_form;
+    wire x_link_jump = x_jal | x_jal16;
     wire x_ie_control = x_system & x_bbb[2] & x_bbb[1];
 
     wire [3:0] x_src_a = x_branch ? 4'h0 :
@@ -177,7 +176,7 @@ module riscc_fast #(
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
-    wire d_uses_a = ~d_class[1] | d_register |
+    wire d_uses_a = (~d_class[1] & d_class[0]) | d_register |
         (d_immediate & (d_aaa[1] | d_aaa[2]));
     // Immediate stores and every non-system register plane may read rb.
     // The deliberately broad register term also covers funnel shifts and
@@ -225,6 +224,7 @@ module riscc_fast #(
     wire [7:0] load_high_byte = format_load_byte ?
         {8{saved_load_signed & load_byte_sign}} : mem_rdata[15:8];
     wire [15:0] load_value = {load_high_byte, load_low_byte};
+    wire [15:0] long_value = mem_rdata;
 
     wire x_shift_step_left = x_shift_left | (x_funnel & x_f5[0]);
 `ifdef RISCC_FAST_SYNC_RF
@@ -319,19 +319,10 @@ module riscc_fast #(
         x_jal16 ? 16'h0001 : 16'h0000;
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
-`ifndef RISCC_FAST_AGILEX
-        (in_load | (normal_x & x_ldi16)) ? load_value :
-`else
         in_load ? load_value :
-`endif
         normal_x ? run_result : 16'h0000;
 `else
-`ifndef RISCC_FAST_AGILEX
-    wire [15:0] alu_b = (normal_x & x_ldi16) ? load_value :
-        normal_x ? run_result :
-`else
     wire [15:0] alu_b = normal_x ? run_result :
-`endif
         state_q[1] ?
             (state_q[0] ? shift_step : {side_data_q[14:0], 1'b0}) :
         ~state_q[0] ? load_value : 16'h0000;
@@ -360,9 +351,6 @@ module riscc_fast #(
     wire unsigned_less = ~alu_carry_out;
     wire x_compare = x_reg_alu_group & ~x_f5[2] & x_f5[1];
     wire [15:0] execute_result =
-`ifdef RISCC_FAST_AGILEX
-        (normal_x && x_ldi16) ? mem_rdata :
-`endif
 `ifdef RISCC_FAST_DSP
         (normal_x && x_multiply) ? direct_mul_result :
 `endif
@@ -383,14 +371,13 @@ module riscc_fast #(
     wire x_redirect = run_x &
         ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
 `endif
-    wire [14:0] x_redirect_pc = x_jal16 ? mem_rdata[14:0] :
+    wire [14:0] x_redirect_pc = x_jal16 ? long_value[14:0] :
         x_branch ? alu_result[14:0] : rf_a[14:0];
 
     // ------------------------------------------------------------------
     // Commit, hazards, and RF writeback
     // ------------------------------------------------------------------
     wire x_result_we =
-        x_ldi16 |
         x_imm_alu | x_shift | x_funnel |
 `ifdef RISCC_FAST_DSP
         x_reg_alu | x_multiply |
@@ -400,7 +387,7 @@ module riscc_fast #(
         x_move | (x_link_jump & (|x_ddd));
     // All defined S-bank writes have bbb[0]=1; control-group forms have no
     // result write, so this broad bank select remains unobservable there.
-    wire x_result_system = x_system & x_bbb[0];
+    wire x_result_system = (x_system & x_bbb[0]) | x_jal16;
     wire x_cmpi = x_imm_alu & (x_aaa == 3'b011);
 
     // Interrupt at the next populated X boundary.  Waiting for an outstanding
@@ -526,7 +513,6 @@ module riscc_fast #(
     wire frontend_side_finish = shift_finish;
     assign accept_fetch = fetch_pending_q &
         ((in_run & ~rf_wait_cycle & ~x_redirect & ~take_irq &
-          ~(normal_x & x_ldi16) &
           (~x_side_start | x_shift_start | x_load_start)) |
          (frontend_side_finish & ~x_valid_q));
     wire fetch_hold = rf_wait_cycle |
@@ -552,8 +538,7 @@ module riscc_fast #(
             trace_pc_live_q <= 15'd2;
             trace_ie_live_q <= 1'b0;
         end else if (run_commit) begin
-            trace_pc_live_q <= x_redirect ? x_redirect_pc :
-                               x_pc_q + (x_ldi16 ? 15'd2 : 15'd1);
+            trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
             if (x_ie_control | x_return_sets_ie)
                 trace_ie_live_q <= x_control_ie_value;
         end else if (side_commit) begin

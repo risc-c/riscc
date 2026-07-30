@@ -14,9 +14,12 @@
 //   0xFFF2                 UART state: write enables, read status
 //   0xFFFA (word 0x7FFD)  test IRQ: write raises; read returns cause and acks
 //   0xFFFE (word 0x7FFF)  result word: 0x600D pass, anything else fail
-// Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N] [--trace] [--dump-written]
+// Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N]
+//           [--trace] [--dump-written] [--uart-expect-line TEXT]
 // --irq-at asserts the irq line from cycle N (deterministic IRQ tests
 // without the store-to-0xFFFA trigger). Exit status follows the result word.
+// --uart-expect-line supplies an always-ready TX UART and succeeds when the
+// emitted line matches TEXT.
 // --trace requires a RISCC_TRACE/RISCC_TB_TRACE build and prints one
 // architectural TRACE line per committed instruction.
 
@@ -36,6 +39,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 static uint16_t mem[32768];
 static uint8_t mem_written[32768];
@@ -92,6 +96,7 @@ int main(int argc, char **argv)
     int64_t irq_at = -1;
     int trace = 0;
     int dump_written = 0;
+    const char *uart_expect_line = nullptr;
     for (int i = 2; i < argc; i++)
     {
         if (!strcmp(argv[i], "--irq-at") && i + 1 < argc)
@@ -102,6 +107,8 @@ int main(int argc, char **argv)
             trace = 1;
         else if (!strcmp(argv[i], "--dump-written"))
             dump_written = 1;
+        else if (!strcmp(argv[i], "--uart-expect-line") && i + 1 < argc)
+            uart_expect_line = argv[++i];
         else
             max_cycles = strtoull(argv[i], nullptr, 0);
     }
@@ -128,8 +135,10 @@ int main(int argc, char **argv)
     uint64_t cyc = 0;
     uint64_t trace_step = 0;
     int done = 0;
+    int uart_done = 0;
     int done_trace_age = 0;
     int trace_printed = 0;
+    std::string uart_line;
     for (; cyc < max_cycles; cyc++)
     {
         trace_printed = 0;
@@ -170,6 +179,20 @@ int main(int argc, char **argv)
             mem_written[addr & 0x7FFF] = 1;
             if (addr == 0x7FFD) irq = 1;   // byte 0xFFFA: raise irq
             if (addr == 0x7FFF) done = 1;  // byte 0xFFFE: result word
+            if (uart_expect_line && addr == 0x7FF8 && (wmask & 1))
+            {
+                const char ch = char(wdata & 0xFF);
+                putchar(ch);
+                fflush(stdout);
+                if (ch == '\n')
+                {
+                    if (uart_line == uart_expect_line)
+                        uart_done = 1;
+                    uart_line.clear();
+                }
+                else
+                    uart_line.push_back(ch);
+            }
         }
 #ifdef RISCC_TB_TRACE
         if (trace && top->trace_valid)
@@ -179,7 +202,10 @@ int main(int argc, char **argv)
             trace_printed = 1;
 }
 #endif
-        rdata = test_irq_read ? test_irq_cause : mem[addr & 0x7FFF];
+        const int uart_state_read = uart_expect_line && !we && !top->rst &&
+            addr == 0x7FF9;
+        rdata = test_irq_read ? test_irq_cause :
+            (uart_state_read ? 1 : mem[addr & 0x7FFF]);
 
         top->clk = 0;
         top->eval();
@@ -187,14 +213,26 @@ int main(int argc, char **argv)
         // A pipelined core can commit the result store before its trace
         // record reaches the trace output.  Allow two drain cycles; memory
         // serialization prevents a younger instruction from overtaking it.
-        if (done && (!trace ||
+        if ((done || uart_done) && (!trace ||
             (done_trace_age >= RISCC_TB_TRACE_DRAIN && trace_printed)))
             break;
-        if (done && trace)
+        if ((done || uart_done) && trace)
             done_trace_age++;
     }
 
     uint16_t result = mem[0x7FFF];   // byte address 0xFFFE
+    if (uart_expect_line)
+    {
+        if (!uart_done)
+        {
+            printf("UART TIMEOUT after %llu cycles\n", (unsigned long long)cyc);
+            delete top;
+            return 1;
+        }
+        printf("UART PASS after %llu cycles\n", (unsigned long long)cyc);
+        delete top;
+        return 0;
+    }
     if (!done)
     {
         printf("TIMEOUT after %llu cycles, result=0x%04X\n",

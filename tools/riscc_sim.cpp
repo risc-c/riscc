@@ -565,7 +565,16 @@ struct Sim
         uint8_t imm8 = static_cast<uint8_t>(ir);
         if (opcode == 0)
         {
-            throw std::runtime_error("00 prefix is reserved");
+            if (!opts.has_sys())
+                throw std::runtime_error("long instruction outside sys profile");
+            if (ra != 7 || imm8 != 0)
+                throw std::runtime_error("long instruction encoding reserved");
+            uint16_t extension = mem[pc_next & 0x7fff];
+            pc_next = static_cast<uint16_t>((pc_next + 1) & 0x7fff);
+            if (rd != 0)
+                s[rd] = static_cast<uint16_t>(pc + 2);
+            pc_next = extension & 0x7fff;
+            instr_cycles = cycle.jump16;
         }
         else if (opcode == 1)
         {
@@ -805,14 +814,6 @@ struct Sim
                 store_byte(r[ra], r[rd]);
                 instr_cycles = cycle.direct_store;
             }
-            else if (func == 0x1d && rb == 4 && ra == 0)
-            {
-                if (!opts.has_sys())
-                    throw std::runtime_error("sys-profile op in min");
-                r[rd] = mem[pc_next & 0x7fff];
-                pc_next = static_cast<uint16_t>((pc_next + 1) & 0x7fff);
-                instr_cycles = cycle.jump16;
-            }
             else if (func == 0x1f)
             {
                 if (opts.nano)
@@ -863,16 +864,6 @@ struct Sim
                 {
                     s[rd] = r[ra];
                     instr_cycles = cycle.direct;
-                }
-                else if (rb == 5 && ra == 0)
-                {
-                    if (!opts.has_sys())
-                        throw std::runtime_error("sys-profile op in min");
-                    uint16_t target = mem[pc_next & 0x7fff];
-                    if (rd != 0)
-                        s[rd] = static_cast<uint16_t>(pc + 2);
-                    pc_next = target & 0x7fff;
-                    instr_cycles = cycle.jump16;
                 }
                 else if (rb == 6)
                 {

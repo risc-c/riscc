@@ -24,6 +24,9 @@ It accepts `.ifdef NAME`, `.ifndef NAME`, `.else`, and `.endif`; pass
 check-llvm-mc-encodings` cross-checks LLVM MC encodings against
 `riscc_asm.py`.
 
+`LI rd, imm16` and `LDI16 rd, imm16` are assembler pseudos for
+`LUI rd, hi8(imm16)` followed by `ORI rd, lo8(imm16)`.
+
 The normal interactive ISS is `tools/riscc_sim.cpp`, built as
 `build/tools/riscc_sim`. It executes the architectural ISA and provides the
 same testbench MMIO page used by the RTL tests, including the result register,
@@ -120,6 +123,15 @@ SDK and ISS once, then build the unified image and run it with UART output:
 make -j16 riscc-firmware build/tools/riscc_sim
 make -C firmware/hello
 build/tools/riscc_sim build/hello/hello.bin --full --uart
+```
+
+Run the resulting image on the Tiny16 Full RTL implementation with the
+Verilator memory/UART harness:
+
+```sh
+make -j16 build/tb/tiny16-full/tb
+build/tb/tiny16-full/tb build/hello/hello.bin --max-cycles 1000000 \
+  --uart-expect-line 'Hello, RISC-C!'
 ```
 
 The example Makefile includes the SDK's small

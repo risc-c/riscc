@@ -66,7 +66,7 @@ it omits the mainline S-register/system paths.
 All RISC-C/16 sources use one-hot multi-cycle control, synchronous unified
 memory, and a shared MDR stage for second operands, loads, and byte lanes.
 The Sys and Full sources also use that path for the following halfword of
-`JAL16` and `LDI16`; Full adds the multiply machinery.
+`JAL16`; Full adds the multiply machinery.
 
 ![RISC-C/16 microarchitecture](riscc_tiny16_microarch.svg)
 
@@ -115,24 +115,24 @@ points. Cycle counts follow them as a reference for implementation work.
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 118 | 132 | 161 | 215 | 256 |
-| `sys` | 151 | 164 | 199 | 261 | 286 |
-| `full` | 173 | 192 | 228 | 299 | 336 |
+| `sys` | 151 | 162 | 197 | 260 | 292 |
+| `full` | 174 | 190 | 226 | 298 | 338 |
 | nano | 93 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 483 / 449 |
+| Fast soft / DSP | — | — | — | — | 479 / 448 |
 
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 162 | 172 | 201 | 252 | 281 |
-| `sys` | 192 | 204 | 238 | 293 | 313 |
-| `full` | 213 | 235 | 267 | 332 | 362 |
+| `min` | 162 | 172 | 201 | 251 | 281 |
+| `sys` | 191 | 204 | 237 | 292 | 319 |
+| `full` | 212 | 232 | 268 | 331 | 366 |
 | nano | 114 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 498 / 462 |
+| Fast soft / DSP | — | — | — | — | 496 / 467 |
 
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 120 | 132 | 165 | 218 | 257 |
-| `sys` | 153 | 164 | 202 | 261 | 289 |
-| `full` | 172 | 195 | 231 | 302 | 339 |
+| `sys` | 148 | 162 | 200 | 259 | 295 |
+| `full` | 166 | 191 | 229 | 298 | 341 |
 | nano | 93 | — | — | — | — |
 
 | Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
@@ -149,8 +149,8 @@ points. Cycle counts follow them as a reference for implementation work.
 
 | Fmax (MHz) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 36.66 | 33.16 | 31.49 | 29.06 | 30.39 | 34.69 | 24.84 | 22.40 | — | — |
-| ECP5 LFE5U-25F | 111.07 | 107.82 | 95.15 | 89.00 | 90.28 | 116.21 | 71.25 | 67.40 | — | — |
+| iCE40 UP5K | 36.66 | 34.01 | 31.47 | 29.75 | 32.03 | 35.56 | 25.32 | 24.65 | — | — |
+| ECP5 LFE5U-25F | 110.82 | 111.76 | 103.99 | 88.69 | 96.65 | 113.49 | 72.95 | 69.24 | — | — |
 | Agilex 3 | 305.90 | 284.50 | 276.17 | 247.83 | 232.34 | 306.37 | 195.66 | 155.01 | 233.05 | 239.29 |
 
 Tiny Fmax values use the `sys` profile width ladder. Nano uses its fixed
@@ -170,19 +170,19 @@ standalone open-FPGA area/Fmax target.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 0.99 | 1.65 | 2.70 | 3.92 | 7.10 | 1.12 | 13.45 | 14.78 | — | — |
-| ECP5 | 3.01 | 5.38 | 8.17 | 12.01 | 21.11 | 3.75 | 38.58 | 44.49 | — | — |
-| Agilex 3 | 8.28 | 14.19 | 23.72 | 33.45 | 54.32 | 9.87 | 105.93 | 102.31 | 132.87 | 117.05 |
+| iCE40 UP5K | 1.03 | 1.75 | 2.78 | 4.12 | 7.64 | 1.15 | 14.06 | 16.69 | — | — |
+| ECP5 | 3.11 | 5.76 | 9.20 | 12.28 | 23.04 | 3.66 | 40.52 | 46.89 | — | — |
+| Agilex 3 | 8.58 | 14.67 | 24.44 | 34.32 | 55.39 | 9.88 | 108.68 | 104.97 | 136.42 | 120.16 |
 
 | Benchmark MIPS/kLUT4 (kLE on Agilex) | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 6.6 | 10.1 | 13.6 | 15.0 | 24.8 | 12.0 | 27.8 | 32.9 | — | — |
-| ECP5 block RF | 19.7 | 32.8 | 40.4 | 46.0 | 73.0 | 40.3 | 77.5 | 96.3 | — | — |
-| ECP5 LUTRAM RF | 15.7 | 26.4 | 34.3 | 41.0 | 67.4 | 32.9 | 77.5 | 96.3 | — | — |
-| Agilex 3 (kLE) | 30.8 | 50.2 | 71.8 | 85.3 | 118.8 | 44.3 | 135.5 | 142.6 | 134.9 | 125.0 |
+| iCE40 UP5K | 6.8 | 10.8 | 14.1 | 15.8 | 26.2 | 12.3 | 29.4 | 37.3 | — | — |
+| ECP5 block RF | 21.0 | 35.6 | 46.0 | 47.4 | 78.1 | 39.3 | 81.7 | 100.4 | — | — |
+| ECP5 LUTRAM RF | 16.3 | 28.2 | 38.8 | 42.1 | 72.2 | 32.1 | 81.7 | 100.4 | — | — |
+| Agilex 3 (kLE) | 32.0 | 52.0 | 74.0 | 87.5 | 121.1 | 44.3 | 139.0 | 146.3 | 138.5 | 128.3 |
 
 The Agilex throughput and efficiency rows are derived from the post-fit area
-and Fmax characterizations above. The common mainline benchmark retires 3085
+and Fmax characterizations above. The common mainline benchmark retires 3165
 instructions; Nano's software-multiply version retires 8418 instructions.
 When comparing ISA revisions with different dynamic instruction counts, Fmax
 divided by benchmark cycles is the corresponding fixed-workload throughput
@@ -195,14 +195,14 @@ Faster implement `full` only; Nano runs its separate profile.
 
 | Validation cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `min` | 5516 | 3076 | 1856 | 1246 | 732 | — | — | — | — | — |
-| `sys` | 9730 | 5290 | 3086 | 1984 | 1161 | — | — | — | — | — |
-| `full` | 11734 | 6350 | 3666 | 2316 | 1340 | — | 562 | 482 | 525 | 595 |
-| `nano` | — | — | — | — | — | 3659 | — | — | — | — |
+| `min` | 5164 | 2884 | 1744 | 1174 | 690 | — | — | — | — | — |
+| `sys` | 8762 | 4834 | 2886 | 1912 | 1163 | — | — | — | — | — |
+| `full` | 10724 | 5876 | 3460 | 2244 | 1345 | — | 548 | 468 | 505 | 575 |
+| `nano` | — | — | — | — | — | 3307 | — | — | — | — |
 
 | Common benchmark cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `test_riscc_bench` | 113961 | 61873 | 35925 | 22855 | 13196 | 261136 | 5698 | 4674 | 5411 | 6307 |
+| `test_riscc_bench` | 112841 | 61393 | 35765 | 22855 | 13276 | 261136 | 5698 | 4674 | 5407 | 6303 |
 
 ### Full multiply/divide options
 
@@ -211,15 +211,15 @@ implementations are provided by the separate `/16` multi-cycle sources.
 
 | Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
 |---|---:|---:|---:|
-| Full (`MUL`) | 336 | 362 | 339 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 353 | 379 | 357 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 389 | 413 | 386 |
+| Full (`MUL`) | 338 | 366 | 341 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 352 | 379 | 355 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 386 | 410 | 386 |
 
 | Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
 |---|---:|---:|
-| Full (`MUL`) | 26.04 | 82.69 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 23.98 | 82.84 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 23.51 | 81.57 |
+| Full (`MUL`) | 26.25 | 89.06 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 26.31 | 82.24 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 24.43 | 81.76 |
 
 `test-all` runs the normal Full ISA image and an extension-specific
 MULHU/DIVU image on both optional cores. The aggregate area and Fmax tables
@@ -423,7 +423,7 @@ at 30 pixels per second.
 Its ECP5 PLL wrapper, TMDS encoder, and DDR serializer are maintained under
 `boards/icepi_zero/rtl`; the board build has no vendor RTL checkout.
 
-The current ECP5 synthesis of the complete demo uses 883 LUT4s, 32 EBRs, and
+The current ECP5 synthesis of the complete demo uses 902 LUT4s, 32 EBRs, and
 one DSP block. The common timer and IRQ mask use ordinary logic; the
 framebuffer RAM and DVI pipeline remain Icepi-local.
 

@@ -117,7 +117,7 @@ module riscc_tiny #(
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group = ~instr_q[15];
+    wire imm_mem_group = ~instr_q[15] & register_format_q;
     wire immediate_group = instr_q[15] & ~register_format_q;
     wire register_group = instr_q[15] & register_format_q;
 
@@ -132,7 +132,7 @@ module riscc_tiny #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-    wire long_form_op = system_op & bbb[2] & ~bbb[1];
+    wire long_form_op = ~instr_q[15] & ~register_format_q;
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_00 = ~f5[4] & ~f5[3];
@@ -213,17 +213,19 @@ module riscc_tiny #(
 `endif
     wire control_ie_value = ddd[CONTROL_IE_BIT];
 `ifdef RISCC_ECP5
-    wire return_sets_ie = return_op & control_ie_value & ~bbb[2];
+    wire register_target_op = system_op & ~bbb[1];
+    wire return_op = register_target_op & ~bbb[0];
+    wire register_jal_op = register_target_op & bbb[0];
+    wire return_sets_ie = return_op & control_ie_value;
 `else
+    wire return_op = system_op & ~bbb[1] & ~bbb[0];
+    wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
+    wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
     wire return_sets_ie = return_op & control_ie_value &
                           ((W == 1) ? f5[1] : ~bbb[2]);
 `endif
-    wire return_op = system_op & ~bbb[1] & ~bbb[0];
-    wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire link_context = register_jal_op |
-                        (jal16_target_phase_q & bbb[0]);
-    wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
+    wire link_context = register_jal_op | jal16_target_phase_q;
 
     wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
     wire load_op = (imm_mem_group & ~instr_q[14]) | indexed_mem_op;
@@ -242,15 +244,10 @@ module riscc_tiny #(
     wire ie_control_op = system_op & bbb[2] & bbb[1];
     // Missing optional ops are undefined on builds that lack them.
     // IRQ enters via word 2.
-    // No ~jal16_target_phase_q guard is needed: the target-word fetch runs
-    // through FETCH_WAIT/FETCH_CAPTURE, so no decode occurs mid-JAL16.
     wire take_irq = ie_q & irq;
     wire trap_active = trap_q;
 
-    // ------------------------------------------------------------------
-    // Two-word JAL16/JMP16 sequencing.  The flag is set after the first-word
-    // pass and spans the target-word fetch plus its jump/link pass.
-    // ------------------------------------------------------------------
+    // Set after the long head and cleared after its extension executes.
     reg jal16_target_phase_q;
 
     // ------------------------------------------------------------------
@@ -299,7 +296,7 @@ module riscc_tiny #(
     // bbb[0] is the bank-select bit: 0 reads S[aaa], 1 writes S[ddd]
     // (links share MTS's write path; CLI/STI have no RF traffic).
     wire src_system_bank = system_op & ~bbb[0];
-    wire dst_system_bank = system_op & bbb[0];
+    wire dst_system_bank = (system_op & bbb[0]) | jal16_target_phase_q;
     wire [3:0] rf_src_reg = {src_system_bank, immediate_group ? ddd : aaa};
     wire [2:0] rf_dst_low = ddd & {3{~(trap_active | cmpi_op)}};
     wire [3:0] rf_dst_reg = {trap_active | dst_system_bank, rf_dst_low};
@@ -330,7 +327,6 @@ module riscc_tiny #(
         byte_lane_offset;
 
     wire writes_rd = immediate_alu_op | register_alu_op | load_op |
-                     (jal16_target_phase_q & ~bbb[0]) |
                      shift_writeback_op | multiply_op | system_move_op |
                      (link_dest_nonzero & link_context);
     wire rf_we = in_execute & (trap_active | writes_rd);
@@ -363,8 +359,8 @@ module riscc_tiny #(
     // ADDI/CMPI and branches sign-extend. Their selectors factor as
     // 01x and 111; the remaining immediate ALU operations zero-extend.
     wire sign_extend_imm = (W == 1) ?
-        (imm_mem_group | add_immediate_op | cmpi_op | branch_group) :
-        (imm_mem_group |
+        (~instr_q[15] | add_immediate_op | cmpi_op | branch_group) :
+        (~instr_q[15] |
          (immediate_group & aaa[1] & (~aaa[2] | aaa[0])));
     wire lui_op = immediate_group & (aaa == 3'b001);
     wire [SLICE_BITS-1:0] immediate_slice_index =
@@ -482,10 +478,9 @@ module riscc_tiny #(
     reg [15:0] data_stream_q;
     reg load_fill_q;
     reg memory_lane_q;
-    // The stream shifts on every counted cycle, including MEM_XFER.  Loads and
-    // JAL16 targets enter in W-bit slices, leaving the lower 16-W bits as a
-    // pure shift with no input muxing.  INIT2 fills and consumers shift too;
-    // idle passes rotate don't-care data that the next fill/load overwrites.
+    // The stream shifts on every counted cycle, including MEM_XFER.  INIT2
+    // fills and consumers shift too; idle passes rotate don't-care data that
+    // the next fill/load overwrites.
     wire [W-1:0] memory_read_slice =
         mem_rdata[slice_idx_q * W +: W];
     // W=1 can select the requested byte directly while the word is streamed.
@@ -610,7 +605,7 @@ module riscc_tiny #(
     wire [W-1:0] irq_pc_slice = irq_pc_word[W-1:0];
     wire [W-1:0] next_pc_slice =
         trap_active ? irq_pc_slice :
-        (pc_from_register | (jal16_target_phase_q & bbb[0])) ?
+        (pc_from_register | jal16_target_phase_q) ?
                                                 data_stream_q[W-1:0] :
                                                  pc_sum;
 
@@ -627,9 +622,8 @@ module riscc_tiny #(
          (slice_idx_q[SLICE_BITS-1] ^ memory_lane_q)) ?
             {W{load_fill_q}} : data_stream_q[W-1:0];
     assign rf_wdata =
-        (trap_active | register_target_op |
-         (jal16_target_phase_q & bbb[0])) ? link_slice :
-        (load_op | (jal16_target_phase_q & ~bbb[0])) ? load_slice :
+        (trap_active | register_target_op | jal16_target_phase_q) ? link_slice :
+        load_op ? load_slice :
         shift_writeback_op ? shift_result_slice :
         alu_result;  // MUL passes write the sum
 
@@ -729,8 +723,6 @@ module riscc_tiny #(
                     state_q <= ST_EXECUTE;
             ST_EXECUTE:
                 if (last_slice & ~repeat_exec)
-                    // A first-word JAL16 fetches its target through
-                    // MEM_WAIT/MEM_XFER; address_stream_q already holds pc_q.
                     state_q <= (long_form_op & ~jal16_target_phase_q &
                                 ~trap_active) ?
                                ST_MEM_WAIT : ST_FETCH_WAIT;
@@ -795,7 +787,6 @@ module riscc_tiny #(
 `ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
 `undef RISCC_TINY_SPLIT_STORE_SCHEDULE
 `endif
-
 endmodule
 
 `include "rtl/riscc_rf.vh"
