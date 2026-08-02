@@ -9,17 +9,17 @@
         .macro EXTRACT_EXP reg
 #ifdef __RISCC_MIN__
         .rept 7
-        SHRI    \reg, \reg, 1
+        SRLI    \reg, \reg, 1
         .endr
 #else
-        SHRI    \reg, \reg, 7
+        SRLI    \reg, \reg, 7
 #endif
         .endm
 
         .macro TAIL_PACK
 #ifdef __RISCC_MIN__
         LI      r0, code(__riscc_pack_sf)
-        JAL     s0, r0
+        JALR    s0, r0
 #else
         JAL16   s0, __riscc_pack_sf
 #endif
@@ -41,7 +41,7 @@
 .Lmul_shift\@:
         FSR1    r1, r1, r2
         FSR1    r2, r2, r3
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Lmul_shift_done\@
         OR      r3, r3, r6
 .Lmul_shift_done\@:
@@ -203,10 +203,10 @@ __mulsf3:
         ADD     r1, r1, r1
         .endr
 #else
-        SHLI    r2, r2, 8
-        SHRI    r0, r1, 8
+        SLLI    r2, r2, 8
+        SRLI    r0, r1, 8
         OR      r2, r2, r0
-        SHLI    r1, r1, 8
+        SLLI    r1, r1, 8
 #endif
         MOV     r4, r1
         MOV     r5, r2
@@ -249,7 +249,7 @@ __mulsf3:
         OR      r4, r4, r5
 .Lproduct_shift_loop:
         FSR1    r2, r2, r3
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         ADDI    r6, -1
         MOV     r0, r6
         BNEZ    .Lproduct_shift_loop

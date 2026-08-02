@@ -153,7 +153,7 @@ draw_x_loop:
     LDI16 r1, fb_row
     STW   r7, [r1+0]
 
-    SHLI  r5, r4, 2       ; first pixel in this packed word
+    SLLI  r5, r4, 2       ; first pixel in this packed word
     LDI16 r1, xpix
     STW   r5, [r1+0]
 
@@ -166,7 +166,7 @@ draw_x_loop:
     ADDI  r5, 1
     STW   r5, [r2+0]
     CALL16 julia_pixel
-    SHLI  r1, r1, 4
+    SLLI  r1, r1, 4
     LDI16 r2, pack_word
     LDW   r3, [r2+0]
     OR    r3, r3, r1
@@ -177,7 +177,7 @@ draw_x_loop:
     ADDI  r5, 1
     STW   r5, [r2+0]
     CALL16 julia_pixel
-    SHLI  r1, r1, 8
+    SLLI  r1, r1, 8
     LDI16 r2, pack_word
     LDW   r3, [r2+0]
     OR    r3, r3, r1
@@ -188,8 +188,8 @@ draw_x_loop:
     ADDI  r5, 1
     STW   r5, [r2+0]
     CALL16 julia_pixel
-    SHLI  r1, r1, 8
-    SHLI  r1, r1, 4
+    SLLI  r1, r1, 8
+    SLLI  r1, r1, 4
     LDI16 r2, pack_word
     LDW   r3, [r2+0]
     OR    r1, r3, r1
@@ -323,23 +323,23 @@ fmul_b_pos:
 
     MOV   r4, r1          ; al
     ANDI  r4, 255
-    SHRI  r5, r1, 8       ; ah
+    SRLI  r5, r1, 8       ; ah
     MOV   r6, r2          ; bl
     ANDI  r6, 255
-    SHRI  r7, r2, 8       ; bh
+    SRLI  r7, r2, 8       ; bh
 
     MUL   r1, r4, r6      ; al * bl
-    SHRI  r1, r1, 8
-    SHRI  r1, r1, 2
+    SRLI  r1, r1, 8
+    SRLI  r1, r1, 2
 
     MUL   r2, r5, r6      ; ah * bl
     MUL   r3, r4, r7      ; al * bh
     ADD   r2, r2, r3
-    SHRI  r2, r2, 2
+    SRLI  r2, r2, 2
     ADD   r1, r1, r2
 
     MUL   r2, r5, r7      ; ah * bh
-    SHLI  r2, r2, 6
+    SLLI  r2, r2, 6
     ADD   r1, r1, r2
 
     LDI16 r0, fmul_sign
@@ -474,7 +474,7 @@ ticker_emit_pixel:
 
     LDI16 r1, ticker_char
     LDW   r4, [r1+0]
-    SHLI  r5, r4, 3
+    SLLI  r5, r4, 3
     SUB   r5, r5, r4
     ADD   r5, r5, r2
     LDI16 r1, ticker_glyphs
@@ -619,7 +619,7 @@ julia_pixel_done:
 update_julia_param:
     LDI16 r1, julia_target
     LDW   r2, [r1+0]
-    SHLI  r2, r2, 2       ; two 16-bit words per path point
+    SLLI  r2, r2, 2       ; two 16-bit words per path point
     LDI16 r3, julia_path
     ADD   r3, r3, r2
     LDW   r4, [r3+0]      ; target cx

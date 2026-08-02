@@ -135,7 +135,7 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // Variable-shift and multiply iteration loop
     // ------------------------------------------------------------------
-    // SHLI is 01_111; SHRI/SARI use right_shift_slot above.
+    // SLLI is 01_111; SRLI/SRAI use right_shift_slot above.
     wire shift_left_immediate = register_memory_group &&
                                 (&register_opcode);
     wire immediate_shift_op = right_shift_slot | shift_left_immediate;
@@ -146,7 +146,7 @@ module riscc_tiny16 #(
     wire iteration_done = iteration_count_q == 3'd0;
     wire shift_iteration = in_iterate;
     // Only immediate shifts reach Iterate: op[1] distinguishes the defined
-    // right-shift slots (100/101) from SHLI (111).
+    // right-shift slots (100/101) from SLLI (111).
     wire shift_right_iteration = in_iterate && !register_opcode[1];
     wire shift_left_iteration = in_iterate && register_opcode[1];
     wire shift_complete = in_iterate && iteration_done;
@@ -223,7 +223,7 @@ module riscc_tiny16 #(
     wire rf_read_system_bank = in_decode && system_group && ~rb[0];
 
     wire [15:0] rf_read_data;
-    // JAL/JAL16 link into S[ddd] -- the same write address as MTS.
+    // JALR/JAL16 link into S[ddd] -- the same write address as MTS.
     wire [2:0] rf_write_register =
         (in_irq_entry | compare_immediate) ? 3'b000 : rd;
     // rf_we qualifies the state; the bank select can keep the decoded MTS

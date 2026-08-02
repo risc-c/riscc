@@ -5,7 +5,7 @@
 __riscc_heap_limit:
         MOV r1, r7
 #ifdef __RISCC_NANO__
-        JAL r0, r6
+        JALR r0, r6
 #else
         RETS
 #endif

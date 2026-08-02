@@ -80,7 +80,7 @@ __riscc_irq_entry:
         JAL16   S0, __default_irq
 .Lhandler_set:
         LDI16   r7, __riscc_irq_stack_top
-        JAL     S7, r0
+        JALR    S7, r0
 
         MFS     r0, S2
         LDW     r1, [r0-14]

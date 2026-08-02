@@ -9,17 +9,17 @@
         .macro EXTRACT_EXP reg
 #ifdef __RISCC_MIN__
         .rept 7
-        SHRI    \reg, \reg, 1
+        SRLI    \reg, \reg, 1
         .endr
 #else
-        SHRI    \reg, \reg, 7
+        SRLI    \reg, \reg, 7
 #endif
         .endm
 
         .macro TAIL_PACK
 #ifdef __RISCC_MIN__
         LI      r0, code(__riscc_pack_sf)
-        JAL     s0, r0
+        JALR    s0, r0
 #else
         JAL16   s0, __riscc_pack_sf
 #endif
@@ -269,11 +269,11 @@ __divsf3:
          */
         STW     r5, [r7 - 4]
         MOV     r5, r3
-        SHLI    r5, r5, 8               /* divisor low limb */
+        SLLI    r5, r5, 8               /* divisor low limb */
         MTS     s4, r5
         MOV     r6, r4
-        SHLI    r6, r6, 8
-        SHRI    r0, r3, 8
+        SLLI    r6, r6, 8
+        SRLI    r0, r3, 8
         OR      r6, r6, r0              /* divisor high limb, >= 0x8000 */
 
         /* Select X and the matching exponent, so divisor <= X < 2*divisor. */

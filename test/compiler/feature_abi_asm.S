@@ -19,7 +19,7 @@ feature_check_callee_saved:
         LI      r5, 0x55aa
         LDI     r1, 7
         LI      r0, code(feature_abi_pressure)
-        JAL     r6, r0
+        JALR    r6, r0
 
         LI      r0, 0x55aa
         SUB     r0, r5, r0
@@ -34,11 +34,11 @@ feature_check_callee_saved:
         LDW     r5, [r7+0]
         LDW     r2, [r7+2]
         ADDI    r7, 4
-        JAL     r0, r2
+        JALR    r0, r2
 
 .Lstack_unaligned:
         LDI     r1, 3
-        JAL     r0, r6
+        JALR    r0, r6
 #else
         ADDI    r7, -6
         STW     r5, [r7+0]

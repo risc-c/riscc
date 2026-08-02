@@ -106,10 +106,10 @@ class Gen:
 
     def op_shift(self):
         if self.shifts:
-            op = self.rng.choice(["SHRI", "SARI", "SHLI"])
+            op = self.rng.choice(["SRLI", "SRAI", "SLLI"])
             n = self.rng.randint(1, 8)
         else:
-            op = self.rng.choice(["SHRI", "SARI"])
+            op = self.rng.choice(["SRLI", "SRAI"])
             n = 1
         return ["    %-5s %s, %s, %d" % (op, self.reg(), self.reg(), n)]
 
@@ -351,7 +351,7 @@ class NanoGen:
 
     def op_shift(self):
         if self.rng.random() < 0.75:
-            op = self.rng.choice(["SHRI", "SARI"])
+            op = self.rng.choice(["SRLI", "SRAI"])
             return ["    %-5s %s, %s, 1" % (op, self.reg(), self.reg())]
         return ["    SHL1  %s, %s" % (self.reg(), self.reg())]
 

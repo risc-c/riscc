@@ -59,68 +59,68 @@
         .p2align 1
 
         SHIFT_LABEL __riscc_lshrhi15
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi14
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi13
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi12
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi11
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi10
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi9
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi8
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi7
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi6
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi5
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi4
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi3
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi2
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_LABEL __riscc_lshrhi1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         SHIFT_RETURN
 
         .section .text.__riscc_ashrhi,"ax",@progbits
         .p2align 1
 
         SHIFT_LABEL __riscc_ashrhi15
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi14
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi13
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi12
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi11
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi10
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi9
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi8
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi7
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi6
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi5
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi4
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi3
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi2
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_LABEL __riscc_ashrhi1
-        SARI    r1, r1, 1
+        SRAI    r1, r1, 1
         SHIFT_RETURN

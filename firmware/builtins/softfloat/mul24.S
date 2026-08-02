@@ -74,10 +74,10 @@ __riscc_umul24x24:
         ANDI    r0, 255
         MTS     s6, r0
         MOV     r2, r1
-        SHRI    r2, r2, 8
+        SRLI    r2, r2, 8
         ANDI    r1, 255
         MOV     r5, r3
-        SHRI    r5, r5, 8
+        SRLI    r5, r5, 8
         ANDI    r3, 255
         MOV     r6, r4
         ANDI    r6, 255
@@ -103,16 +103,16 @@ __riscc_umul24x24:
         MTS     s4, r0
         MTS     s5, r3
 
-        SHLI    r0, r0, 8
+        SLLI    r0, r0, 8
         MFS     r3, s3
         ADD     r0, r3, r0
         SLTU    r3, r0, r3             /* carry into result word one */
         MTS     s3, r0
         MFS     r0, s4
-        SHRI    r0, r0, 8
+        SRLI    r0, r0, 8
         MTS     s4, r3
         MFS     r3, s5
-        SHLI    r3, r3, 8
+        SLLI    r3, r3, 8
         ADD     r0, r0, r3
         MFS     r3, s4
         ADD     r0, r0, r3
@@ -170,14 +170,14 @@ __riscc_umul24x24:
         ADD     r4, r0, r4
         SLTU    r0, r4, r0             /* column-sum carry */
         MTS     s6, r4
-        SHLI    r4, r4, 8
+        SLLI    r4, r4, 8
         MFS     r1, s4                 /* a0 is dead; r1 is now scratch */
         ADD     r4, r1, r4
         SLTU    r1, r4, r1             /* carry into result word two */
         MTS     s4, r4
-        SHLI    r0, r0, 8
+        SLLI    r0, r0, 8
         MFS     r4, s6
-        SHRI    r4, r4, 8
+        SRLI    r4, r4, 8
         ADD     r0, r0, r4
         ADD     r0, r0, r1
         MFS     r1, s5

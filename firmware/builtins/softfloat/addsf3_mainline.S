@@ -9,17 +9,17 @@
         .macro EXTRACT_EXP reg
 #ifdef __RISCC_MIN__
         .rept 7
-        SHRI    \reg, \reg, 1
+        SRLI    \reg, \reg, 1
         .endr
 #else
-        SHRI    \reg, \reg, 7
+        SRLI    \reg, \reg, 7
 #endif
         .endm
 
         .macro TAIL_PACK
 #ifdef __RISCC_MIN__
         LI      r0, code(__riscc_pack_sf)
-        JAL     s0, r0
+        JALR    s0, r0
 #else
         JAL16   s0, __riscc_pack_sf
 #endif
@@ -195,7 +195,7 @@ __addsf3:
         OR      r0, r0, r6
         STW     r0, [r7 - 4]
         FSR1    r3, r3, r4
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
         LDW     r6, [r7 - 2]
         ADDI    r6, -1
         STW     r6, [r7 - 2]
@@ -223,7 +223,7 @@ __addsf3:
         MOV     r6, r1
         ANDI    r6, 1
         FSR1    r1, r1, r2
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         OR      r1, r1, r6
         ADDI    r5, 1
         JMP8    .Lpack

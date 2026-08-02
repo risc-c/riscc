@@ -106,11 +106,11 @@
         MOV     r0, r3
         ANDI    r0, 1
         BEQZ    .Lmath_shr1_no_carry
-        SHRI    r0, r4, 1
+        SRLI    r0, r4, 1
         OR      r0, r0, r5
         JMP8    .Lmath_shr1_store
 .Lmath_shr1_no_carry:
-        SHRI    r0, r4, 1
+        SRLI    r0, r4, 1
 .Lmath_shr1_store:
 #else
         FSR1    r0, r4, r3

@@ -153,12 +153,12 @@ c_bit:
     MOV   r0, r2
     ANDI  r0, 1
     BEQZ  c_noxor
-    SHRI  r2, r2, 1
+    SRLI  r2, r2, 1
     LDI16 r6, 0xA001
     XOR   r2, r2, r6
     JMP8  c_next
 c_noxor:
-    SHRI  r2, r2, 1
+    SRLI  r2, r2, 1
 c_next:
     ADDI  r5, -1
     MOV   r0, r5

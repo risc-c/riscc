@@ -75,7 +75,7 @@ constexpr CycleTable TINY16_CYCLES =
     3,  // immediate ALU, branch, S-reg move, IE control, count-1 shift
     4,  // register ALU
     5,  // SLT/SLTU
-    3,  // count-1 SHRI/SARI in min/sys builds
+    3,  // count-1 SRLI/SRAI in min/sys builds
     5,  // FSL1 stages its result through MDR writeback
     4,  // FSR1 follows the normal two-source execute path
     6,  // LDW rd, [ra+simm8]
@@ -756,7 +756,7 @@ struct Sim
             else if (func == 0x0f)
             {
                 if (opts.nano || !opts.has_shifts())
-                    throw std::runtime_error("SHLI is not in the min profile");
+                    throw std::runtime_error("SLLI is not in the min profile");
                 r[rd] = static_cast<uint16_t>(r[ra] << (rb + 1));
                 instr_cycles = cycle.variable_shift(static_cast<int>(rb + 1));
             }
@@ -819,7 +819,7 @@ struct Sim
                 if (opts.nano)
                 {
                     if (rb != 1)
-                        throw std::runtime_error("non-JAL sys op in nano");
+                        throw std::runtime_error("non-JALR sys op in nano");
                     uint16_t target = r[ra] & 0x7fff;
                     if (rd != 0)
                         r[rd] = pc_next;

@@ -124,7 +124,7 @@ module riscc_tiny #(
         ((W == 1) ? (register_group & ~f5[3]) : register_alu_op) &
         ~f5[2] & f5[1];
     wire signed_compare = ~instr_q[3];
-    // SHRI/SARI (01_100/101) and SHLI (01_111) repeat EXECUTE bbb+1
+    // SRLI/SRAI (01_100/101) and SLLI (01_111) repeat EXECUTE bbb+1
     // times.
     wire right_shift_op =
         register_group & f_group_01 & f5[2] & ~f5[1];
@@ -134,9 +134,9 @@ module riscc_tiny #(
                          f5[2] & f5[1] & f5[0];
     wire variable_shift_op = right_shift_op | left_shift_op;
     wire arithmetic_shift = f5[0];
-    // SHLI and FSL1 share f5[1:0]=11; FSR1 has f5[1:0]=10.
+    // SLLI and FSL1 share f5[1:0]=11; FSR1 has f5[1:0]=10.
     wire use_left_shift_path = f5[1] & f5[0];
-    // Previous slice's MSB, used as the SHLI carry-in.
+    // Previous slice's MSB, used as the SLLI carry-in.
     reg left_shift_carry_q;
     reg  [2:0] repeat_pass_idx_q;
     // ~trap_active: see the FULL branch note -- preempted shifts must not loop
@@ -527,7 +527,7 @@ module riscc_tiny #(
 
     // ------------------------------------------------------------------
     // PC stream and serial adder (PC + offset + forced carry 1).
-    // The adder output is also every link/EPC value: PC+1 for JAL/JAL16;
+    // The adder output is also every link/EPC value: PC+1 for JALR/JAL16;
     // for IRQ entry the parked carry is forced to 0 (and the
     // offset gated off) so the same adder yields the raw preempted pc_q.
     // ------------------------------------------------------------------

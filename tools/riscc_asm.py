@@ -62,10 +62,10 @@ R_FUNC = {
     "LDWX": 0x08,
     "LDB": 0x0A,
     "STB": 0x0B,
-    "SHRI": 0x0C,
-    "SARI": 0x0D,
+    "SRLI": 0x0C,
+    "SRAI": 0x0D,
     "LDBS": 0x0E,
-    "SHLI": 0x0F,
+    "SLLI": 0x0F,
     "FSL1": 0x13,
     "FSR1": 0x12,
     "SYS": 0x1F,
@@ -75,7 +75,7 @@ R_FUNC = {
 # 000 for the IE-preserving/clearing form and 111 for the IE-setting form.
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
-SYS_SUB = {"RET": 0, "JAL": 1, "MFS": 2, "MTS": 3, "IE": 6}
+SYS_SUB = {"RET": 0, "JALR": 1, "MFS": 2, "MTS": 3, "IE": 6}
 CONTROL_CCC = {"RET": 0, "RETI": 7, "CLI": 0, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
@@ -473,7 +473,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
     if op in ("RET", "RETS", "RETI", "ERET"):
         # RET Sa: pc = S[aaa], IE untouched; RETI Sa also sets IE.
         # RETS = RET S7; ERET = RETI S0.  RET ra (general register) is the
-        # link-free register jump, i.e. JAL S0, ra.
+        # link-free register jump, i.e. JALR S0, ra.
         sub = "RETI" if op in ("RETI", "ERET") else "RET"
         if len(operands) == 0:
             sa = 7 if op in ("RET", "RETS") else 0
@@ -482,7 +482,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
             tok = operands[0].strip().upper()
             if tok in REGS and op == "RET":
                 return encode_word(enc_r(0, REGS[tok],
-                                         R_FUNC["SYS"], SYS_SUB["JAL"]))
+                                         R_FUNC["SYS"], SYS_SUB["JALR"]))
             sa = sreg(operands[0])
         return encode_word(enc_r(CONTROL_CCC[sub], sa, R_FUNC["SYS"],
                                  SYS_SUB["RET"]))
@@ -545,7 +545,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         n_ops(3, f"{op} rd, ra, rb")
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]), R_FUNC[op], reg(operands[2])))
 
-    if op in ("SHLI", "SHRI", "SARI"):
+    if op in ("SLLI", "SRLI", "SRAI"):
         # Shift by immediate: amount 1..8, encoded biased in the rb field.
         n_ops(3, f"{op} rd, ra, imm")
         amount = eval_expr(operands[2], labels)
@@ -570,20 +570,20 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
             raise AsmError(f"{op} requires [ra]")
         return encode_word(enc_r(rd, reg(mem[0]), R_FUNC["STB"], 0))
 
-    if op in ("JAL", "JMP", "CALL"):
-        # JAL Sd, ra: S[ddd] = pc_next unless ddd == S0, pc = ra.
-        # JMP ra = JAL S0, ra; CALL ra = JAL S7, ra.  Nano's dialect links
+    if op in ("JALR", "JMP", "CALL"):
+        # JALR Sd, ra: S[ddd] = pc_next unless ddd == S0, pc = ra.
+        # JMP ra = JALR S0, ra; CALL ra = JALR S7, ra.  Nano's dialect links
         # into a general register: CALL rd, ra (same encoding, ddd names rd).
         if op == "JMP" or len(operands) == 1:
             n_ops(1, f"{op} ra")
             d = 0 if op == "JMP" else 7
             return encode_word(enc_r(d, reg(operands[0]),
-                                     R_FUNC["SYS"], SYS_SUB["JAL"]))
+                                     R_FUNC["SYS"], SYS_SUB["JALR"]))
         n_ops(2, f"{op} Sd, ra")
         tok = operands[0].strip().upper()
         d = REGS[tok] if tok in REGS else sreg(operands[0])
         return encode_word(enc_r(d, reg(operands[1]),
-                                 R_FUNC["SYS"], SYS_SUB["JAL"]))
+                                 R_FUNC["SYS"], SYS_SUB["JALR"]))
 
     if op in ("CLI", "STI"):
         n_ops(0, op)

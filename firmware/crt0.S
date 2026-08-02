@@ -30,7 +30,7 @@ _start:
 .Lzero_done:
 #ifdef __RISCC_NANO__
         LI      r0, code(main)
-        JAL     r6, r0
+        JALR    r6, r0
 #elif defined(__RISCC_MIN__)
         LI      r0, code(main)
         CALL    r0

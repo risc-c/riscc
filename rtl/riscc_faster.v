@@ -196,7 +196,7 @@ module riscc_faster #(
     // shift path. Its fitter mapping is smaller than re-decoding the field.
     wire x_shift_left = x_shift_left_q;
 `else
-    // SHLI and FSL1 share f3[1:0]=11, so the DSP build needs no direction
+    // SLLI and FSL1 share f3[1:0]=11, so the DSP build needs no direction
     // register: the retained instruction carries it through the side state.
     wire x_shift_left = &x_f3[1:0];
 `endif

@@ -119,8 +119,8 @@ br_nz_ok:
 
     ; count-one right shifts
     LDI16 r1, 0x8001
-    SHRI  r2, r1, 1
-    SARI  r3, r1, 1
+    SRLI  r2, r1, 1
+    SRAI  r3, r1, 1
     LDI16 r4, 0x4000
     SUB   r0, r2, r4
     BNEZ  fail
@@ -352,8 +352,8 @@ shifts_start:
 
     ; --- one-bit shifts ---
     LDI16 r1, 0x8001
-    SHRI  r2, r1, 1
-    SARI  r3, r1, 1
+    SRLI  r2, r1, 1
+    SRAI  r3, r1, 1
     LDI16 r4, 0x4000
     SUB   r0, r2, r4
     BNEZ  fail_late
@@ -447,21 +447,21 @@ feature_tests:
 .ifdef RISCC_SYS
     ; --- immediate shifts: amounts 1..8, sign fill, rd==ra, composed shifts ---
     LDI16 r1, 0x8001
-    SHRI  r3, r1, 4         ; 0x0800
+    SRLI  r3, r1, 4         ; 0x0800
     LDI16 r4, 0x0800
     SUB   r0, r3, r4
     BNEZ  feature_fail
-    SARI  r3, r1, 4         ; 0xF800
+    SRAI  r3, r1, 4         ; 0xF800
     LDI16 r4, 0xF800
     SUB   r0, r3, r4
     BNEZ  feature_fail
     LDI   r3, 3
-    SHLI  r3, r3, 4         ; rd==ra: 0x30
+    SLLI  r3, r3, 4         ; rd==ra: 0x30
     LDI   r4, 0x30
     SUB   r0, r3, r4
     BNEZ  feature_fail
-    SHRI  r2, r1, 1         ; count-1 cheap opcode: 0x4000
-    SARI  r3, r1, 1         ; count-1 cheap opcode: 0xC000
+    SRLI  r2, r1, 1         ; count-1 cheap opcode: 0x4000
+    SRAI  r3, r1, 1         ; count-1 cheap opcode: 0xC000
     LDI16 r4, 0x4000
     SUB   r0, r2, r4
     BNEZ  feature_fail
@@ -469,19 +469,19 @@ feature_tests:
     SUB   r0, r3, r4
     BNEZ  feature_fail
     LDI16 r1, 0xFF00
-    SHRI  r1, r1, 8         ; amount 8: 0x00FF
+    SRLI  r1, r1, 8         ; amount 8: 0x00FF
     LDI16 r4, 0x00FF
     SUB   r0, r1, r4
     BNEZ  feature_fail
     LDI16 r1, 0xF000
-    SHRI  r1, r1, 8         ; >>12 composed: >>8 then >>4
-    SHRI  r1, r1, 4
+    SRLI  r1, r1, 8         ; >>12 composed: >>8 then >>4
+    SRLI  r1, r1, 4
     LDI   r4, 15
     SUB   r0, r1, r4
     BNEZ  feature_fail
     LDI   r1, 1
-    SHLI  r1, r1, 8         ; <<15 composed
-    SHLI  r1, r1, 7
+    SLLI  r1, r1, 8         ; <<15 composed
+    SLLI  r1, r1, 7
     LDI16 r4, 0x8000
     SUB   r0, r1, r4
     BNEZ  feature_fail
@@ -521,16 +521,16 @@ feature_tests:
     BNEZ  feature_fail
 .endif
 
-    ; ---- JAL/RET generality (all profiles) ----
-    LDI16 r1, gen_sub >> 1  ; JAL S3: link lands in S3, callee RETs via S3
+    ; ---- JALR/RET generality (all profiles) ----
+    LDI16 r1, gen_sub >> 1  ; JALR S3: link lands in S3, callee RETs via S3
     LDI   r3, 0
-    JAL   S3, r1
+    JALR  S3, r1
     CMPI  r3, 0x21          ; callee side effect proves the round trip
     BNEZ  feature_fail
-    LDI16 r2, 0x1234        ; JAL S0 is a plain jump: S0 must be untouched
+    LDI16 r2, 0x1234        ; JALR S0 is a plain jump: S0 must be untouched
     MTS   S0, r2
     LDI16 r1, gen_jmp >> 1
-    JAL   S0, r1
+    JALR  S0, r1
 gen_back:
     MFS   r2, S0
     LDI16 r4, 0x1234

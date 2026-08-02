@@ -129,7 +129,7 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
-        SHRI    r5, r5, 1
+        SRLI    r5, r5, 1
         BEQZ    .Lmuldi_shr0_done
         LUI     r0, 128
         OR      r5, r5, r0
@@ -144,7 +144,7 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
-        SHRI    r5, r5, 1
+        SRLI    r5, r5, 1
         BEQZ    .Lmuldi_shr1_done
         LUI     r0, 128
         OR      r5, r5, r0
@@ -159,7 +159,7 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
-        SHRI    r5, r5, 1
+        SRLI    r5, r5, 1
         BEQZ    .Lmuldi_shr2_done
         LUI     r0, 128
         OR      r5, r5, r0
@@ -170,7 +170,7 @@
         STW     r5, [r7 - 18]
 
         LDW     r5, [r7 - 20]
-        SHRI    r5, r5, 1
+        SRLI    r5, r5, 1
         STW     r5, [r7 - 20]
 
         LDW     r0, [r7 - 14]
@@ -206,7 +206,7 @@
         AND     r0, r0, r1
         ADD     r3, r3, r0
         ADD     r1, r1, r1
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         MOV     r0, r2
         BNEZ    .Lmulhi_loop
         MOV     r1, r3
@@ -255,33 +255,33 @@
          */
         MOV     r5, r1
         ANDI    r1, 255
-        SHRI    r5, r5, 8
+        SRLI    r5, r5, 8
         MOV     r6, r3
         ANDI    r3, 255
-        SHRI    r6, r6, 8
+        SRLI    r6, r6, 8
         MUL     r0, r1, r3              /* p00 */
         MUL     r1, r1, r6              /* p01 */
         MUL     r2, r5, r3              /* p10 */
         MUL     r3, r5, r6              /* p11 */
 
-        SHRI    r4, r1, 8
+        SRLI    r4, r1, 8
         ADD     r3, r3, r4
-        SHRI    r4, r2, 8
+        SRLI    r4, r2, 8
         ADD     r3, r3, r4
-        SHRI    r4, r0, 8
+        SRLI    r4, r0, 8
         MOV     r5, r1
         ANDI    r5, 255
         ADD     r4, r4, r5
         MOV     r5, r2
         ANDI    r5, 255
         ADD     r4, r4, r5
-        SHRI    r5, r4, 8
+        SRLI    r5, r4, 8
         ADD     r2, r3, r5
         MFS     r5, s3
         ADD     r2, r2, r5
         MFS     r5, s4
         ADD     r2, r2, r5
-        SHLI    r4, r4, 8
+        SLLI    r4, r4, 8
         ANDI    r0, 255
         OR      r1, r0, r4
 
@@ -325,17 +325,17 @@
 
         MOV     r0, r4
         ANDI    r0, 1
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Lmulsi_no_shift_carry
         LUI     r0, 128
         OR      r3, r3, r0
 .Lmulsi_no_shift_carry:
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
 #else
         FSL1    r2, r2, r1
         ADD     r1, r1, r1
         FSR1    r3, r3, r4
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
 #endif
         OR      r0, r3, r4
         BNEZ    .Lmulsi_loop

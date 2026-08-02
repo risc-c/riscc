@@ -95,7 +95,7 @@ __addsf3:
         /* Convert the encoded exponent difference to a shift count. */
         SUB     r5, r5, r6
         .rept 7
-        SHRI    r5, r5, 1
+        SRLI    r5, r5, 1
         .endr
         LDI     r0, 0
         STW     r0, [r7 - 2]           /* discarded-bit sticky */
@@ -119,11 +119,11 @@ __addsf3:
 .Lsticky_done:
         MOV     r0, r4
         ANDI    r0, 1
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Lalign_no_carry
         OR      r3, r3, r6
 .Lalign_no_carry:
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
         ADDI    r5, -1
         MOV     r0, r5
         BNEZ    .Lalign
@@ -152,12 +152,12 @@ __addsf3:
         STW     r0, [r7 - 2]
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Ladd_shift_no_carry
         LUI     r0, 0x80
         OR      r1, r1, r0
 .Ladd_shift_no_carry:
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         LDW     r0, [r7 - 2]
         BEQZ    .Ladd_shift_sticky_done
         ORI     r1, 1
@@ -240,11 +240,11 @@ __addsf3:
 .Lpack_shift:
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Lpack_no_carry
         OR      r1, r1, r6
 .Lpack_no_carry:
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         ADDI    r5, -1
         MOV     r0, r5
         BNEZ    .Lpack_shift

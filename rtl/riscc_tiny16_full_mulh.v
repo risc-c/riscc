@@ -145,7 +145,7 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // Variable-shift and multiply iteration loop
     // ------------------------------------------------------------------
-    // 01_100/101 are SHRI/SARI and 01_111 is SHLI.
+    // 01_100/101 are SRLI/SRAI and 01_111 is SLLI.
     wire shift_left_immediate = register_memory_group &&
                                 (&register_opcode);
     wire immediate_shift_op = right_shift_slot | shift_left_immediate;
@@ -247,7 +247,7 @@ module riscc_tiny16 #(
     wire rf_read_system_bank = in_decode && system_group && ~rb[0];
 
     wire [15:0] rf_read_data;
-    // JAL/JAL16 link into S[ddd] -- the same write address as MTS.
+    // JALR/JAL16 link into S[ddd] -- the same write address as MTS.
     wire [2:0] rf_write_register =
         mulhu_high_write ? ra :
         ((in_irq_entry | compare_immediate) ? 3'b000 : rd);

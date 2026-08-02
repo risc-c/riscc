@@ -43,7 +43,7 @@ __riscc_pack_sf:
         MOV     r6, r1
         ANDI    r6, 1
         FSR1    r1, r1, r2
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         OR      r1, r1, r6
         ADDI    r5, -1
 .Lunderflow_loop_test:
@@ -104,15 +104,15 @@ __riscc_pack_sf:
 #ifdef __RISCC_MIN__
         .rept 3
         FSR1    r1, r1, r2
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         .endr
 #else
         MOV     r5, r2
-        SHLI    r5, r5, 8
-        SHLI    r5, r5, 5
-        SHRI    r1, r1, 3
+        SLLI    r5, r5, 8
+        SLLI    r5, r5, 5
+        SRLI    r1, r1, 3
         OR      r1, r1, r5
-        SHRI    r2, r2, 3
+        SRLI    r2, r2, 3
 #endif
 
         /* High result word: sign | exponent<<7 | fraction[22:16]. */
@@ -122,7 +122,7 @@ __riscc_pack_sf:
         ADD     r5, r5, r5
         .endr
 #else
-        SHLI    r5, r5, 7
+        SLLI    r5, r5, 7
 #endif
         ANDI    r2, 0x7f
         OR      r2, r2, r5

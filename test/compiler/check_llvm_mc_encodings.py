@@ -173,7 +173,7 @@ def main() -> int:
                     emit(f"stb {', '.join(operands)}", "STB", operands)
 
             # Biased three-bit shift counts.
-            for op in ("SHLI", "SHRI", "SARI"):
+            for op in ("SLLI", "SRLI", "SRAI"):
                 for rd in range(8):
                     for ra in range(8):
                         for amount in range(1, 9):
@@ -187,7 +187,7 @@ def main() -> int:
             for sd in range(8):
                 for ra in range(8):
                     operands = [f"s{sd}", f"r{ra}"]
-                    emit(f"jal {', '.join(operands)}", "JAL", operands)
+                    emit(f"jalr {', '.join(operands)}", "JALR", operands)
             for rd in range(8):
                 for sa in range(8):
                     operands = [f"r{rd}", f"s{sa}"]

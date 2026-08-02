@@ -128,7 +128,7 @@ module riscc_tiny16_min #(
     wire single_step_shift_op = right_shift_slot | funnel_right_op;
 
     wire system_group = register_class && (&register_group);
-    // Min lets the Sys-only high selector bit alias RET/JAL.
+    // Min lets the Sys-only high selector bit alias RET/JALR.
     wire jal_register_op = system_group && !rb[1] && rb[0];
     wire return_op = system_group && !rb[1] && !rb[0];
     wire mfs_op = system_group && !rb[2] && rb[1] && !rb[0];
@@ -186,7 +186,7 @@ module riscc_tiny16_min #(
     wire [2:0] rf_write_register =
         compare_immediate ? 3'b000 : rd;
     // rf_we qualifies the state. Keeping MTS selected outside Execute and
-    // selecting the JAL bank even when S0 suppresses its write maps smaller.
+    // selecting the JALR bank even when S0 suppresses its write maps smaller.
     wire rf_write_system_bank =
         mts_op | start_register_call;
     wire rf_we =
@@ -219,7 +219,7 @@ module riscc_tiny16_min #(
         mem_rdata;
 
     // Increment PC while the fetched word is captured. Decode then sees
-    // pc_next, so JAL can write its link immediately without another state.
+    // pc_next, so JALR can write its link immediately without another state.
     wire alu_a_is_pc = in_instruction_capture | in_decode;
     wire alu_a_is_zero =
         (in_execute &&

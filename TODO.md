@@ -1,134 +1,118 @@
-# Compiler TODO
+# Project TODO
 
-The current baseline supports freestanding C for `riscc-none-elf` across the
-`full`, `sys`, `min`, and `nano` profiles, static local-exec TLS, ordinary and
-aggregate calls, function pointers, 16/32/64-bit integer operations, and
-software binary32/binary64 at `-O0`, `-O2`, and `-Os`. The feature suites under
-`test/compiler/` are the executable correctness baseline. Run the focused
-toolchain checks with:
+This file lists active project work only. Completed work and distant ideas are
+omitted.
 
-```sh
-make -j16 check-llvm-riscc
-make -j16 test-compiler-profiles-iss
-```
+Tasks marked *HIGH* are the near-term priorities.
 
-## Language and ABI support
+## RC16 stabilization
 
-- [x] Support and regression-test the `full`, `sys`, `min`, and `nano`
-  compiler profiles. Full, Sys, and Min share the mainline ABI; Nano has its
-  deliberately incompatible reduced-register ABI.
-- [x] Define and implement the variadic ABI.
-  - Keep named arguments on the ordinary register/stack convention.
-  - Prefer placing every unnamed argument on the stack to avoid a register
-    argument home area.
-  - Define `va_list`, `va_start`, `va_arg`, `va_copy`, and `va_end` behavior.
-  - Add Clang Sema/CodeGen, LLVM lowering, cross-TU ABI, and ISS tests.
-- [x] Add soft-float support.
-  - Lower scalar and aggregate binary32/binary64 arguments and results through
-    the ordinary 16-bit ABI slots.
-  - Supply compiler-rt arithmetic, conversion, and comparison helpers as
-    separately extractable runtime objects.
-  - Cover float, double, long double, NaNs, varargs, wide conversions, and
-    mixed integer/float ABI calls on every profile at every tested optimization
-    level.
-- [ ] Define and test the supported freestanding C++ subset.
-  - Cover name mangling, member calls, trivial classes and aggregates, and
-    cross-translation-unit calls.
-  - Decide whether startup runs global constructors and destructors.
-  - Explicitly diagnose or document unsupported non-trivial object passing,
-    guard variables, `new`/`delete`, exceptions, RTTI, and runtime facilities.
-- [x] Keep VLA and dynamic `alloca` as deliberate non-features; fixed-size
-  stack objects remain supported.
-- [x] Keep C atomics unsupported; use explicit non-nesting `CLI`/`STI`
-  critical sections for coordination between main code and interrupt handlers.
-- [x] Keep interrupt entry in assembly; do not add a compiler interrupt
-  attribute or calling convention. The assembly wrapper may call ordinary C
-  handlers.
-- [x] Validate the minimal inline-assembly constraint and clobber interface.
+- [ ] *HIGH* Support the ISA's full RC16 address ranges end to end: 64 KiB data
+  and 128 KiB program space in the ABI and ELF model, assembler/disassembler,
+  LLVM/Clang/lld, linker scripts and image tools, ISS and other simulators, and
+  boundary tests. Remove accidental 15-bit code-address assumptions.
+  Parameterize RTL physical address widths so small implementations may expose
+  less memory, and add at least one full-range reference configuration.
+- [ ] *HIGH* Prototype optional `LDP rd, [ra]` in the assembler, ISS, compiler, and
+  representative RTL cores. Measure area, Fmax, cycles, and code size before
+  assigning it to an RC16 profile.
+- [ ] Evaluate `STP` only if a measured use case justifies its hardware and
+  program-memory synchronization requirements.
+- [ ] Prototype a Nano configuration where the GPR bank and data memory share
+  one physical FPGA RAM block while remaining architecturally separate. Compare
+  single- and dual-port schedules against existing Nano cores for RAM use,
+  LUTs, Fmax, cycles, and benchmark performance.
+- [ ] *HIGH* Close RC16 regression gaps: compiler-generated Sys and Min RTL images and
+  exhaustive Nano LLVM MC encoding coverage.
 
-## Code generation and optimization
+## Core bus interface
 
-- [x] Optimize common scalar code without adding target-specific passes:
-  immediate materialization, comparisons, zero-valued selects, indexed loads,
-  constant multiplication, profile-specific shifts, and small stack frames.
-- [x] Keep the profile implementation shared. Model instruction capabilities
-  as subtarget features and isolate Nano differences to its register ABI and
-  missing instructions.
-- [x] Keep Nano's `r6` link/return register allocatable outside its fixed ABI
-  uses. Reserve only the `r7` stack pointer among GPRs; special registers stay
-  outside ordinary allocation.
-- [x] Use mainline `S3..S7` as a small software-managed register cache.
-  Direct-only local functions may use a private link register; leaf functions
-  keep `r5`/`r6` backups and simple local spills there when that removes stack
-  traffic.
-- [ ] Add profitable switch jump-table lowering while retaining branch chains
-  for small or sparse switches.
-- [x] Implement and validate eligible tail calls.
-- [ ] Improve wide-integer lowering to avoid unnecessary runtime calls and
-  reduce helper overhead.
-- [x] Add call/branch relaxation and other size optimizations where linker
-  range and address-domain rules permit them.
-- [ ] Measure generated code size, instruction count, and ISS cycles across
-  every profile at `-O0`, `-O2`, and `-Os` using stable compiler workloads.
-  Require a measurable benefit before adding further custom combines or
-  post-RA optimizations.
-- [ ] Validate `-flto` with lld, section GC, runtime archives, function
-  pointers, and every compiler profile.
-- [ ] Validate debug information, stack frames, and source-level debugging.
+- [ ] *HIGH* Define a common instruction/data transaction interface using Wishbone B4
+  or a small directly compatible subset. It must provide byte selects,
+  request/write signaling, stall or busy indication, completion, read data, and
+  errors for arbitrary-latency memories and peripherals.
+- [ ] *HIGH* Specify request stability, exactly-once completion, reset behavior,
+  instruction/data arbitration, and a low-cost zero-wait-state path.
+- [ ] *HIGH* Convert representative cores, shared SoCs, memories, and peripherals using
+  native interfaces or simple bridges. Test randomized stalls, slow operations,
+  back-to-back accesses, and errors; measure area and Fmax changes.
 
-## LLVM verification
+## RC32 bring-up
 
-- [x] Add a target that runs the RISCC LLVM, Clang, and lld `lit` regression
-  directories with `FileCheck`.
-- [x] Add an all-profile compiler-to-ISS regression target.
-- [x] Exhaustively cross-check Full-profile MC encodings against the project
-  assembler.
-- [ ] Extend the exhaustive MC oracle to Nano-specific encodings and pseudos.
-- [ ] Run representative compiler-generated images on Sys and Min RTL so every
-  compiler profile has matching end-to-end hardware coverage.
-- [ ] Add explicit static-linker tests for weak symbols, aliases, archive
-  ordering, section GC, relocatable links, and mixed-profile archive members.
-- [ ] Add negative tests for every deliberately unsupported ABI feature.
-- [ ] Run a filtered integer-only subset of LLVM Test Suite through the ISS.
-- [ ] Add reduced-input MultiSource applications after the runtime interface is
-  sufficient.
-- [ ] Track code size and runtime separately from correctness results.
+- [ ] *HIGH* Implement RC32 in the assembler, disassembler, and C++ ISS, including all
+  mandatory compact and long instructions and 32-bit memory semantics.
+- [ ] *HIGH* Add RC32 architectural and encoding tests plus differential fuzzing before
+  broad RTL implementation.
+- [ ] *HIGH* Define the RC32 data, object, and calling ABI: data layout, register use,
+  stack and TLS layout, aggregates and variadics, ELF attributes, relocations,
+  and code models.
+- [ ] *HIGH* Bring up one correctness-first RC32 RTL core on the common bus and measure
+  the wider datapath and long-instruction costs before extending every core
+  family.
+- [ ] *HIGH* Add initial RC32 LLVM/Clang/lld, startup, runtime, linker-script, and build
+  support. Run C and supported C++ tests through the ISS and reference RTL at
+  `-O0`, `-O2`, and `-Os`.
 
-## ABI and toolchain stabilization
+## X32
 
-- [ ] Replace or formally register the provisional `EM_RISCC = 0xc8c8`
-  machine ID and relocation namespace before freezing ABI v1.
-- [ ] Define the compatibility policy for ABI revisions and add tests that
-  link objects produced by the oldest supported toolchain revision.
-- [ ] Validate installation or packaging of Clang, lld, startup objects,
-  profile-matched runtime archives, headers, and application Makefile support
-  outside the source tree.
+- [ ] Implement all defined X32 formats in the assembler, disassembler, ISS,
+  encoding tests, and differential fuzzer.
+- [ ] Define the X32 ABI, including use of the combined `r`, `S`, and `x`
+  register namespace, what it inherits from RC32, and RC32/X32 object
+  interoperability rules.
+- [ ] Implement and characterize an X32 reference core, including the cost of
+  five-bit register selection and long register, immediate, memory, branch, and
+  U20 formats.
+- [ ] Add X32 LLVM/Clang/lld register allocation, ABI lowering, instruction
+  selection, MC, relocation, runtime, and linker support with executable ABI
+  tests.
+- [ ] Compare X32 and equivalent RV32 configurations using the same compiler
+  workloads, tracking code size, instructions, cycles, area, and Fmax.
 
-## Runtime and ISS prerequisites for broader compiler testing
+## Compiler and release
 
-- [ ] Pass `argc` and `argv` from the ISS runner through startup to `main`.
-- [ ] Convert the return value from `main`, `exit`, and `abort` into a host
-  process status.
-- [x] Add public freestanding headers and basic string, assertion, and heap
-  support.
-- [x] Add an integer-only formatted-I/O implementation after variadics work.
-- [x] Add a small software `libm` with classification, sign manipulation,
-  rounding, min/max/difference, decomposition/scaling, adjacent values,
-  square root, and remainder for binary32/binary64.
-- [ ] Add a read-only filesystem over a generic flash-read interface.
-  - Generate deterministic filesystem images under `build/`.
-  - Model flash in the ISS and use a board-specific QSPI backend in hardware.
-  - Start with `fopen`, `fread`, `fgetc`, `fgets`, `fseek`, `ftell`, `feof`,
-    and `fclose` in read-only mode.
-- [ ] Add optional file/time semihosting only for tests that cannot use the
-  read-only flash image and architectural cycle counts.
+- [ ] Use measured workloads to improve RC16 code generation, initially focusing
+  on wide integers and switch lowering after `LDP` is evaluated.
+- [ ] Define and test the supported freestanding C++ subset, including trivial
+  classes, aggregates, cross-TU calls, and the startup-constructor policy. Keep
+  exceptions, RTTI, and a full C++ runtime out of scope until required.
+- [ ] Complete Nano application packaging in `riscc.mk`.
+- [ ] Replace or register the provisional `EM_RISCC = 0xc8c8` machine ID, define
+  object compatibility rules, and add installable packages after target and ABI
+  naming stabilizes.
 
-## Deferred or explicit non-goals
+## Benchmarking
 
-- PIC, PIE, shared objects, dynamic linking, and dynamic TLS models.
-- Hosted-process facilities, virtual memory, and a general-purpose OS.
-- C++ exceptions, RTTI, unwinding, and a full C++ runtime.
-- A comprehensive `libm` (transcendentals, alternate rounding modes, and the
-  floating-point environment) until applications require it.
-- Writable flash filesystems until a real application requires them.
-- Nano compatibility with the mainline C ABI.
+- [ ] Build a reproducible benchmark runner for the ISS, representative RTL
+  cores, and FPGA targets with fixed workloads, compiler options, and timing
+  sources.
+- [ ] Port CoreMark, suitable Embench workloads, and applicable standalone
+  lmbench latency and bandwidth kernels.
+- [ ] Add RISC-C microbenchmarks for instructions, branches and calls, memory and
+  bus stalls, interrupts, context switches, synchronization, flash/filesystem
+  access, and framebuffer traffic.
+- [ ] Version results for code size, dynamic instructions, cycles, stack/RAM
+  use, area, and Fmax, and flag meaningful compiler or RTL regressions.
+
+## Peripheral and platform support
+
+- [ ] Add SPI-flash controllers and simulation models on boards where flash is
+  available to the running design.
+- [ ] Add an SDRAM controller and model, then an SDRAM-backed framebuffer on
+  Icepi Zero with defined CPU/video arbitration and addressing.
+
+## Firmware
+
+- [ ] Define a small `libos` API and implement single-core cooperative, then
+  timer-preemptive threads with per-thread stacks, TLS, and complete ABI context
+  switching. Decide Nano support separately.
+- [ ] Add critical sections, mutexes, events or semaphores, and a blocking
+  queue/wakeup primitive. Use interrupt masking and scheduler control initially;
+  defer multicore synchronization until atomics and fences are designed.
+- [ ] Make the allocator, relevant libc state, and shared BSP services
+  thread-safe, with finite ISS and RTL tests for scheduling, TLS, blocking, and
+  interrupt interaction.
+- [ ] Add a flash/block-device API, host or ISS model, SPI-flash drivers, a
+  minimal filesystem, deterministic image builder, and basic file operations.
+- [ ] Update board demos to use OS threads, synchronization, SPI-flash filesystem
+  assets, and the SDRAM framebuffer, with finite regression coverage.

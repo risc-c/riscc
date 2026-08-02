@@ -53,14 +53,14 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Llshrsi_no_carry
         OR      r1, r1, r4
 .Llshrsi_no_carry:
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
 #else
         FSR1    r1, r1, r2
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
 #endif
         ADDI    r3, -1
         MOV     r0, r3
@@ -79,14 +79,14 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Lashrsi_no_carry
         OR      r1, r1, r4
 .Lashrsi_no_carry:
-        SARI    r2, r2, 1
+        SRAI    r2, r2, 1
 #else
         FSR1    r1, r1, r2
-        SARI    r2, r2, 1
+        SRAI    r2, r2, 1
 #endif
         ADDI    r3, -1
         MOV     r0, r3
@@ -162,23 +162,23 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Llshrdi_carry1_done
         OR      r1, r1, r5
 .Llshrdi_carry1_done:
         MOV     r0, r3
         ANDI    r0, 1
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         BEQZ    .Llshrdi_carry2_done
         OR      r2, r2, r5
 .Llshrdi_carry2_done:
         MOV     r0, r4
         ANDI    r0, 1
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Llshrdi_carry3_done
         OR      r3, r3, r5
 .Llshrdi_carry3_done:
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
         LDW     r0, [r7 - 4]
         ADDI    r0, -1
         STW     r0, [r7 - 4]
@@ -186,7 +186,7 @@
         FSR1    r1, r1, r2
         FSR1    r2, r2, r3
         FSR1    r3, r3, r4
-        SHRI    r4, r4, 1
+        SRLI    r4, r4, 1
         ADDI    r5, -1
         MOV     r0, r5
 #endif
@@ -216,23 +216,23 @@
 #ifdef __RISCC_NANO__
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Lashrdi_carry1_done
         OR      r1, r1, r5
 .Lashrdi_carry1_done:
         MOV     r0, r3
         ANDI    r0, 1
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         BEQZ    .Lashrdi_carry2_done
         OR      r2, r2, r5
 .Lashrdi_carry2_done:
         MOV     r0, r4
         ANDI    r0, 1
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Lashrdi_carry3_done
         OR      r3, r3, r5
 .Lashrdi_carry3_done:
-        SARI    r4, r4, 1
+        SRAI    r4, r4, 1
         LDW     r0, [r7 - 4]
         ADDI    r0, -1
         STW     r0, [r7 - 4]
@@ -240,7 +240,7 @@
         FSR1    r1, r1, r2
         FSR1    r2, r2, r3
         FSR1    r3, r3, r4
-        SARI    r4, r4, 1
+        SRAI    r4, r4, 1
         ADDI    r5, -1
         MOV     r0, r5
 #endif

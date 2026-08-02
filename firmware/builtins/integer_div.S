@@ -457,10 +457,10 @@ __udivmodsi4:
         .macro CALL_UNSIGNED name
 #ifdef __RISCC_NANO__
         LI      r0, code(\name)
-        JAL     r6, r0
+        JALR    r6, r0
 #elif defined(__RISCC_MIN__)
         LI      r0, code(\name)
-        JAL     s7, r0
+        JALR    s7, r0
 #else
         JAL16   s7, \name
 #endif

@@ -169,11 +169,11 @@ __divsf3:
 .Lpack_shift:
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Lpack_no_carry
         OR      r1, r1, r6
 .Lpack_no_carry:
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         ADDI    r5, -1
         MOV     r0, r5
         BNEZ    .Lpack_shift

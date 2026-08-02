@@ -77,7 +77,7 @@ compiler may move it to another register or spill it to the stack.
 
 ## 4. Calls, arguments, and results
 
-The public call forms are `JAL16 S7, target` for a direct call, `JAL S7,
+The public call forms are `JAL16 S7, target` for a direct call, `JALR S7,
 register` for an indirect call, and `RET S7` for return. The link value and a
 function pointer are instruction addresses.
 
@@ -87,8 +87,8 @@ Externally visible, address-taken, and indirectly called functions always use
 the public `S7` convention. This private convention is internal to one object
 and does not change its ABI.
 
-Nano calls use `JAL r6, register`; direct calls first materialize the
-instruction address in a GPR. A Nano return uses `JAL r0, register`.
+Nano calls use `JALR r6, register`; direct calls first materialize the
+instruction address in a GPR. A Nano return uses `JALR r0, register`.
 The return-address operand may be any GPR holding the saved incoming link;
 `r0` as the destination suppresses creation of a new link.
 

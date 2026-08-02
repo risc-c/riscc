@@ -99,7 +99,7 @@ module riscc_nano1 #(
     // the reserved code alias the existing stream is substantially cheaper
     // than separating the direct store from the old indexed-memory schedule.
     wire register_memory_op = register_memory_shift_group & ~right_shift_op;
-    // JAL rd, ra lives in the register-indirect group (11_111, bbb=001);
+    // JALR rd, ra lives in the register-indirect group (11_111, bbb=001);
     // nano has no S-bank, so ddd names a general register and rd == r0
     // writes no link (plain jump).
     wire register_jump_op = register_group & f5[4];
@@ -212,7 +212,7 @@ module riscc_nano1 #(
     wire next_pc_bit = pc_from_operand ? operand_b_q[0] : pc_sum_bit;
     wire link_pc_bit = pc_sum_bit;
 
-    // The final SARI fill is the source/result sign still in operand_b_q[0].
+    // The final SRAI fill is the source/result sign still in operand_b_q[0].
     wire shift_result_bit = last_bit ?
                             (arithmetic_shift & operand_b_q[0]) : operand_b_q[1];
 

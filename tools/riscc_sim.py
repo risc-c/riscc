@@ -13,8 +13,8 @@ Profile model mirrors the three RTL builds:
     sys (default)   min + IRQ/ERET + CALL16/JMP16 + variable shifts
     --full          sys + MUL
     --mdu           paired MULHU and DIVU (requires --full)
-    --nano          nano ABI: no S-bank/sys profile/CMPI/JAL16, JAL links to rd
-In min, SHRI/SARI shift by exactly 1, FSL1/FSR1 are defined, and SHLI/MUL
+    --nano          nano ABI: no S-bank/sys profile/CMPI/JAL16, JALR links to rd
+In min, SRLI/SRAI shift by exactly 1, FSL1/FSR1 are defined, and SLLI/MUL
 are undefined.
 
 Usage: riscc_sim.py image.bin [--min] [--full] [--mdu]
@@ -367,16 +367,16 @@ class Sim:
                     self.r[ddd] = self.ldb(addr, False)
                 else:
                     self.r[ddd] = self.ldb(addr, True)
-            elif f5 in (0x0C, 0x0D):                    # SHRI / SARI
+            elif f5 in (0x0C, 0x0D):                    # SRLI / SRAI
                 n = 1 if self.nano else ((bbb + 1) if self.shifts else 1)
                 v = self.r[aaa]
                 for _ in range(n):
                     fill = 0x8000 if (f5 == 0x0D and v & 0x8000) else 0
                     v = (v >> 1) | fill
                 self.r[ddd] = v
-            elif f5 == 0x0F:                            # SHLI
+            elif f5 == 0x0F:                            # SLLI
                 if self.nano or not self.shifts:
-                    raise Undefined("SHLI is not in the min profile")
+                    raise Undefined("SLLI is not in the min profile")
                 self.r[ddd] = (self.r[aaa] << (bbb + 1)) & 0xFFFF
             elif f5 in (0x10, 0x14):                    # DIVU / MULHU
                 if not self.mdu:
@@ -411,7 +411,7 @@ class Sim:
             elif f5 == 0x1F:                            # S/control group
                 if self.nano:
                     if bbb != 1:
-                        raise Undefined("non-JAL sys op in nano")
+                        raise Undefined("non-JALR sys op in nano")
                     target = self.r[aaa] & 0x7FFF
                     if ddd != 0:
                         self.r[ddd] = pc_next & 0xFFFF
@@ -427,7 +427,7 @@ class Sim:
                         pc_next = self.s[aaa] & 0x7FFF
                     else:
                         raise Undefined("return control selector reserved")
-                elif bbb == 1:                          # JAL Sd, ra
+                elif bbb == 1:                          # JALR Sd, ra
                     target = self.r[aaa] & 0x7FFF
                     if ddd != 0:
                         self.s[ddd] = pc_next & 0xFFFF
@@ -483,7 +483,7 @@ def main():
     ap.add_argument("--mdu", action="store_true",
                     help="enable the paired MULHU/DIVU extension (requires --full)")
     ap.add_argument("--nano", action="store_true",
-                    help="nano ABI/subset (JAL links to rd, no S-bank/sys profile)")
+                    help="nano ABI/subset (JALR links to rd, no S-bank/sys profile)")
     ap.add_argument("--max-insns", type=int, default=2_000_000,
                     help="maximum committed instructions; 0 runs until DONE or window close")
     ap.add_argument("--trace", action="store_true")

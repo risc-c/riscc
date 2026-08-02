@@ -52,20 +52,20 @@
 
         MOV     r0, r2
         ANDI    r0, 1
-        SHRI    r1, r1, 1
+        SRLI    r1, r1, 1
         BEQZ    .Lmul_shift_low_done\@
         OR      r1, r1, r6
 .Lmul_shift_low_done\@:
 
         MOV     r0, r3
         ANDI    r0, 1
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         BEQZ    .Lmul_shift_middle_done\@
         OR      r2, r2, r6
 .Lmul_shift_middle_done\@:
 
         LDW     r0, [r7 - 4]
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         BEQZ    .Lmul_shift_high_done\@
         OR      r3, r3, r6
 .Lmul_shift_high_done\@:
@@ -181,11 +181,11 @@ __mulsf3:
 .Lnormalize:
         MOV     r0, r3
         ANDI    r0, 1
-        SHRI    r2, r2, 1
+        SRLI    r2, r2, 1
         BEQZ    .Lnormalize_no_carry
         OR      r2, r2, r6
 .Lnormalize_no_carry:
-        SHRI    r3, r3, 1
+        SRLI    r3, r3, 1
         ADDI    r5, -1
         MOV     r0, r5
         BNEZ    .Lnormalize
