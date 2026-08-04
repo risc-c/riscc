@@ -101,20 +101,34 @@ module riscc_tiny_min #(
     wire any_shift_op = right_shift_op | funnel_right_op;
 
     wire register_memory_plane = register_group & f_group_01;
+    // Native LDWX uses 01_000. Direct unsigned loads, stores, and signed loads
+    // use 01_010, 01_011, and 01_110; bbb[0] selects data or program space.
+    // Min may alias unsupported widths within those families.
+    wire indexed_mem_op =
+        register_memory_plane & ~f5[2] & ~f5[1];
+    wire direct_load_op =
+        register_memory_plane & f5[1] & ~f5[0];
+    wire program_load_op = direct_load_op & bbb[0];
     wire register_store_op =
         register_memory_plane & ~f5[2] & f5[1] & f5[0];
-    wire indexed_mem_op =
-        register_memory_plane & ~f5[0] & (~f5[2] | f5[1]);
+    // Only direct operations observe the address adder in this plane; the
+    // unsupported 01_111 Min encoding may alias the zero-B control.
+    wire direct_mem_op = register_memory_plane & f5[1];
 
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
     wire link_context = system_op & ~bbb[1] & bbb[0];
     wire register_target_op = system_op & ~bbb[1];
 
     wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
-    wire load_op = (imm_mem_group & ~instr_q[14]) | indexed_mem_op;
+    wire load_op = (imm_mem_group & ~instr_q[14]) |
+                   indexed_mem_op | direct_load_op;
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
+    // Program loads stage their sole aaa source, then add it to itself to
+    // convert the architectural halfword pointer to a byte address.
+    wire needs_operand_pass = needs_rb_pass |
+        (((W == 2) ? direct_load_op : direct_mem_op) & bbb[0]);
     wire needs_init_pass = mem_op | slt_op | funnel_op;
 
     // ------------------------------------------------------------------
@@ -153,8 +167,12 @@ module riscc_tiny_min #(
     wire [W-1:0] rf_rdata;
     wire [W-1:0] rf_wdata;
 
-    wire byte_load = indexed_mem_op & f5[1];
-    wire load_high_byte = (W != 1) & byte_load & memory_lane_q;
+    wire byte_load = (W == 4) ?
+        (direct_mem_op & ~needs_operand_pass) :
+        (direct_load_op & ~bbb[0]);
+    // All defined non-byte loads are aligned, so only a byte load can reach
+    // writeback with an odd address.
+    wire load_high_byte = (W != 1) & load_op & memory_lane_q;
 
     riscc_rf #(
         .WIDTH(W),
@@ -187,7 +205,7 @@ module riscc_tiny_min #(
     // ------------------------------------------------------------------
     wire alu_a_enable =
         ~(immediate_group & ~aaa[2] & ~aaa[1]);
-    wire alu_b_zero = system_op | register_store_op;
+    wire alu_b_zero = system_op | byte_load | register_store_op;
     // Logic operations ignore the adder, so their low function bits may
     // alias this control without decoding f5[2].
     wire alu_subtract =
@@ -197,7 +215,7 @@ module riscc_tiny_min #(
     wire [W-1:0] alu_a =
         rf_rdata & {W{alu_a_enable & ~slt_execute}};
     wire [W-1:0] alu_b_raw =
-        (needs_rb_pass ? data_stream_q[W-1:0] : imm_slice) &
+        (needs_operand_pass ? data_stream_q[W-1:0] : imm_slice) &
         {W{~(alu_b_zero | slt_execute)}};
     wire [W-1:0] alu_b =
         alu_b_raw ^ {W{alu_subtract & ~slt_execute}};
@@ -381,7 +399,7 @@ module riscc_tiny_min #(
                 state_q <= ST_DECODE;
             ST_DECODE:
                 state_q <=
-                    (needs_rb_pass | register_target_op | any_shift_op) ?
+                    (needs_operand_pass | register_target_op | any_shift_op) ?
                     ST_INIT2 :
                     needs_init_pass ? ST_INIT : ST_EXECUTE;
             ST_INIT2:

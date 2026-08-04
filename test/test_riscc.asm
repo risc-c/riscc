@@ -3,7 +3,7 @@
 ;   --profile min    : min profile, replacing sys-only sections
 ;   --profile full   : full-profile MUL coverage
 ;   --profile nano   : Nano-compatible branch
-; SLT, SLTU, LDB, and LDBS coverage is conditional on the selected profile.
+; LDPH and LDBS coverage is excluded from the Nano-compatible branch.
 ; Failure writes 0x0BAD to the result register (I/O page, byte 0xFFFE)
 ; and parks.  Success writes 0x600D there and parks.
 
@@ -107,12 +107,25 @@ br_nz_ok:
     SUB   r0, r2, r1
     BNEZ  fail
 
-    ; byte lanes
+    ; byte lanes; direct byte operations must not use encoded bbb=000 as r0
+    LDI16 r5, 0x1234
+    STW   r5, [r6+0]
+    LDI16 r5, 0x5678
+    STW   r5, [r6+8]
     LDI   r4, 1
-    LDI   r5, 0x80
     ADD   r1, r6, r4
+    LDI   r5, 0x80
+    LDI   r0, 7
     STB   r5, [r1]
-    LDB   r2, [r6+r4]
+    LDB   r2, [r1]
+    LDW   r4, [r6+0]
+    LDI16 r5, 0x8034
+    SUB   r0, r4, r5
+    BNEZ  fail
+    LDW   r4, [r6+8]
+    LDI16 r5, 0x5678
+    SUB   r0, r4, r5
+    BNEZ  fail
     LDI16 r5, 0x0080
     SUB   r0, r2, r5
     BNEZ  fail
@@ -198,6 +211,14 @@ isr_irq:
     MFS   r1, S2
     MFS   r0, S1
     ERET
+.endif
+.ifndef RISCC_SYS
+    JMP8  start
+fail:
+    LDI16 r7, 0x0BAD
+    LDI16 r6, 0xFFFE
+    STW   r7, [r6+0]
+    HALT
 .endif
 
 start:
@@ -296,29 +317,43 @@ br_nz_ok:
     LDI   r4, 4
     ADD   r3, r6, r4
     STW   r1, [r3+0]
+    ; Both nonzero address registers are required: LDWX remains indexed.
     LDWX  r5, [r6+r4]
     SUB   r0, r5, r1
     BNEZ  fail_late
 
     ; Compact word displacements are even signed bytes.
-    LDI16 r3, 0x0300
+    LDI16 r3, 0x7000
     LDI16 r1, 0x1357
     STW   r1, [r3+126]
     LDW   r2, [r3+126]
     SUB   r0, r2, r1
     BNEZ  fail_late
-    LDI16 r3, 0x0380
+    LDI16 r3, 0x7080
     STW   r1, [r3-128]
     LDW   r2, [r3-128]
     SUB   r0, r2, r1
     BNEZ  fail_late
 
+    LDI16 r5, 0x1234
+    STW   r5, [r6+0]
+    LDI16 r5, 0x5678
+    STW   r5, [r6+8]
     LDI   r4, 1             ; odd byte lane
-    LDI   r5, 0x80
     ADD   r1, r6, r4
+    LDI   r5, 0x80
+    LDI   r0, 7             ; direct byte forms must ignore encoded bbb=000
     STB   r5, [r1]
-    LDB   r2, [r6+r4]
-    LDBS  r3, [r6+r4]
+    LDB   r2, [r1]
+    LDBS  r3, [r1]
+    LDW   r4, [r6+0]
+    LDI16 r5, 0x8034
+    SUB   r0, r4, r5
+    BNEZ  fail_late
+    LDW   r4, [r6+8]
+    LDI16 r5, 0x5678
+    SUB   r0, r4, r5
+    BNEZ  fail_late
     LDI16 r5, 0x0080
     SUB   r0, r2, r5
     BNEZ  fail_late
@@ -326,12 +361,25 @@ br_nz_ok:
     SUB   r0, r3, r5
     BNEZ  fail_late
 
+    LDI16 r5, 0x1234
+    STW   r5, [r6+2]
+    LDI16 r5, 0x5678
+    STW   r5, [r6+8]
     LDI   r4, 2             ; even byte lane
-    LDI   r5, 0xFF
     ADD   r1, r6, r4
+    LDI   r5, 0xFF
+    LDI   r0, 7
     STB   r5, [r1]
-    LDB   r2, [r6+r4]
-    LDBS  r3, [r6+r4]
+    LDB   r2, [r1]
+    LDBS  r3, [r1]
+    LDW   r4, [r6+2]
+    LDI16 r5, 0x12FF
+    SUB   r0, r4, r5
+    BNEZ  fail_late
+    LDW   r4, [r6+8]
+    LDI16 r5, 0x5678
+    SUB   r0, r4, r5
+    BNEZ  fail_late
     LDI16 r5, 0x00FF
     SUB   r0, r2, r5
     BNEZ  fail_late
@@ -340,15 +388,26 @@ br_nz_ok:
     BNEZ  fail_late
 
     JMP8  shifts_start
-.ifndef RISCC_SYS
-fail:
-.endif
 fail_late:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
     STW   r7, [r6+0]
     HALT
 shifts_start:
+
+    ; LDPH uses the halfword-addressed program pointer in aaa and leaves pc
+    ; alone. Canonical bbb=011 is a fixed selector, not an r3 operand.
+    LDI16 r3, ldph_bbb_poison >> 1
+    LDI16 r4, ldph_even_probe >> 1
+    LDPH  r2, [r4]
+    LDI16 r5, 0x4C44
+    SUB   r0, r2, r5
+    BNEZ  fail_late
+    ADDI  r4, 1               ; adjacent odd program pointer
+    LDP   r2, [r4]            ; RC16 native-width alias of LDPH
+    LDI16 r5, 0x5048
+    SUB   r0, r2, r5
+    BNEZ  fail_late
 
     ; --- one-bit shifts ---
     LDI16 r1, 0x8001
@@ -590,3 +649,10 @@ success:
     STW   r7, [r6+0]
     HALT
 .endif
+
+.align 4
+.rodata
+ldph_even_probe:
+    .word 0x4C44, 0x5048
+ldph_bbb_poison:
+    .word 0xBAD3

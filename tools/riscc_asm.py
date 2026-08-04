@@ -60,6 +60,7 @@ R_FUNC = {
     "DIVU": 0x10,
     "MULHU": 0x14,
     "LDWX": 0x08,
+    "LDPH": 0x0A,
     "LDB": 0x0A,
     "STB": 0x0B,
     "SRLI": 0x0C,
@@ -554,13 +555,29 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]),
                                  R_FUNC[op], amount - 1))
 
-    if op in ("LDWX", "LDB", "LDBS"):
-        n_ops(2, f"{op} rd, [ra+rb]")
+    if op == "LDWX":
+        n_ops(2, "LDWX rd, [ra+rb]")
         rd = reg(operands[0])
         mem = parse_mem(operands[1])
         if len(mem) != 2:
-            raise AsmError(f"{op} requires [ra+rb]")
+            raise AsmError("LDWX requires [ra+rb]")
         return encode_word(enc_r(rd, reg(mem[0]), R_FUNC[op], reg(mem[1])))
+
+    if op in ("LDPH", "LDP"):
+        n_ops(2, f"{op} rd, [ra]")
+        rd = reg(operands[0])
+        mem = parse_mem(operands[1])
+        if len(mem) != 1:
+            raise AsmError(f"{op} requires [ra]")
+        return encode_word(enc_r(rd, reg(mem[0]), R_FUNC["LDPH"], 0b011))
+
+    if op in ("LDB", "LDBS"):
+        n_ops(2, f"{op} rd, [ra]")
+        rd = reg(operands[0])
+        mem = parse_mem(operands[1])
+        if len(mem) != 1:
+            raise AsmError(f"{op} requires [ra]")
+        return encode_word(enc_r(rd, reg(mem[0]), R_FUNC[op], 0))
 
     if op == "STB":
         n_ops(2, f"{op} rd, [ra]")

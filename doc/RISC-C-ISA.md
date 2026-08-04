@@ -17,7 +17,7 @@ Author: Arto Vuori <avuori@iki.fi>
 ## 1. RC16 Base Integer Instruction Set
 
 This chapter describes the compact RC16 base integer ISA. RC16 has `XLEN = 16`.
-The `min` profile defines the base instruction set; section 8 summarizes the
+The `min` profile defines the base instruction set; section 9 summarizes the
 profile differences.
 
 Most base instructions use one 16-bit instruction halfword. Some profiles and
@@ -146,17 +146,18 @@ destination.
 
 The ISA does not require or prohibit modification of instruction memory. The
 ordering and visibility of modifications to program memory with respect to
-`LDP` and instruction fetch are platform-defined unless an extension defines
-synchronization. Programs that modify program memory must use the applicable
-platform or extension synchronization mechanism before depending on the
-modification through `LDP` or instruction fetch.
+program-memory loads and instruction fetch are platform-defined unless an
+extension defines synchronization. Programs that modify program memory must
+use the applicable platform or extension synchronization mechanism before
+depending on the modification through a program-memory load or instruction
+fetch.
 
 Data memory is little-endian. Effective data addresses use XLEN-bit addition
 and wrap modulo `2^XLEN`.
 
 When represented as bytes, instruction-memory halfwords are little-endian:
-the low byte precedes the high byte. Program-memory addresses used by `LDP`
-are instruction addresses and therefore select 16-bit halfwords. In RC16,
+the low byte precedes the high byte. Program-memory load addresses are
+instruction addresses and therefore select 16-bit halfwords. In RC16,
 `PXLEN[a]` is `P16[a]`.
 
 ### 2.1 Memory Ordering and Atomicity
@@ -182,15 +183,23 @@ alignment. An unaligned access has undefined behavior; software must not depend
 on whether an implementation traps, rounds the address, or performs another
 action. Byte accesses have no alignment requirement.
 
-### 2.3 Load and Store Instructions
+## 3. Load and Store Instructions
 
-The compact immediate-offset word format is:
+This section defines the load and store encodings. Section 2 defines the data
+and program address spaces, their ordering, and their alignment requirements.
+Native-width data words, typed data bytes, and program-memory halfwords use
+different instruction forms and are specified separately below.
+
+### 3.1 Native-Width Data-Word Accesses
+
+The compact immediate-offset format transfers one native XLEN-bit data word:
 
 ```text
 01 ddd aaa iiiiiii S
 ```
 
-`aaa` selects `ra`; `S` selects the access direction. The displacement is:
+`aaa` selects the base register `ra`; `S` selects load (`0`) or store (`1`).
+The displacement is:
 
 ```text
 simm = sx8({ i[7:1], 0 })
@@ -198,54 +207,92 @@ simm = sx8({ i[7:1], 0 })
 
 For `LDW`, `ddd` selects `rd`; for `STW`, it selects `rs`.
 
-| encoding | instruction | operation |
-|---|---|---|
-| `01`, `S=0` | `LDW rd, [ra+simm]` | `R[d] ← MXLEN[R[a] + simm]` |
-| `01`, `S=1` | `STW rs, [ra+simm]` | `MXLEN[R[a] + simm] ← R[s]` |
+| `S` | instruction | operation |
+|:---:|---|---|
+| `0` | `LDW rd, [ra+simm]` | `R[d] ← MXLEN[R[a] + simm]` |
+| `1` | `STW rs, [ra+simm]` | `MXLEN[R[a] + simm] ← R[s]` |
 
-The register-format is:
+The omitted displacement is zero. `LDW` and `STW` must meet the data-word
+alignment requirement in section 2.2.
+
+An indexed native-width load uses the register format:
+
+```text
+11 ddd aaa 01_000 bbb
+```
+
+| `fffff` | instruction | operation |
+|:---:|---|---|
+| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
+
+Here `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and `rb`. `LDWX` has the same
+data-word alignment requirement as `LDW` and `STW`. There is no indexed
+native-width store: a store uses the immediate-offset form above.
+
+### 3.2 Direct Typed Access Encoding
+
+Direct typed accesses use the register format:
 
 ```text
 11 ddd aaa fffff bbb
 ```
 
-`ddd` and `aaa` select `rd` or `rs` and `ra`; `bbb` selects `rb` unless the
-instruction defines it as a sub-operation.
+`ddd` selects the load destination `rd` or store source `rs`; `aaa` selects
+the address register `ra`. In this format, `bbb` is an access selector, not a
+register:
 
-| `fffff` | instruction | operation |
-|---|---|---|
-| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
-| `01_001` | reserved | undefined; Appendix C |
-| `01_010` | `LDB rd, [ra+rb]` | `R[d] ← zx8(M8[R[a] + R[b]])` |
-| `01_011`, `bbb=000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
-| `01_011`, `bbb=001` | reserved | undefined; Appendix C |
-| `01_011`, `bbb=010..111` | reserved | undefined |
-| `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
-| `10_001` | reserved | undefined; Appendix C |
-| `10_101`, `bbb=000` | `LDP rd, [ra]` | `R[d] ← PXLEN[R[a]]` |
-| `10_101`, `bbb=001..111` | reserved | undefined |
+```text
+bbb = { ww, P }
+```
 
-`LDW` reads one XLEN-bit data word at the effective address formed by adding
-the compact signed displacement to `ra`. It is subject to the data-word
-alignment requirement in section 2.2.
+`P=0` selects byte-addressed data memory and `P=1` selects halfword-addressed
+program memory. RC16 uses `ww=00` for 8-bit accesses and `ww=01` for its
+16-bit program-memory access. Other width/address-space combinations are
+specified by the width extensions that define them.
 
-`STW` writes the complete XLEN-bit value of `rs` at the effective address
-formed by adding the compact signed displacement to `ra`. It is subject to the
-data-word alignment requirement in section 2.2.
+The function field selects the operation class:
 
-`LDWX` is subject to the data-word alignment requirement in section 2.2.
-`STB` stores the low byte of its source register.
+| `fffff` | operation class |
+|:---:|---|
+| `01_010` | direct zero-extending load |
+| `01_011` | direct store |
+| `01_110` | direct sign-extending load |
 
-`LDB` reads a byte at the effective address formed by adding `ra` and `rb`,
-then zero-extends it to XLEN bits. `LDBS` uses the same effective address and
-sign-extends the loaded byte to XLEN bits. Neither byte load has an alignment
-requirement.
+### 3.3 RC16 Typed Data-Byte Accesses
 
-`LDP` reads one XLEN-bit program-memory word at the instruction address in
-`ra`. It does not modify `pc`. Appendix C defines the RC32 word layout and
-alignment requirement.
+RC16 direct data accesses are byte accesses. They use the data selector
+`bbb=000` (`ww=00`, `P=0`):
 
-## 3. Immediate and Branch Instructions
+| `fffff` | `bbb` | instruction | operation |
+|:---:|:---:|---|---|
+| `01_010` | `000` | `LDB rd, [ra]` | `R[d] ← zx8(M8[R[a]])` |
+| `01_011` | `000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
+| `01_110` | `000` | `LDBS rd, [ra]` | `R[d] ← sx8(M8[R[a]])` |
+
+`LDB` and `LDBS` zero- and sign-extend the addressed byte to XLEN bits.
+`STB` writes the low byte of its source register. Byte data-memory accesses
+have no alignment requirement.
+
+### 3.4 RC16 Program-Memory Halfword Access
+
+RC16 defines one direct program-memory access. It uses `bbb=011`
+(`ww=01`, `P=1`):
+
+| `fffff` | `bbb` | instruction | operation |
+|:---:|:---:|---|---|
+| `01_010` | `011` | `LDPH rd, [ra]` | `R[d] ← zx16(P16[R[a]])` |
+
+`LDPH` reads the program-memory halfword at instruction address `ra`,
+zero-extends it to XLEN bits, and does not modify `pc`. `LDP` is the
+native-width program-memory-load alias; in RC16 it names `LDPH`.
+
+Program-memory byte accesses and stores are not defined in RC16. The direct
+store encodings `01_011` with `bbb=011` and `bbb=101` are retained as forward
+allocations for `STPH` and `STPW`, respectively.
+
+## 4. Immediate and Branch Instructions
+
+### 4.1 Immediate Operations
 
 The immediate format is:
 
@@ -280,6 +327,8 @@ to `r0`; it does not modify `rs`.
 
 `ANDI`, `ORI`, and `XORI` perform bitwise AND, OR, and XOR, respectively,
 between `rd` and a zero-extended immediate, then write the result to `rd`.
+
+### 4.2 Branch Group
 
 The branch-group format is:
 
@@ -319,7 +368,7 @@ continues at `pc_next`.
 
 For a taken branch, `pc ← pc_target`; otherwise `pc ← pc_next`.
 
-## 4. Register-Format Instructions
+## 5. Register-Format Instructions
 
 The register format is:
 
@@ -340,27 +389,21 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 | `00_101` | `OR rd, ra, rb` | `R[d] ← R[a] \| R[b]` |
 | `00_110` | `XOR rd, ra, rb` | `R[d] ← R[a] ^ R[b]` |
 | `00_111` | `MUL rd, ra, rb` | `R[d] ← (R[a] * R[b])[XLEN-1:0]` |
-| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
-| `01_001` | reserved | undefined; Appendix C |
-| `01_010` | `LDB rd, [ra+rb]` | `R[d] ← zx8(M8[R[a] + R[b]])` |
-| `01_011`, `bbb=000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
-| `01_011`, `bbb=001` | reserved | undefined; Appendix C |
-| `01_011`, `bbb=010..111` | reserved | undefined |
+| `01_000` | indexed native-width load | section 3.1 |
+| `01_010` | direct zero-extending load | section 3.2 |
+| `01_011` | direct store | section 3.2 |
 | `01_100` | `SRLI rd, ra, imm` | `R[d] ← R[a] >> (bbb + 1)` |
 | `01_101` | `SRAI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
-| `01_110` | `LDBS rd, [ra+rb]` | `R[d] ← sx8(M8[R[a] + R[b]])` |
+| `01_110` | direct sign-extending load | section 3.2 |
 | `01_111` | `SLLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
 | `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; Appendix B |
-| `10_001` | reserved | undefined; Appendix C |
 | `10_010` | `FSR1 rd, ra, rb` | `R[d] ← (R[a] >> 1) \| (R[b][0] << (XLEN-1))` |
 | `10_011` | `FSL1 rd, ra, rb` | `R[d] ← (R[a] << 1) \| R[b][XLEN-1]` |
 | `10_100` | `MULHU rl, rh, rb` | paired unsigned product; Appendix B |
-| `10_101`, `bbb=000` | `LDP rd, [ra]` | `R[d] ← PXLEN[R[a]]` |
-| `10_101`, `bbb=001..111` | reserved | undefined |
-| `10_110..11_110` | reserved | undefined |
-| `11_111` | control and S-register group | section 5 |
+| `11_111` | control and S-register group | section 6 |
 
-The load and store instructions in this table are described in section 2.3.
+All unlisted `fffff` values are reserved and undefined. The load and store
+encodings in this table are specified in section 3.
 
 `ADD` adds the two source registers and writes the low XLEN bits of the result
 to `rd`.
@@ -395,7 +438,7 @@ low XLEN-bit portion is the same for signed and unsigned multiplication.
 must be zero; `SLLI` is undefined. `MUL` is available only in the `full`
 profile.
 
-## 5. Control Transfer and S-Register Instructions
+## 6. Control Transfer and S-Register Instructions
 
 Most control and S-register instructions have the following format:
 
@@ -443,7 +486,7 @@ instruction address of the following instruction to `Sd`. Thus,
 
 `MTS` copies `ra` to the selected S-register.
 
-## 6. RC16 Long Call
+## 7. RC16 Long Call
 
 A long instruction occupies two consecutive instruction halfwords and is one
 architectural instruction. Interrupts are not taken between its halfwords.
@@ -466,7 +509,7 @@ absolute instruction address `addr16`.
 `JMP16 addr16` is the alias `JAL16 S0, addr16`. `JAL16` and `JMP16` are absent
 from `min`.
 
-## 7. Interrupts
+## 8. Interrupts
 
 Interrupts are optional and are implemented by some profiles. A platform may
 provide
@@ -498,22 +541,22 @@ interrupt may be taken before the returned-to instruction executes.
 Reset-vector contents and interrupt synchronization are platform
 responsibilities.
 
-## 8. Profiles
+## 9. Profiles
 
 `min`, `sys`, and `full` are ordered RC16 ISA subsets: a program using only a
 smaller profile's defined instructions is valid on a larger profile.
 
-### 8.1 Instruction Availability
+### 9.1 Instruction Availability
 
 | instruction | `min` | `sys` | `full` |
 |---|:---:|:---:|:---:|
 | `LDW rd, [ra+simm]` | X | X | X |
 | `STW rs, [ra+simm]` | X | X | X |
 | `LDWX rd, [ra+rb]` | X | X | X |
-| `LDB rd, [ra+rb]` | X | X | X |
-| `LDBS rd, [ra+rb]` | X | X | X |
+| `LDB rd, [ra]` | X | X | X |
+| `LDBS rd, [ra]` | X | X | X |
 | `STB rs, [ra]` | X | X | X |
-| `LDP rd, [ra]` † |  |  |  |
+| `LDPH rd, [ra]` (`LDP`) | X | X | X |
 | `LDI rd, imm8` | X | X | X |
 | `LUI rd, imm8` | X | X | X |
 | `ADDI rd, simm8` | X | X | X |
@@ -552,13 +595,10 @@ smaller profile's defined instructions is valid on a larger profile.
 | `CLI` |  | X | X |
 | `STI` |  | X | X |
 
-† `LDP` is architecturally defined but optional and is required by no profile.
+
 
 § `MULHU` and `DIVU` are optional Appendix B instructions; neither is required
 by any profile.
-
-An unaligned 16-bit access has undefined behavior unless another architectural
-extension defines it.
 
 # Appendices
 
@@ -600,9 +640,9 @@ may spell these forms as `CALL rd, ra` and `JMP ra`, respectively.
 
 ## Appendix B. Multiply-Divide Instructions Extension
 
-This optional extension may be combined with RC16 or RC32. Appendix D widens
-its register selectors when X32 is implemented. It is required by no profile
-and has no Nano form.
+This optional extension may be combined with RC16 or RC32. When the optional
+X32 extension is implemented with RC32, Appendix D supplies long forms with
+five-bit operand selectors. It is required by no profile and has no Nano form.
 
 The following optional instructions occupy otherwise reserved three-register
 slots:
@@ -649,6 +689,12 @@ RC32 is an optional target configuration that extends the compact RC16 base ISA.
 It sets `XLEN = 32`. An implementation selects RC16 or RC32 as an architectural
 configuration; RC32 is not enabled or disabled at run time.
 
+RC32 changes register and data width; it does not add registers or widen the
+three-bit register selectors in compact instructions. The separately optional
+X32 extension in Appendix D adds a five-bit, 32-selector operand namespace and
+its associated long formats. Thus an RC32 compact instruction still selects
+only `r0..r7` or `S0..S7`, but each selected register holds a 32-bit value.
+
 Unless this appendix specifies otherwise, RC32 retains the compact instruction
 encodings, semantics, and profile availability of RC16, with every
 `XLEN`-dependent register, address, result, and memory data word widened to 32
@@ -660,7 +706,8 @@ width, compact word displacement decoding, and defined long instructions differ.
 In RC32, `r0..r7`, `S0..S7`, and `pc` are 32 bits wide. Register and program
 counter writes retain their low 32 bits, and arithmetic results and effective
 addresses wrap modulo `2^32`. Link addresses, interrupt return addresses, and
-`interrupt_vector` are 32-bit instruction addresses.
+`interrupt_vector` are 32-bit instruction addresses. X32 is not needed to
+select or operate on these 32-bit compact-register values.
 
 A 32-bit instruction address selects one of `2^32` instruction-memory
 halfwords. A 32-bit data address selects one of `2^32` data-memory bytes. The
@@ -688,33 +735,48 @@ PXLEN[a][15:0]  = P16[a]
 PXLEN[a][31:16] = P16[a + 1]
 ```
 
-`LDP` requires an even effective instruction address. An unaligned access has
-undefined behavior unless another architectural extension defines it.
-
 The compact `LDW` and `STW` format is unchanged, but its displacement is:
 
 ```text
 simm = sx9({ i[1], i[7:2], 0, 0 })
 ```
 
-RC32 defines the following compact halfword instructions in encodings reserved
-by RC16:
+RC32 defines the following direct typed instructions in the compact memory
+families from section 3.2:
 
-| `fffff` | instruction | operation |
-|---|---|---|
-| `01_001` | `LDH rd, [ra+rb]` | `R[d] ← zx16(M16[R[a] + R[b]])` |
-| `01_011`, `bbb=001` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
-| `10_001` | `LDHS rd, [ra+rb]` | `R[d] ← sx16(M16[R[a] + R[b]])` |
+| `fffff` | `bbb` | instruction | operation |
+|:---:|:---:|---|---|
+| `01_010` | `010` | `LDH rd, [ra]` | `R[d] ← zx16(M16[R[a]])` |
+| `01_010` | `101` | `LDPW rd, [ra]` | `R[d] ← PXLEN[R[a]]` |
+| `01_011` | `010` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
+| `01_110` | `010` | `LDHS rd, [ra]` | `R[d] ← sx16(M16[R[a]])` |
+| `01_110` | `011` | `LDPHS rd, [ra]` | `R[d] ← sx16(P16[R[a]])` |
 
-`LDH` and `LDHS` add `ra` and `rb` to form the effective address. `STH` uses
-`ra` directly. All three require a two-byte-aligned effective address, and an
-aligned halfword access has the atomicity specified in section 2.1. RC32 byte
-loads extend their result to 32 bits.
+`LDH`, `LDHS`, and `STH` require a two-byte-aligned data address. The compact
+`LDPH` inherited from RC16 and the optional `LDPHS` access one program-memory
+halfword and have no additional alignment requirement. `LDPW` is a 32-bit word
+access and follows the normal word-alignment rule: its effective instruction
+address must be even. An unaligned access has undefined behavior unless another
+architectural extension defines it.
+
+`LDP` is the native-width alias for `LDPW` in RC32. `LDPHS` and `LDPW` are
+optional and are required by no RC32 profile; compact `LDPH` remains mandatory
+through the inherited mainline profile. The data-memory
+`bbb=100` forms remain undefined because native 32-bit access already uses
+`LDW` or `STW` with a zero displacement. The direct program-store encodings
+`bbb=011` and `bbb=101` remain the forward allocations for `STPH` and `STPW`;
+all other program-memory stores and all 64-bit width encodings remain reserved.
+RC32 byte loads extend their result to 32 bits.
 
 ### C.3 RC32 Long Instructions
 
-The long-instruction length and interrupt rules in section 6 apply. `JAL16` and
+The long-instruction length and interrupt rules in section 7 apply. `JAL16` and
 `JMP16` are not defined in RC32.
+
+The long instructions in this section are part of RC32 itself and use only the
+compact `r` and S-register selectors shown in their formats. They do not
+require X32. Appendix D adds separate long formats whose five-bit selectors can
+also name the X32 extension registers.
 
 RC32 defines the following U20 format:
 
@@ -781,8 +843,8 @@ The following instructions are mandatory in every RC32 mainline profile:
 
 | instruction | `min` | `sys` | `full` |
 |---|:---:|:---:|:---:|
-| `LDH rd, [ra+rb]` | X | X | X |
-| `LDHS rd, [ra+rb]` | X | X | X |
+| `LDH rd, [ra]` | X | X | X |
+| `LDHS rd, [ra]` | X | X | X |
 | `STH rs, [ra]` | X | X | X |
 | `LUIL rd, imm20` | X | X | X |
 | `ADDI rd, ra, simm12` | X | X | X |
@@ -794,15 +856,19 @@ optional X32 register extension for RC32.
 
 ## Appendix D. X32 Register Extension
 
-X32 is an optional RC32-only extension that adds the following architectural state:
+X32 is an optional RC32-only register-namespace and long-instruction
+extension. It does not change `XLEN`: its registers are 32 bits wide because
+it requires RC32. RC32 itself retains only the compact `r0..r7` and `S0..S7`
+register names; X32 adds the following architectural state:
 
 | state | width | description |
 |---|---:|---|
 | `x0..x15` | XLEN | X32-extension registers |
 
-It supplies a 32-register operand namespace while retaining the existing `r` and S-register
-names and their architectural roles. A five-bit X32 register selector has the
-following mapping:
+X32 supplies a 32-selector operand namespace: the existing eight `r`
+registers, the existing eight S-registers, and sixteen new `x` registers. It
+retains the existing `r` and S-register names and their architectural roles. A
+five-bit X32 register selector has the following mapping:
 
 | selector | register |
 |---|---|
@@ -861,7 +927,7 @@ A long register instruction has:
 
 ```text
 first halfword:  00 ddd aaa 00000000
-second halfword: DD AA BB 00 fffff bbb
+second halfword: DD AA BB ww fffff bbb
 ```
 
 It selects:
@@ -874,36 +940,44 @@ xb = { BB, bbb }
 
 The zero low byte of the first halfword selects the register format. In the
 second halfword, `fffff` and `bbb` occupy the same positions as in a compact
-register instruction. The `00` field is reserved and must be zero.
+register instruction. For typed indexed data-memory loads, `ww` selects the
+access width using the width codes from section 3.2. All other register
+instructions require `ww=00`. Stores use the long displacement format in
+section D.5, avoiding three-register-input long store operations.
 
-| `fffff` | instruction | operation |
-|---|---|---|
-| `00_000` | `ADD Xd, Xa, Xb` | `X[xd] ← X[xa] + X[xb]` |
-| `00_001` | `SUB Xd, Xa, Xb` | `X[xd] ← X[xa] - X[xb]` |
-| `00_010` | `SLT Xd, Xa, Xb` | `X[xd] ← (signedXLEN(X[xa]) < signedXLEN(X[xb])) ? 1 : 0` |
-| `00_011` | `SLTU Xd, Xa, Xb` | `X[xd] ← (X[xa] < X[xb]) ? 1 : 0` |
-| `00_100` | `AND Xd, Xa, Xb` | `X[xd] ← X[xa] & X[xb]` |
-| `00_101` | `OR Xd, Xa, Xb` | `X[xd] ← X[xa] \| X[xb]` |
-| `00_110` | `XOR Xd, Xa, Xb` | `X[xd] ← X[xa] ^ X[xb]` |
-| `00_111` | `MUL Xd, Xa, Xb` | `X[xd] ← (X[xa] * X[xb])[31:0]` |
-| `01_000` | `LDWX Xd, [Xa+Xb]` | `X[xd] ← M32[X[xa] + X[xb]]` |
-| `01_001` | `LDH Xd, [Xa+Xb]` | `X[xd] ← zx16(M16[X[xa] + X[xb]])` |
-| `01_010` | `LDB Xd, [Xa+Xb]` | `X[xd] ← zx8(M8[X[xa] + X[xb]])` |
-| `01_011` | reserved | undefined |
-| `01_100` | `SRLI Xd, Xa, 1..32` | `X[xd] ← X[xa] >> (xb + 1)` |
-| `01_101` | `SRAI Xd, Xa, 1..32` | `X[xd] ← signedXLEN(X[xa]) >>> (xb + 1)` |
-| `01_110` | `LDBS Xd, [Xa+Xb]` | `X[xd] ← sx8(M8[X[xa] + X[xb]])` |
-| `01_111` | `SLLI Xd, Xa, 1..32` | `X[xd] ← X[xa] << (xb + 1)` |
-| `10_000` | `DIVU Xr, Xq, Xb` § | paired unsigned divide/remainder; Appendix B |
-| `10_001` | `LDHS Xd, [Xa+Xb]` | `X[xd] ← sx16(M16[X[xa] + X[xb]])` |
-| `10_010` | `FSR1 Xd, Xa, Xb` | `X[xd] ← (X[xa] >> 1) \| (X[xb][0] << 31)` |
-| `10_011` | `FSL1 Xd, Xa, Xb` | `X[xd] ← (X[xa] << 1) \| X[xb][31]` |
-| `10_100` | `MULHU Xl, Xh, Xb` § | paired unsigned product; Appendix B |
-| `10_101..11_111` | reserved | undefined |
+| `ww` | `fffff` | instruction | operation |
+|:---:|:---:|---|---|
+| `00` | `00_000` | `ADD Xd, Xa, Xb` | `X[xd] ← X[xa] + X[xb]` |
+| `00` | `00_001` | `SUB Xd, Xa, Xb` | `X[xd] ← X[xa] - X[xb]` |
+| `00` | `00_010` | `SLT Xd, Xa, Xb` | `X[xd] ← (signedXLEN(X[xa]) < signedXLEN(X[xb])) ? 1 : 0` |
+| `00` | `00_011` | `SLTU Xd, Xa, Xb` | `X[xd] ← (X[xa] < X[xb]) ? 1 : 0` |
+| `00` | `00_100` | `AND Xd, Xa, Xb` | `X[xd] ← X[xa] & X[xb]` |
+| `00` | `00_101` | `OR Xd, Xa, Xb` | `X[xd] ← X[xa] \| X[xb]` |
+| `00` | `00_110` | `XOR Xd, Xa, Xb` | `X[xd] ← X[xa] ^ X[xb]` |
+| `00` | `00_111` | `MUL Xd, Xa, Xb` | `X[xd] ← (X[xa] * X[xb])[31:0]` |
+| `00` | `01_000` | `LDWX Xd, [Xa+Xb]` | `X[xd] ← M32[X[xa] + X[xb]]` |
+| `00` | `01_010` | `LDB Xd, [Xa+Xb]` | `X[xd] ← zx8(M8[X[xa] + X[xb]])` |
+| `01` | `01_010` | `LDH Xd, [Xa+Xb]` | `X[xd] ← zx16(M16[X[xa] + X[xb]])` |
+| `00` | `01_100` | `SRLI Xd, Xa, 1..32` | `X[xd] ← X[xa] >> (xb + 1)` |
+| `00` | `01_101` | `SRAI Xd, Xa, 1..32` | `X[xd] ← signedXLEN(X[xa]) >>> (xb + 1)` |
+| `00` | `01_110` | `LDBS Xd, [Xa+Xb]` | `X[xd] ← sx8(M8[X[xa] + X[xb]])` |
+| `01` | `01_110` | `LDHS Xd, [Xa+Xb]` | `X[xd] ← sx16(M16[X[xa] + X[xb]])` |
+| `00` | `01_111` | `SLLI Xd, Xa, 1..32` | `X[xd] ← X[xa] << (xb + 1)` |
+| `00` | `10_000` | `DIVU Xr, Xq, Xb` § | paired unsigned divide/remainder; Appendix B |
+| `00` | `10_010` | `FSR1 Xd, Xa, Xb` | `X[xd] ← (X[xa] >> 1) \| (X[xb][0] << 31)` |
+| `00` | `10_011` | `FSL1 Xd, Xa, Xb` | `X[xd] ← (X[xa] << 1) \| X[xb][31]` |
+| `00` | `10_100` | `MULHU Xl, Xh, Xb` § | paired unsigned product; Appendix B |
 
-The long register encodings use the same selected-profile availability as their
-short counterparts. The five-bit `MULHU` and `DIVU` forms are defined only when
-Appendix B is implemented and retain its operand restrictions.
+All unlisted `ww` and `fffff` combinations are reserved and undefined. The
+indexed integer loads are available in every X32 profile. `ww=11` is reserved
+for 64-bit memory operations in a future XLEN=64 extension; that extension may
+also define `ww=10` zero- and sign-extending 32-bit indexed loads. Floating-
+point memory operations are not defined by X32.
+
+The arithmetic and shift encodings use the same selected-profile availability
+as their compact counterparts. The five-bit `MULHU` and `DIVU` forms are
+defined only when Appendix B is implemented and retain its operand
+restrictions.
 
 For `SLLI`, `SRLI`, and `SRAI`, `xb` is an unsigned five-bit shift-count
 encoding rather than a register selector; the shift count is `xb + 1`, from
@@ -941,7 +1015,8 @@ second halfword: ffff iiiiiiiiiiii
 
 It selects `xd = { DD, ddd }` and `xa = { AA, aaa }`. For `JALR`, `ddd`
 selects the S-register link destination, `DD` must be zero, and
-`xa = { AA, aaa }`. The twelve `i` bits form `imm12`.
+`xa = { AA, aaa }`; its link destination therefore remains in the S-register
+bank. The twelve `i` bits form `imm12`.
 
 | `ffff` | instruction | operation |
 |:---:|---|---|
@@ -1043,8 +1118,8 @@ Because instruction addresses select 16-bit halfwords, `rel12` has a signed
 
 X32 may be combined with any RC32 mainline profile. The selected profile
 continues to control availability of base operations in the long register
-format. X32 widens the mandatory RC32 `LUIL` and `ADDI` forms and supplies
-the additional U20 and I12 operations defined in sections D.3 and D.4. The long
-memory operations and conditional branches are also supplied by X32 itself in
-every X32 mainline profile. The extension has no Nano form and does not apply
-to RC16.
+format. X32 adds five-bit-selector forms of the mandatory RC32 `LUIL` and
+`ADDI` instructions and supplies the additional U20 and I12 operations in
+sections D.3 and D.4. The long memory operations and conditional branches are
+also supplied by X32 itself in every X32 mainline profile. The extension has no
+Nano form and does not apply to RC16.

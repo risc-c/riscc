@@ -135,29 +135,40 @@ module riscc_tiny16_min #(
     wire mts_op = system_group && !rb[2] && rb[1] && rb[0];
     wire link_enabled = |rd;
 
-    wire direct_address_op = immediate_memory | register_store_group;
-    wire memory_op = direct_address_op | register_memory_decode;
-    wire store_op = immediate_store_word | register_store_group;
-    wire byte_memory_op =
+    // Min distinguishes its defined direct byte/data and halfword/program
+    // operations with P=rb[0]; unsupported widths may alias either path.
+    wire direct_memory_plane =
         register_memory_group && register_opcode[1];
+    wire program_load_op = direct_memory_plane && rb[0];
+    // In memory-transfer states, instruction_q[15] distinguishes register
+    // memory from immediate word memory; the remaining bits select byte/data.
+    wire byte_memory_op =
+        instruction_q[15] && register_opcode[1] && !rb[0];
+    wire direct_address_op =
+        immediate_memory | (direct_memory_plane && !rb[0]);
+    wire memory_op = immediate_memory | register_memory_decode;
+    wire store_op = immediate_store_word | register_store_group;
     wire signed_byte_load = register_opcode[2];
 
     wire immediate_alu_op = immediate_arithmetic | immediate_logic;
     wire executes_directly =
         immediate_load_group | immediate_alu_op | direct_address_op |
         right_shift_slot | mfs_op | mts_op;
-    // STB has no rb operand; its ra address executes directly.
-    wire ordinary_rb_operand =
-        register_alu_group |
-        (register_memory_decode & ~register_store_group);
+    // Only genuine two-source operations read rb. Program loads stage and
+    // reissue their sole ra source through the existing operand-load state.
+    wire indexed_load_op =
+        register_memory_decode && !register_opcode[1];
+    wire ordinary_rb_operand = register_alu_group | indexed_load_op;
+    wire staged_alu_operand = ordinary_rb_operand | program_load_op;
     wire needs_rb_operand = ordinary_rb_operand | funnel_op;
+    wire needs_operand = needs_rb_operand | program_load_op;
 
     // ------------------------------------------------------------------
     // Sequencer and synchronous RF schedule
     // ------------------------------------------------------------------
     wire start_register_call = in_decode && jal_register_op;
     wire start_direct_execute = in_decode && executes_directly;
-    wire start_operand_load = in_decode && needs_rb_operand;
+    wire start_operand_load = in_decode && needs_operand;
     wire memory_address_ready = in_execute && memory_op;
     wire funnel_left_execute = in_execute && funnel_left_op;
     wire update_mdr_from_alu =
@@ -176,7 +187,7 @@ module riscc_tiny16_min #(
     // smaller than separately decoding only the immediate ALU operations.
     wire select_read_rd =
         immediate_class | (in_execute && store_op);
-    wire select_read_rb = start_operand_load;
+    wire select_read_rb = start_operand_load && !program_load_op;
     wire [2:0] rf_read_register =
         select_read_rd ? rd : select_read_rb ? rb : ra;
     wire rf_read_system_bank =
@@ -213,10 +224,12 @@ module riscc_tiny16_min #(
     wire [15:0] upper_immediate = {instruction_q[7:0], 8'h00};
     wire [7:0] selected_load_byte =
         captured_bit_q ? mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = byte_memory_op ?
-        {{8{signed_byte_load && selected_load_byte[7]}},
-         selected_load_byte} :
-        mem_rdata;
+    // All defined non-byte loads are aligned, so their selected low byte is
+    // mem_rdata[7:0]. Only the high byte needs a width-dependent mux.
+    wire [15:0] load_result = {
+        byte_memory_op ? {8{signed_byte_load && selected_load_byte[7]}} :
+                         mem_rdata[15:8],
+        selected_load_byte};
 
     // Increment PC while the fetched word is captured. Decode then sees
     // pc_next, so JALR can write its link immediately without another state.
@@ -233,7 +246,7 @@ module riscc_tiny16_min #(
         rf_read_data;
 
     wire alu_b_is_mdr =
-        (in_execute && ordinary_rb_operand) | in_mdr_writeback;
+        (in_execute && staged_alu_operand) | in_mdr_writeback;
     wire branch_taken =
         (rd[2] && !rd[1]) |
         (!rd[2] &&

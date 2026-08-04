@@ -40,7 +40,8 @@ tx_push_done:
 tx_puts:
     LDI   r6, 0
 tx_puts_loop:
-    LDB   r1, [r7+r6]
+    ADD   r0, r7, r6
+    LDB   r1, [r0]
     OR    r0, r1, r1
     BEQZ  tx_puts_done
     CALL16 tx_push
@@ -59,7 +60,8 @@ process_rx:
     SUB   r0, r3, r5
     BEQZ  process_rx_done
     LDI16 r4, rx_q
-    LDB   r1, [r4+r3]
+    ADD   r0, r4, r3
+    LDB   r1, [r0]
     ADDI  r3, 1
     ANDI  r3, 15
     STW   r3, [r2+0]
@@ -478,9 +480,11 @@ ticker_emit_pixel:
     SUB   r5, r5, r4
     ADD   r5, r5, r2
     LDI16 r1, ticker_glyphs
-    LDB   r5, [r1+r5]
+    ADD   r0, r1, r5
+    LDB   r5, [r0]
     LDI16 r1, ticker_bit_masks
-    LDB   r2, [r1+r3]
+    ADD   r0, r1, r3
+    LDB   r2, [r0]
     AND   r0, r5, r2
     BEQZ  ticker_pixel_advance
 
@@ -724,7 +728,8 @@ isr_rx_done:
     SUB   r0, r2, r4
     BEQZ  isr_tx_empty
     LDI16 r5, tx_q
-    LDB   r4, [r5+r2]
+    ADD   r0, r5, r2
+    LDB   r4, [r0]
     LDI16 r5, 0xFFF0
     STW   r4, [r5+0]
     ADDI  r2, 1
@@ -752,7 +757,8 @@ start:
     LDI16 r7, boot_msg
     LDI   r6, 0
 boot_queue_loop:
-    LDB   r1, [r7+r6]
+    ADD   r0, r7, r6
+    LDB   r1, [r0]
     OR    r0, r1, r1
     BEQZ  boot_queue_done
     CALL16 tx_push

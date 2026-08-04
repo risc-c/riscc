@@ -111,13 +111,16 @@ module riscc_tiny16 #(
                               !register_group[1] && !register_group[0];
     wire register_memory_group = register_class &&
                                  !register_group[1] && register_group[0];
-    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB. Profile-local
-    // loose decodes let reserved slots alias existing paths where that avoids
-    // a wider exact decoder; defined encodings retain their ISA behavior.
+    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB.
+    // Profile-local loose decodes let reserved slots alias existing paths where
+    // that avoids a wider exact decoder; defined encodings retain their ISA
+    // behavior.
     wire register_memory_decode = register_memory_group &&
         (!register_opcode[2] ||
          (register_opcode[1] && !register_opcode[0]));
-    wire register_store_group = register_memory_decode && register_opcode[0];
+    wire register_store_group =
+        register_memory_decode &&
+        register_opcode[1] && register_opcode[0];
     wire register_compare = register_alu_group &&
                             !register_opcode[2] && register_opcode[1];
     wire register_subtract_or_compare =
@@ -150,9 +153,9 @@ module riscc_tiny16 #(
     // four-bit 15..0 counter is sufficient (and shares its low bit with the
     // byte lane / compare-result scratch storage).
     reg  [3:0]  iteration_count_q;
-    // Outside the iteration states, the counter LSB holds the byte lane or
-    // less-than result instead of adding a separate full-profile flip-flop.
+    // Outside iteration states, the counter LSB holds the less-than result.
     wire captured_bit_q = iteration_count_q[0];
+    reg         byte_lane_q;
     reg  [15:0] multiply_accumulator_q;
     wire iteration_done = multiply_op ? (iteration_count_q == 4'd0) :
                                         (iteration_count_q[2:0] == 3'd0);
@@ -179,27 +182,32 @@ module riscc_tiny16 #(
     wire single_step_shift_op = funnel_right_op;
     wire memory_op = immediate_memory | register_memory_decode;
     wire store_op = immediate_store_word | register_store_group;
-    wire byte_memory_op = register_memory_decode && register_opcode[1];
+    wire direct_memory_plane =
+        register_memory_decode && register_opcode[1];
+    wire program_load_op = direct_memory_plane && rb[0];
+    wire direct_byte_op = direct_memory_plane && !rb[0];
+    wire byte_memory_op =
+        instruction_q[15] && register_opcode[1] && !rb[0];
 
     wire immediate_alu_op = immediate_arithmetic | immediate_logic;
     wire executes_directly =
         (immediate_class && !(&immediate_opcode)) |
-        immediate_memory | register_store_group |
+        immediate_memory | direct_byte_op |
         mfs_op | mts_op;
 
-    // STB has no rb operand. Full issues its ra address directly; sys uses the
-    // existing operand-load control as a delay while ignoring encoded bbb=0.
-    // The rs value is read later for the memory write.
-    wire ordinary_rb_operand = register_alu_group |
-                               (register_memory_decode &
-                                ~register_opcode[0]);
+    // Only genuine two-source instructions read rb. Direct typed memory
+    // operations use ra; store data is read later for the memory write.
+    wire indexed_load_op =
+        register_memory_decode && !register_opcode[1];
+    wire ordinary_rb_operand = register_alu_group | indexed_load_op;
+    wire staged_alu_operand = ordinary_rb_operand | program_load_op;
     wire needs_rb_operand = ordinary_rb_operand | funnel_op;
-    wire alu_b_uses_mdr = ordinary_rb_operand;
+    wire alu_b_uses_mdr = staged_alu_operand;
 
     wire start_register_call = in_decode && jal_register_op;
     wire start_direct_execute = in_decode && executes_directly;
     wire start_operand_load = in_decode &&
-                              (needs_rb_operand | iterative_op);
+        (needs_rb_operand | iterative_op | program_load_op);
 
     // ------------------------------------------------------------------
     // Sequencer control
@@ -226,7 +234,8 @@ module riscc_tiny16 #(
     wire select_read_rd = immediate_alu_op |
                           (memory_address_ready && store_op) |
                           (in_iteration_operand_load && immediate_shift_op);
-    wire select_read_rb = in_decode && needs_rb_operand;
+    wire select_read_rb = start_operand_load &&
+        !program_load_op && !immediate_shift_op;
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
     // Upper (system) bank: bbb[0]=0 group ops read S[aaa] (RET/RETI/MFS).
@@ -265,12 +274,12 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // Load formatting and shared ALU
     // ------------------------------------------------------------------
-    wire byte_lane_q = captured_bit_q;
-    wire [7:0] selected_load_byte = byte_lane_q ?
-                                    mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = long_form_op ? mem_rdata : byte_memory_op ?
-        {{8{signed_byte_load && selected_load_byte[7]}}, selected_load_byte} :
-        mem_rdata;
+    wire [7:0] selected_load_byte =
+        (byte_memory_op && byte_lane_q) ? mem_rdata[15:8] : mem_rdata[7:0];
+    wire [15:0] load_result = {
+        byte_memory_op ? {8{signed_byte_load && selected_load_byte[7]}} :
+                         mem_rdata[15:8],
+        selected_load_byte};
 
     // One adder/result path.  Logical and shift results are formed as B with A
     // forced to zero.  SLT/SLTU first reuse the subtract path and then write a
@@ -451,13 +460,12 @@ module riscc_tiny16 #(
             if (funnel_left_execute) begin
                 funnel_bit_q <= mdr_q[15];
             end
-            // Full shares the shift/multiply counter LSB between the byte
-            // lane and compare result because those lifetimes do not overlap.
-            if (memory_address_ready ||
-                (in_execute && register_compare)) begin
-                iteration_count_q[0] <= register_compare ?
-                                        compare_less : alu_result[0];
-            end
+            // Direct byte operations hold ra through Execute. Capture its low
+            // bit separately so memory decode does not feed the MUL counter.
+            if (memory_address_ready)
+                byte_lane_q <= rf_read_data[0];
+            if (in_execute && register_compare)
+                iteration_count_q[0] <= compare_less;
 
             // Branch-condition shadows avoid a separate r0 read.
             if (rf_we && !rf_write_system_bank &&

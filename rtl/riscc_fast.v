@@ -105,11 +105,17 @@ module riscc_fast #(
     wire x_reg_alu = x_reg_alu_group & ~x_multiply;
     wire x_shift_right = x_reg_mem & x_f5[2] & ~x_f5[1];
     wire x_shift = x_shift_right | x_shift_left;
+    // LDWX uses ra+rb. Direct typed loads use ra; their B-port copy is
+    // suppressed for byte operations or reused to double LDPH's halfword
+    // program pointer before the normal [15:1] address extraction.
     wire x_indexed_memory = x_reg_mem & ~x_f5[0] &
                             (~x_f5[2] | x_f5[1]);
+    wire x_direct_load = x_reg_mem & x_f5[1] & ~x_f5[0];
+    wire x_program_type = ~x_bbb[2] & x_bbb[1] & x_bbb[0];
+    wire x_program_load = x_direct_load & ~x_f5[2] & x_program_type;
 `ifndef RISCC_FAST_SYNC_RF
     // The asynchronous-RF mapper prefers the complete register-memory truth
-    // set factored once: LDWX, LDB, STB, and LDBS.
+    // set factored once: LDWX, direct typed loads, and STB.
     wire x_reg_memory = x_reg_mem &
         ((~x_f5[2] & (~x_f5[0] | x_f5[1])) |
          (x_f5[1] & ~x_f5[0]));
@@ -120,13 +126,13 @@ module riscc_fast #(
     wire x_memory = x_imm_memory | x_reg_memory;
 `endif
     wire x_store = x_imm_store | x_reg_store;
-    // Byte controls are observed only while a decoded memory operation is
-    // active. Each RF/multiplier mapping uses the form that packs best there.
+    // LDPH shares f5=01_010 with LDB. Fixed bbb=011 selects program memory
+    // and halfword width; it is not a register selector.
 `ifdef RISCC_FAST_SYNC_RF
     wire x_load_byte = x_reg_store |
-                       (x_indexed_memory & x_f5[1]);
+                       (x_direct_load & ~x_bbb[1]);
 `else
-    wire x_load_byte = x_reg_memory & x_f5[1];
+    wire x_load_byte = x_reg_memory & x_f5[1] & ~x_bbb[1];
 `endif
 `ifdef RISCC_FAST_DSP
     wire x_signed_byte = x_f5[2];
@@ -159,11 +165,10 @@ module riscc_fast #(
     wire [3:0] x_src_a = x_branch ? 4'h0 :
         x_system ? {~x_bbb[0], x_aaa} :
         x_immediate ? {1'b0, x_ddd} : {1'b0, x_aaa};
-    // Only stores consume ddd on the B read port. Broaden the register-store
-    // decode into otherwise don't-care shift/system encodings to keep this
-    // address mux off the full memory/store decode cone.
+    // Stores consume ddd on B. Direct typed loads broaden that existing
+    // select because their B value is ignored; bbb remains decode-only.
     wire x_src_b_is_ddd = x_class[0] &
-                          (~x_class[1] | (x_f5[3] & x_f5[0]));
+        (~x_class[1] | (x_f5[3] & x_f5[1]));
     wire [3:0] x_src_b = {1'b0, x_src_b_is_ddd ? x_ddd : x_bbb};
     wire accept_fetch;
     wire [1:0] d_class = mem_rdata[15:14];
@@ -176,18 +181,19 @@ module riscc_fast #(
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
+    wire d_direct_load = d_register & ~d_f5[4] & d_f5[3] &
+                         d_f5[1] & ~d_f5[0];
     wire d_uses_a = (~d_class[1] & d_class[0]) | d_register |
         (d_immediate & (d_aaa[1] | d_aaa[2]));
-    // Immediate stores and every non-system register plane may read rb.
-    // The deliberately broad register term also covers funnel shifts and
-    // only adds harmless stalls for undefined selectors.
+    // Immediate stores and non-system register operations may read B. Direct
+    // loads need only the A hazard check because both RF addresses select aaa.
     wire d_uses_b = d_class[0] &
-        (~d_class[1] | ~d_f5[4] | ~d_f5[3]);
+        (~d_class[1] | ~d_f5[4] | ~d_f5[3]) & ~d_direct_load;
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
         d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
     wire d_src_b_is_ddd = d_class[0] &
-                          (~d_class[1] | (d_f5[3] & d_f5[0]));
+        (~d_class[1] | (d_f5[3] & d_f5[1]));
     wire [3:0] d_src_b = {1'b0, d_src_b_is_ddd ? d_ddd : d_bbb};
     wire [3:0] rf_raddr_a;
     wire [3:0] rf_raddr_b;
@@ -226,7 +232,13 @@ module riscc_fast #(
     wire [15:0] load_value = {load_high_byte, load_low_byte};
     wire [15:0] long_value = mem_rdata;
 
-    wire x_shift_step_left = x_shift_left | (x_funnel & x_f5[0]);
+    wire x_shift_step_left =
+`ifdef RISCC_FAST_DSP
+`ifndef RISCC_FAST_AGILEX
+        x_program_load |
+`endif
+`endif
+        x_shift_left | (x_funnel & x_f5[0]);
 `ifdef RISCC_FAST_SYNC_RF
     // The broader term packs with the EBR read path; the asynchronous RF
     // mapping below benefits from retaining the operation qualifier.
@@ -277,7 +289,12 @@ module riscc_fast #(
 `ifndef RISCC_FAST_DSP
          (x_multiply & rf_b[15]) |
 `endif
-         x_imm_arithmetic | x_reg_arithmetic | x_memory));
+         x_imm_arithmetic | x_reg_arithmetic |
+`ifdef RISCC_FAST_DSP
+         (x_memory & ~x_program_load)));
+`else
+         x_memory));
+`endif
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_a = alu_a_is_pc ?
         {1'b0, x_pc_q} :
@@ -297,24 +314,44 @@ module riscc_fast #(
                      (x_imm_alu & ~x_aaa[2] & x_aaa[1]);
     wire run_logic = (x_imm_alu & x_aaa[2]) |
                      (x_reg_alu & x_f5[2]);
+`ifdef RISCC_FAST_AGILEX
     wire run_rf_b = x_reg_arithmetic | x_indexed_memory;
-    wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
+    wire [15:0] run_rf_b_value = rf_b & {16{~x_load_byte}};
+`elsif RISCC_ECP5
 `ifdef RISCC_FAST_DSP
-`ifdef RISCC_ECP5
-    // LDBS wins in the preceding run_rf_b arm, so its selector can join the
-    // shift/funnel result plane. This form removes two LUT sites on ECP5.
-    wire x_bit_result = x_funnel | (x_reg_mem & x_f5[2]);
+    wire run_rf_b = x_reg_arithmetic |
+                    (x_indexed_memory & ~x_f5[1]);
 `else
-    wire x_bit_result = x_shift | x_funnel;
+    wire run_rf_b = x_reg_arithmetic |
+                    (x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0]);
 `endif
 `else
-    wire x_bit_result = x_shift | x_funnel;
+    wire run_rf_b = x_reg_arithmetic |
+                    (x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0]);
 `endif
+    wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
+    wire x_bit_result =
+`ifdef RISCC_FAST_DSP
+`ifndef RISCC_FAST_AGILEX
+        x_program_load |
+`endif
+`endif
+        x_shift | x_funnel;
     wire [15:0] run_result = run_logic ? x_logic_result :
         run_imm_s ? x_imm_s :
-        run_rf_b ? rf_b :
+`ifndef RISCC_FAST_DSP
+        (x_move | x_program_load) ? rf_a :
+`endif
+        run_rf_b ?
+`ifdef RISCC_FAST_AGILEX
+            run_rf_b_value :
+`else
+            rf_b :
+`endif
         run_short_imm ? immediate_result :
+`ifdef RISCC_FAST_DSP
         x_move ? rf_a :
+`endif
         x_bit_result ? x_shift_step :
         x_jal16 ? 16'h0001 : 16'h0000;
 `ifdef RISCC_FAST_DSP
@@ -517,7 +554,16 @@ module riscc_fast #(
          (frontend_side_finish & ~x_valid_q));
     wire fetch_hold = rf_wait_cycle |
         (in_shift & (~shift_finish | x_valid_q));
+`ifdef RISCC_FAST_AGILEX
+`ifdef RISCC_FAST_DSP
+    assign mem_addr = (normal_x & x_program_load) ? rf_a[14:0] :
+        run_data_port ? alu_result[15:1] : fetch_pc_q;
+`else
     assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
+`endif
+`else
+    assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
+`endif
     assign mem_we = run_data_port & x_store;
     wire store_byte = x_load_byte;
     wire [15:0] store_value = rf_b;

@@ -113,22 +113,23 @@ module riscc_tiny16 #(
                               !register_group[1] && !register_group[0];
     wire register_memory_group = register_class &&
                                  !register_group[1] && register_group[0];
-    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB. Profile-local
-    // loose decodes let reserved slots alias existing paths where that avoids
-    // a wider exact decoder; defined encodings retain their ISA behavior.
+    // 01_000 is LDWX. LDB/LDPH share 01_010, with canonical LDPH fixing
+    // bbb=011 as a modifier rather than an r3 source; 01_110 is LDBS and
+    // 01_011 is direct STB. Reserved slots may alias existing paths where that
+    // avoids a wider exact decoder; defined encodings retain their ISA behavior.
     wire register_memory_decode =
         register_memory_group &&
         (!register_opcode[2] ||
          (register_opcode[1] && !register_opcode[0]));
+    wire direct_memory_plane =
+        register_memory_decode && register_opcode[1];
     wire register_store_group =
-        register_memory_decode && register_opcode[0];
+        direct_memory_plane && register_opcode[0];
     wire register_compare = register_alu_group &&
                             !register_opcode[2] && register_opcode[1];
     wire register_subtract_or_compare =
         register_alu_group && !register_opcode[2] &&
         (register_opcode[1] | register_opcode[0]);
-    wire byte_memory_op =
-        register_memory_decode && register_opcode[1];
     wire signed_byte_load = register_opcode[2];
     wire right_shift_slot = register_memory_group &&
                             register_opcode[2] && !register_opcode[1];
@@ -159,8 +160,7 @@ module riscc_tiny16 #(
     // so a four-bit 15..0 counter is sufficient. Outside those operations its
     // low bit remains the byte-lane / compare-result scratch bit.
     reg  [3:0]  iteration_count_q;
-    // Outside the iteration states, the counter LSB holds the byte lane or
-    // less-than result instead of adding a separate full-profile flip-flop.
+    // Outside iteration states, the counter LSB holds the less-than result.
     wire captured_bit_q = iteration_count_q[0];
     reg  [15:0] multiply_accumulator_q;
     wire product_iteration_done = iteration_count_q == 4'd0;
@@ -194,27 +194,29 @@ module riscc_tiny16 #(
     wire single_step_shift_op = funnel_right_op;
     wire memory_op = immediate_memory | register_memory_decode;
     wire store_op = immediate_store_word | register_store_group;
+    wire program_load_op = direct_memory_plane && rb[0];
+    wire byte_memory_op = direct_memory_plane && !rb[0];
 
     wire immediate_alu_op = immediate_arithmetic | immediate_logic;
     wire executes_directly =
         (immediate_class && !(&immediate_opcode)) |
-        immediate_memory | register_store_group |
+        immediate_memory | byte_memory_op |
         mfs_op | mts_op;
 
-    // STB has no rb operand. Full issues its ra address directly; sys uses the
-    // existing operand-load control as a delay while ignoring encoded bbb=0.
-    // The rs value is read later for the memory write.
-    wire ordinary_rb_operand =
-        register_alu_group |
-        (register_memory_decode && !register_store_group);
+    // LDWX uses bbb as its index. LDPH stages and reuses aaa; canonical
+    // bbb=011 is only a modifier. Direct byte operations also address aaa.
+    wire indexed_load_op =
+        register_memory_decode && !register_opcode[1];
+    wire ordinary_rb_operand = register_alu_group | indexed_load_op;
+    wire staged_alu_operand = ordinary_rb_operand | program_load_op;
     wire needs_rb_operand =
         ordinary_rb_operand | funnel_op | mulhu_op;
-    wire alu_b_uses_mdr = ordinary_rb_operand;
+    wire alu_b_uses_mdr = staged_alu_operand;
 
     wire start_register_call = in_decode && jal_register_op;
     wire start_direct_execute = in_decode && executes_directly;
     wire start_operand_load = in_decode &&
-                              (needs_rb_operand | iterative_op);
+        (needs_rb_operand | immediate_shift_op | program_load_op);
 
     // ------------------------------------------------------------------
     // Sequencer control
@@ -240,7 +242,10 @@ module riscc_tiny16 #(
     wire select_read_rd = immediate_alu_op |
                           (memory_address_ready && store_op) |
                           (in_iteration_operand_load && immediate_shift_op);
-    wire select_read_rb = in_decode && needs_rb_operand;
+    // LDPH keeps aaa selected in both operand-load phases; bbb is never an
+    // RF address for the compact program-load form.
+    wire select_read_rb = start_operand_load &&
+        !program_load_op && !immediate_shift_op;
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
     // Upper (system) bank: bbb[0]=0 group ops read S[aaa] (RET/RETI/MFS).
@@ -280,12 +285,12 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // Load formatting and shared ALU
     // ------------------------------------------------------------------
-    wire byte_lane_q = captured_bit_q;
-    wire [7:0] selected_load_byte = byte_lane_q ?
-                                    mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = long_form_op ? mem_rdata : byte_memory_op ?
-        {{8{signed_byte_load && selected_load_byte[7]}}, selected_load_byte} :
-        mem_rdata;
+    wire [7:0] selected_load_byte =
+        (byte_memory_op && mdr_q[0]) ? mem_rdata[15:8] : mem_rdata[7:0];
+    wire [15:0] load_result = {
+        byte_memory_op ? {8{signed_byte_load && selected_load_byte[7]}} :
+                         mem_rdata[15:8],
+        selected_load_byte};
     wire mulhu_accumulator_writeback =
         in_mdr_writeback && mulhu_op;
     // One adder/result path.  Logical and shift results are formed as B with A
@@ -380,7 +385,7 @@ module riscc_tiny16 #(
                        {rf_read_data[7:0], rf_read_data[7:0]} : rf_read_data;
     assign mem_wmask = {2{memory_write_cycle}} &
                        (byte_memory_op ?
-                        (byte_lane_q ? 2'b10 : 2'b01) : 2'b11);
+                        (mdr_q[0] ? 2'b10 : 2'b01) : 2'b11);
     assign mem_we = memory_write_cycle;
 
     // ------------------------------------------------------------------
@@ -477,13 +482,8 @@ module riscc_tiny16 #(
             if (funnel_left_execute) begin
                 funnel_bit_q <= mdr_q[15];
             end
-            // Full shares the iterative counter LSB between the byte lane and
-            // compare result because those lifetimes do not overlap.
-            if (memory_address_ready ||
-                (in_execute && register_compare)) begin
-                iteration_count_q[0] <= register_compare ?
-                                        compare_less : alu_result[0];
-            end
+            if (in_execute && register_compare)
+                iteration_count_q[0] <= compare_less;
 
             // Branch-condition shadows avoid a separate r0 read.
             if (rf_we && !rf_write_system_bank &&

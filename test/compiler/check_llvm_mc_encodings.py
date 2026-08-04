@@ -151,7 +151,7 @@ def main() -> int:
                         emit_space(2 * rel)
                         emit_label(label)
 
-            # Three-register ALU and indexed-load formats.
+            # Three-register ALU, indexed-load, and direct-memory formats.
             for op in (
                 "ADD", "SUB", "SLT", "SLTU", "AND", "OR", "XOR", "MUL",
                 "FSL1", "FSR1",
@@ -161,12 +161,16 @@ def main() -> int:
                         for rb in range(8):
                             operands = [f"r{rd}", f"r{ra}", f"r{rb}"]
                             emit(f"{op.lower()} {', '.join(operands)}", op, operands)
-            for op in ("LDWX", "LDB", "LDBS"):
+            for rd in range(8):
+                for ra in range(8):
+                    for rb in range(8):
+                        operands = [f"r{rd}", f"[r{ra} + r{rb}]"]
+                        emit(f"ldwx {', '.join(operands)}", "LDWX", operands)
+            for op in ("LDB", "LDBS", "LDPH"):
                 for rd in range(8):
                     for ra in range(8):
-                        for rb in range(8):
-                            operands = [f"r{rd}", f"[r{ra} + r{rb}]"]
-                            emit(f"{op.lower()} {', '.join(operands)}", op, operands)
+                        operands = [f"r{rd}", f"[r{ra}]"]
+                        emit(f"{op.lower()} {', '.join(operands)}", op, operands)
             for rd in range(8):
                 for ra in range(8):
                     operands = [f"r{rd}", f"[r{ra}]"]
@@ -230,9 +234,10 @@ def main() -> int:
             emit("nop", "NOP", [])
             emit("halt", "HALT", [])
 
-            # Parser-only legacy spellings share encodings with the canonical
-            # forms above; one boundary-oriented sample each is sufficient.
+            # Spelling-only aliases share encodings with the canonical forms
+            # above; one boundary-oriented sample each is sufficient.
             aliases = (
+                ("ldp r7, [r6]", "LDP", ["r7", "[r6]"]),
                 ("ldi16 r7, 65535", "LI", ["r7", "65535"]),
                 ("ldi8 r7, 255", "LDI", ["r7", "255"]),
                 ("lui8 r0, 0", "LUI", ["r0", "0"]),

@@ -112,12 +112,17 @@ module riscc_tiny16 #(
                               !register_group[1] && !register_group[0];
     wire register_memory_group = register_class &&
                                  !register_group[1] && register_group[0];
-    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB. Profile-local
-    // loose decodes let reserved slots alias existing paths where that avoids
-    // a wider exact decoder; defined encodings retain their ISA behavior.
-    // Shift control makes the loose memory-plane aliases unobserved in sys.
+    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB.
+    // Profile-local loose decodes let reserved slots alias existing paths where
+    // that avoids a wider exact decoder; defined encodings retain their ISA
+    // behavior. Shift control makes the loose memory-plane aliases unobserved.
     wire register_memory_decode = register_memory_group;
-    wire register_store_group = register_memory_decode && register_opcode[0];
+    wire direct_memory_plane =
+        register_memory_group && register_opcode[1];
+    wire program_load_op = direct_memory_plane && rb[0];
+    wire register_store_group =
+        register_memory_decode &&
+        register_opcode[1] && register_opcode[0];
     wire register_compare = register_alu_group &&
                             !register_opcode[2] && register_opcode[1];
     wire register_subtract_or_compare =
@@ -169,7 +174,8 @@ module riscc_tiny16 #(
     wire single_step_shift_op = funnel_right_op;
     wire memory_op = immediate_memory | register_memory_decode;
     wire store_op = immediate_store_word | register_store_group;
-    wire byte_memory_op = register_memory_group && register_opcode[1];
+    wire byte_memory_op =
+        instruction_q[15] && register_opcode[1] && !rb[0];
 
     wire immediate_alu_op = immediate_arithmetic | immediate_logic;
     wire executes_directly =
@@ -177,13 +183,14 @@ module riscc_tiny16 #(
         immediate_memory |
         mfs_op | mts_op;
 
-    // STB has no rb operand. Full issues its ra address directly; sys uses the
-    // existing operand-load control as a delay while ignoring encoded bbb=0.
-    // The rs value is read later for the memory write.
-    wire ordinary_rb_operand = register_alu_group |
-                               (register_memory_decode & ~iterative_op);
+    // Only genuine two-source instructions read rb. Sys retains its broad
+    // register-instruction schedule; direct typed memory operations use ra.
+    wire indexed_load_op =
+        register_memory_group &&
+        !register_opcode[2] && !register_opcode[1];
+    wire ordinary_rb_operand = register_alu_group | indexed_load_op;
     wire needs_rb_operand = ordinary_rb_operand | funnel_op;
-    wire alu_b_uses_mdr = ordinary_rb_operand & ~register_store_group;
+    wire alu_b_uses_mdr = ordinary_rb_operand | program_load_op;
 
     wire start_register_call = in_decode && jal_register_op;
     wire start_direct_execute = in_decode && executes_directly;
@@ -433,7 +440,7 @@ module riscc_tiny16 #(
             if (memory_address_ready ||
                 (in_execute && register_compare)) begin
                 captured_bit_q <= register_compare ?
-                                  compare_less : alu_result[0];
+                                  compare_less : rf_read_data[0];
             end
 
             // Branch-condition shadows avoid a separate r0 read.

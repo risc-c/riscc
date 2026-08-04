@@ -154,13 +154,22 @@ module riscc_tiny #(
         (W == 1) ? (slt_op & f5[4]) : (register_alu_op & f5[4]);
     wire shift_writeback_op = variable_shift_op | funnel_writeback_op;
 
-    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB.
-    // This placement makes every byte operation share f5[1].
+    // Native LDWX uses 01_000. Reserved 01_001 may alias its indexed path but
+    // is never a program load. LDB/LDPH share 01_010, LDBS uses 01_110, and
+    // STB uses 01_011. For LDPH, bbb=011 is a modifier; aaa is the sole source.
     wire register_memory_plane = register_group & f_group_01;
+`ifdef RISCC_TINY_DIRECT_PLANE_FACTOR
+    wire direct_memory_plane = register_memory_plane & f5[1];
+    wire register_store_op = direct_memory_plane & ~f5[2] & f5[0];
+    wire native_load_op = register_memory_plane & ~f5[2] & ~f5[1];
+    wire direct_load_op = direct_memory_plane & ~f5[0];
+`else
     wire register_store_op = register_memory_plane & ~f5[2] &
                              f5[1] & f5[0];
-    wire indexed_mem_op = register_memory_plane & ~f5[0] &
-        ((W == 1) ? (~f5[2] | f5[1]) : ~right_shift_op);
+    wire native_load_op = register_memory_plane & ~f5[2] & ~f5[1];
+    wire direct_load_op = register_memory_plane & f5[1] & ~f5[0];
+`endif
+    wire indexed_mem_op = native_load_op | direct_load_op;
 
     // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
     // selectors are 000/111, so any ccc bit is the new IE value.
@@ -191,10 +200,19 @@ module riscc_tiny #(
     wire load_op = (imm_mem_group & ~instr_q[0]) | indexed_mem_op;
     wire load_writeback_op = load_op;
     wire mem_op = store_op | load_op;
-    wire byte_access = register_group & f5[1];
+    wire byte_access = register_memory_plane & f5[1] & ~bbb[0];
     wire sign_extend_byte = f5[2];
-    wire alu_uses_rb_stream = register_alu_op | indexed_mem_op;
+    // Only genuine two-source operations stage bbb. LDPH stages aaa through
+    // the same pass, then reuses it as both address-adder operands.
+`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
+    wire alu_uses_rb_stream = register_alu_op |
+                              (indexed_mem_op & ~f5[1]);
+`else
+    wire alu_uses_rb_stream = register_alu_op | native_load_op;
+`endif
     wire needs_rb_pass = alu_uses_rb_stream | ((W == 1) & slt_op);
+    wire needs_operand_pass =
+        needs_rb_pass | (register_memory_plane & ~byte_access);
     wire needs_init_pass = mem_op | slt_op | multiply_op;
 
     // ------------------------------------------------------------------
@@ -221,8 +239,8 @@ module riscc_tiny #(
     // addressed {reg, slice}, read one W-bit slice ahead of use.
     //
     // Read schedule (one stream at a time):
-    //   INIT2 first lap : rb  -> data_stream_q        (reg-reg ALU, indexed memory)
-    //   INIT            : rs1 -> ALU        (alu_b_raw = imm or rotating data_stream_q)
+    //   INIT2 first lap : bbb/aaa -> data_stream_q    (two-source ops / LDPH)
+    //   INIT            : aaa -> ALU                  (B is the staged operand)
     //   store-data lap  : rd  -> data_stream_q        (MEM_XFER normally;
     //                                                   second INIT2 for
     //                                                   wide ECP5 Full)
@@ -336,7 +354,12 @@ module riscc_tiny #(
     wire [SLICE_BITS-1:0] immediate_slice_index =
         slice_idx_q ^ {lui_op, {(SLICE_BITS-1){1'b0}}};
     wire [W-1:0] immediate_low_slice =
+`ifdef RISCC_TINY_DIRECT_IMM_MASK
+        instr_q[((immediate_slice_index * W) & 7) +: W] &
+        {W{~direct_load_op}};
+`else
         instr_q[((immediate_slice_index * W) & 7) +: W];
+`endif
     wire [W-1:0] imm_slice = immediate_slice_index[SLICE_BITS-1] ?
                            {W{sign_extend_imm & instr_q[7]}} :
                            immediate_low_slice;
@@ -350,8 +373,24 @@ module riscc_tiny #(
     wire direct_store_stream_base = register_store_op & slow_direct_store;
     wire alu_a_enable =
         ~(immediate_group & ~aaa[2] & ~aaa[1]) & ~direct_store_stream_base;
+`ifdef RISCC_TINY_DIRECT_ZERO_INDEX
+    wire alu_b_zero = system_op |
+                     (indexed_mem_op & f5[1] & ~bbb[0]) |
+                     ((W != 1) & register_store_op & ~slow_direct_store);
+`elsif RISCC_TINY_DIRECT_ZERO_LOAD
+    wire alu_b_zero = system_op | (load_op & byte_access) |
+                     ((W != 1) & register_store_op & ~slow_direct_store);
+`elsif RISCC_TINY_DIRECT_ZERO_MERGED
+    wire alu_b_zero = system_op |
+                     (register_memory_plane & f5[1] & ~bbb[0] &
+                      ((W != 1) | ~f5[0]));
+`elsif RISCC_TINY_DIRECT_IMM_MASK
     wire alu_b_zero = system_op |
                      ((W != 1) & register_store_op & ~slow_direct_store);
+`else
+    wire alu_b_zero = system_op | (direct_load_op & ~bbb[0]) |
+                     ((W != 1) & register_store_op & ~slow_direct_store);
+`endif
     // Logic operations ignore the adder, so their low function bits may
     // alias this control without decoding f5[2].
     wire alu_subtract =
@@ -364,7 +403,7 @@ module riscc_tiny #(
     wire [W-1:0] alu_a =
         rf_rdata & {W{alu_a_enable & ~slt_execute & ~mul_clear_product}};
     wire [W-1:0] alu_b_raw =
-        ((needs_rb_pass | multiply_op | direct_store_stream_base) ?
+        ((needs_operand_pass | multiply_op | direct_store_stream_base) ?
          data_stream_q[W-1:0] : imm_slice) &
                        {W{~(alu_b_zero | slt_execute) &
                           (~multiply_op | (in_execute & mul_bit))}};
@@ -649,7 +688,7 @@ module riscc_tiny #(
                 state_q <= ST_DECODE;
             ST_DECODE:
                 state_q <= take_irq ? ST_EXECUTE :
-                    (needs_rb_pass |
+                    (needs_operand_pass |
                      direct_store_stream_base |
                      pc_from_register |
                      variable_shift_op | multiply_op) ? ST_INIT2 :

@@ -11,8 +11,9 @@ between the RTL and the ISS shows up as a FAIL with a distinct code per
 checked item.
 
 Program shape (per seed): random straight-line ALU/imm/memory ops over
-r1..r6 with a high-RAM data window, forward-branch blocks, bounded
-counted loops, CALL/RETS subroutines, MTS/MFS spills, and -- in sys
+r1..r6 with a high-RAM data window, adjacent LDPH/LDP program loads,
+forward-branch blocks, bounded counted loops, CALL/RETS subroutines,
+MTS/MFS spills, and -- in sys
 configs -- STI/CLI and testbench-IRQ triggers (counted in S1) with a
 save/restore handler.  Vector layout follows the current exception
 model: reset enters at word 0 (JMP16 slot), IRQ at word 2; min images
@@ -127,14 +128,28 @@ class Gen:
         elif k < 0.85:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)
+            lines.append("    ADD   r0, r7, r0")
             op = self.rng.choice(["LDB", "LDBS"])
-            lines.append("    %-5s %s, [r7+r0]" % (op, self.reg()))
+            lines.append("    %-5s %s, [r0]" % (op, self.reg()))
         else:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)
             lines.append("    ADD   r0, r7, r0")
             lines.append("    STB   %s, [r0]" % self.reg())
         return lines
+
+    def op_program_load(self):
+        # Canonical bbb=011 is a selector, not an r3 operand. Poison r3 and
+        # keep both destinations elsewhere while adjacent r7 pointers exercise
+        # both halfword-address parities.
+        dests = (1, 2, 4, 5, 6)
+        return [
+            "    LDI16 r3, fail >> 1",
+            "    LDI16 r7, start >> 1",
+            "    LDPH  r%d, [r7]" % self.rng.choice(dests),
+            "    ADDI  r7, 1",
+            "    LDP    r%d, [r7]" % self.rng.choice(dests),
+        ]
 
     def op_sreg(self):
         s = self.rng.randint(4, 6)
@@ -207,6 +222,7 @@ class Gen:
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
             lines.append("    STW   r1, [r7+%d]" % (w * 2))
+        lines += self.op_program_load()
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
             if k < 0.45:
@@ -366,7 +382,8 @@ class NanoGen:
         elif k < 0.85:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)
-            lines.append("    LDB   %s, [r7+r0]" % self.reg())
+            lines.append("    ADD   r0, r7, r0")
+            lines.append("    LDB   %s, [r0]" % self.reg())
         else:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)

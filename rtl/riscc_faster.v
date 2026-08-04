@@ -81,11 +81,21 @@ module riscc_faster #(
     wire d_shift_right = d_reg_mem & d_f5[2] & ~d_f5[1];
     wire d_shift_left = d_reg_mem & (&d_f5[2:0]);
     wire d_shift = d_shift_right | d_shift_left;
-    wire d_indexed_memory = d_reg_mem & ~d_f5[0] &
-                            (~d_f5[2] | d_f5[1]);
-    wire d_reg_memory = d_reg_mem &
-        ((~d_f5[2] & (~d_f5[0] | d_f5[1])) |
-         (d_f5[1] & ~d_f5[0]));
+    // LDWX uses ra+rb. Direct typed loads select ra on both RF ports; byte
+    // loads suppress B in Execute, while canonical LDPH uses the duplicate to
+    // form 2*ra before the normal [15:1] program-address extraction.
+    wire d_native_load = d_reg_mem & ~d_f5[2] &
+                         ~d_f5[1] & ~d_f5[0];
+    wire d_direct_load = d_reg_mem & d_f5[1] & ~d_f5[0];
+    wire d_program_load = d_direct_load & ~d_f5[2] &
+                          ~d_bbb[2] & d_bbb[1] & d_bbb[0];
+`ifdef RISCC_FASTER_SOFT_MUL
+    wire d_indexed_memory = d_native_load | d_program_load;
+`else
+    wire d_indexed_memory = d_reg_mem & ~d_f5[2] & ~d_f5[0] &
+        (~d_f5[1] | (~d_bbb[2] & d_bbb[1] & d_bbb[0]));
+`endif
+    wire d_reg_memory = d_native_load | d_direct_load | d_reg_store;
     wire d_memory = d_imm_memory | d_reg_memory;
     wire d_store = d_imm_store | d_reg_store;
     wire d_load = d_memory & ~d_store;
@@ -99,17 +109,21 @@ module riscc_faster #(
     wire d_return = d_even_control & ~d_bbb[2];
     wire d_move = d_system & ~d_bbb[2] & d_bbb[1];
     wire d_ie_control = d_system & d_bbb[2] & d_bbb[1];
-    wire d_load_byte = d_reg_memory & d_f5[1];
-    wire d_signed_byte = d_indexed_memory & d_f5[2];
+    wire d_load_byte = d_reg_store |
+                       (d_direct_load & ~d_program_load);
+    wire d_signed_byte = d_load_byte & d_f5[2];
     wire d_cmpi = d_imm_alu & (d_aaa == 3'b011);
 
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
         d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
     wire d_src_b_is_ddd = d_class[0] &
-                          (~d_class[1] | (d_f5[3] & d_f5[0]));
+        (~d_class[1] | (d_f5[3] & d_f5[0]));
+    wire d_src_b_is_aaa = d_class[0] & ~d_f5[4] &
+                          d_f5[3] & d_f5[1];
     wire [3:0] d_src_b = {1'b0,
-        d_src_b_is_ddd ? d_ddd : d_bbb};
+        d_src_b_is_ddd ? d_ddd :
+        d_src_b_is_aaa ? d_aaa : d_bbb};
 
     wire d_result_we = d_imm_alu | d_shift | d_funnel |
                        d_reg_alu | d_multiply |
@@ -356,7 +370,6 @@ module riscc_faster #(
         alu_result;
 `endif
 
-    wire [15:0] x_effective_address = alu_result;
     wire [14:0] x_pc_plus1 = x_pc_q + 15'd1;
     wire [14:0] x_pc_plus2 = x_pc_q + 15'd2;
 
@@ -449,13 +462,12 @@ module riscc_faster #(
     wire [14:0] fetch_request_pc = f_response_held ?
                                    f_pending_pc_q : f_pc_q;
 
-    assign mem_addr = x_memory_request ? x_effective_address[15:1] :
+    assign mem_addr = x_memory_request ? alu_result[15:1] :
                       x_long_start ? x_pc_plus1 : fetch_request_pc;
     assign mem_we = x_memory_request & x_store;
     assign mem_wdata = x_load_byte ? {2{rf_b[7:0]}} : rf_b;
     assign mem_wmask = x_load_byte ?
-                       {x_effective_address[0],
-                        ~x_effective_address[0]} : 2'b11;
+                       {alu_result[0], ~alu_result[0]} : 2'b11;
 
     // ------------------------------------------------------------------
     // Pipeline and side-state updates
@@ -511,7 +523,7 @@ module riscc_faster #(
             x_valid_q <= 1'b0;
         end else if (x_load_start) begin
             state_q <= ST_LOAD;
-            load_lane_q <= x_effective_address[0];
+            load_lane_q <= alu_result[0];
         end else if (x_shift_start) begin
             state_q <= ST_SHIFT;
             side_data_q <= x_shift_step;

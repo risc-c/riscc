@@ -359,14 +359,22 @@ class Sim:
                         raise Undefined("MUL without the full profile")
                     res = (a * b) & 0xFFFF
                 self.r[ddd] = res
-            elif f5 in (0x08, 0x0A, 0x0E):              # indexed loads
+            elif f5 == 0x08:                            # LDWX rd, [ra+rb]
                 addr = (self.r[aaa] + self.r[bbb]) & 0xFFFF
-                if f5 == 0x08:
-                    self.r[ddd] = self.ldw(addr)
-                elif f5 == 0x0A:
-                    self.r[ddd] = self.ldb(addr, False)
+                self.r[ddd] = self.ldw(addr)
+            elif f5 == 0x0A:                            # LDB / LDPH rd, [ra]
+                if bbb == 0:
+                    self.r[ddd] = self.ldb(self.r[aaa], False)
+                elif bbb == 3:
+                    if self.nano:
+                        raise Undefined("LDPH in nano")
+                    self.r[ddd] = self.mem[self.r[aaa] & 0x7FFF]
                 else:
-                    self.r[ddd] = self.ldb(addr, True)
+                    raise Undefined("direct load sub-op reserved")
+            elif f5 == 0x0E:                            # LDBS rd, [ra]
+                if bbb != 0:
+                    raise Undefined("direct byte-load sub-op reserved")
+                self.r[ddd] = self.ldb(self.r[aaa], True)
             elif f5 in (0x0C, 0x0D):                    # SRLI / SRAI
                 n = 1 if self.nano else ((bbb + 1) if self.shifts else 1)
                 v = self.r[aaa]

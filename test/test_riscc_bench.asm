@@ -69,7 +69,8 @@ start:
     LDI   r3, 24            ; count
     LDI   r4, 0             ; index
 mc_loop:
-    LDB   r5, [r1+r4]
+    ADD   r7, r1, r4
+    LDB   r5, [r7]
     STB   r5, [r2]
     ADDI  r2, 1
     ADDI  r4, 1
@@ -78,12 +79,14 @@ mc_loop:
     ; spot-check dst_buf[7] == 'R' (0x52) and dst_buf[15] == '!'
     LDI16 r2, dst_buf
     LDI   r4, 7
-    LDB   r5, [r2+r4]
+    ADD   r7, r2, r4
+    LDB   r5, [r7]
     LDI   r6, 0x52
     SUB   r0, r5, r6
     BNEZ  f1
     LDI   r4, 15
-    LDB   r5, [r2+r4]
+    ADD   r7, r2, r4
+    LDB   r5, [r7]
     LDI   r6, 0x21
     SUB   r0, r5, r6
     BEQZ  k2
@@ -97,7 +100,8 @@ k2:
     LDI16 r1, src_str
     LDI   r2, 0             ; length
 sl_loop:
-    LDB   r5, [r1+r2]
+    ADD   r7, r1, r2
+    LDB   r5, [r7]
     MOV   r0, r5
     BEQZ  sl_done
     ADDI  r2, 1
@@ -117,8 +121,10 @@ k3:
     LDI16 r2, cmp_b
     LDI   r3, 0             ; index
 sc_loop:
-    LDB   r4, [r1+r3]
-    LDB   r5, [r2+r3]
+    ADD   r6, r1, r3
+    LDB   r4, [r6]
+    ADD   r6, r2, r3
+    LDB   r5, [r6]
     SUB   r0, r4, r5
     BNEZ  sc_diff
     MOV   r0, r4
@@ -146,7 +152,8 @@ k4:
     LDI   r2, 0             ; crc
     LDI   r3, 0             ; byte index
 c_byte:
-    LDB   r4, [r1+r3]
+    ADD   r7, r1, r3
+    LDB   r4, [r7]
     XOR   r2, r2, r4
     LDI   r5, 8             ; bit count
 c_bit:

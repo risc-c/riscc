@@ -27,6 +27,12 @@ check-llvm-mc-encodings` cross-checks LLVM MC encodings against
 `LI rd, imm16` and `LDI16 rd, imm16` are assembler pseudos for
 `LUI rd, hi8(imm16)` followed by `ORI rd, lo8(imm16)`.
 
+Compact byte-memory operations are direct: `LDB rd, [ra]`, `LDBS rd, [ra]`,
+and `STB rs, [ra]` use only the bracketed register. `LDPH rd, [ra]` loads one
+16-bit halfword from the halfword-addressed program space and zero-extends it;
+`LDP` is its native-width alias in RC16. `LDPH`/`LDP` is available in all
+mainline profiles and is omitted by Nano.
+
 The normal interactive ISS is `tools/riscc_sim.cpp`, built as
 `build/tools/riscc_sim`. It executes the architectural ISA and provides the
 same testbench MMIO page used by the RTL tests, including the result register,
@@ -46,9 +52,10 @@ build/tools/riscc_sim program.bin --faster
 
 `--min` and `--full` are mutually exclusive; no profile option selects `sys`.
 `--nano` is separate and cannot be combined with either mainline option.
-`--width 1|2|4|8|16` selects the Tiny cycle model, not a different ISA. For an
-approximate Fast timing model use `--fast` or `--fast-dsp`; these are useful
-for interactive estimates but are not RTL timing results. `--faster` selects
+`--width 1|2|4|8|16` selects the Tiny instruction-cycle model, not a different
+ISA. It reproduces the common benchmark schedules but is not a cycle-accurate
+pipeline/state-machine simulator for every profile-specific sequence. For an
+approximate Fast timing model use `--fast` or `--fast-dsp`; `--faster` selects
 the lightweight Faster DSP timing estimate. RTL simulation remains the
 reference for exact timing.
 
@@ -561,8 +568,10 @@ llvm-objcopy -O binary --only-section='.rodata*' --only-section='.data*' \
 
 `.bss` and `.tbss` are absent from images. A split-memory platform must preload
 the data image or provide an equivalent data-initialization transport; the
-generic startup never reads instruction memory as data. Current board targets
-use the unified layout.
+generic startup never reads instruction memory as data. Platform-specific
+code may use `LDPH` to read constants from program space, but automatic
+compiler constant-pool placement is not yet defined. Current board targets use
+the unified layout.
 
 ### 3.7 TLS runtime use
 

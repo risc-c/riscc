@@ -51,6 +51,7 @@ struct CycleTable
     uint64_t ldw_imm;
     uint64_t stw_imm;
     uint64_t index_load;
+    uint64_t direct_load;
     uint64_t direct_store;
     uint64_t ret;
     uint64_t reg_jump;
@@ -80,7 +81,8 @@ constexpr CycleTable TINY16_CYCLES =
     4,  // FSR1 follows the normal two-source execute path
     6,  // LDW rd, [ra+simm8]
     5,  // STW rd, [ra+simm8]
-    7,  // LDWX/LDB/LDBS
+    7,  // LDWX/LDPH
+    6,  // direct-register LDB/LDBS
     5,  // direct-register STB
     4,  // RET/RETI
     5,  // register jump/call
@@ -104,7 +106,8 @@ CycleTable cycle_table_for_fast(bool dsp)
         1,              // FSR1
         2,              // one load-response stall; younger fetch is retained
         2,              // immediate store consumes one fetch slot
-        2,              // one load-response stall; younger fetch is retained
+        2,              // indexed/program load response
+        2,              // direct byte-load response
         2,              // register-indirect store consumes one fetch slot
         3,              // return redirect/refill
         3,              // register jump/call redirect/refill
@@ -150,6 +153,7 @@ CycleTable cycle_table_for_tiny_width(int width)
     t.ldw_imm = 4 + 3 * pass;
     t.stw_imm = 3 + 3 * pass;
     t.index_load = 4 + 4 * pass;
+    t.direct_load = t.index_load - pass;
     t.direct_store = 3 + 3 * pass;
     t.ret = 3 + 2 * pass;
     t.reg_jump = 3 + 2 * pass;
@@ -335,11 +339,16 @@ struct Sim
             opts.faster ? cycle_table_for_faster() :
             cycle_table_for_tiny_width(opts.width))
     {
-        // Sys /16 deliberately stages STB for one extra cycle; min/full
-        // issue its address directly. Other width/profile timings are shared.
-        if (!opts.fast && !opts.faster && !opts.nano && opts.width == 16 &&
-            !opts.min && !opts.full)
-            cycle.direct_store = 6;
+        // Some direct-store schedules trade one extra serial pass for less
+        // logic. Tiny16 Sys similarly stages STB for one extra cycle.
+        if (!opts.fast && !opts.faster && !opts.nano)
+        {
+            if ((!opts.min && !opts.full && opts.width == 1) ||
+                (opts.full && (opts.width == 4 || opts.width == 8)))
+                cycle.direct_store += static_cast<uint64_t>(16 / opts.width);
+            else if (!opts.min && !opts.full && opts.width == 16)
+                cycle.direct_store = 6;
+        }
         double timer_mhz = opts.mhz > 0.0 ? opts.mhz : DEFAULT_TIMER_MHZ;
         timer_cycles_per_tick = static_cast<uint64_t>(
             std::llround(timer_mhz * static_cast<double>(TIMER_TICK_HZ)));
@@ -721,24 +730,37 @@ struct Sim
                         (func == 2 || func == 3) ? cycle.slt :
                         cycle.reg_alu;
             }
-            else if (func == 0x08 || func == 0x0a || func == 0x0e)
+            else if (func == 0x08)
             {
                 uint16_t addr = static_cast<uint16_t>(r[ra] + r[rb]);
-                if (func == 0x08)
+                r[rd] = load_word(addr);
+                instr_cycles = cycle.index_load;
+            }
+            else if (func == 0x0a)
+            {
+                if (rb == 0)
                 {
-                    r[rd] = load_word(addr);
-                    instr_cycles = cycle.index_load;
+                    r[rd] = load_byte(r[ra], false);
+                    instr_cycles = cycle.direct_load;
                 }
-                else if (func == 0x0a)
+                else if (rb == 3)
                 {
-                    r[rd] = load_byte(addr, false);
+                    if (opts.nano)
+                        throw std::runtime_error("LDPH in nano");
+                    r[rd] = mem[r[ra] & 0x7fff];
                     instr_cycles = cycle.index_load;
                 }
                 else
                 {
-                    r[rd] = load_byte(addr, true);
-                    instr_cycles = cycle.index_load;
+                    throw std::runtime_error("direct load sub-op reserved");
                 }
+            }
+            else if (func == 0x0e)
+            {
+                if (rb != 0)
+                    throw std::runtime_error("direct byte-load sub-op reserved");
+                r[rd] = load_byte(r[ra], true);
+                instr_cycles = cycle.direct_load;
             }
             else if (func == 0x0c || func == 0x0d)
             {
@@ -750,7 +772,7 @@ struct Sim
                     v = static_cast<uint16_t>((v >> 1) | fill);
                 }
                 r[rd] = v;
-                instr_cycles = (opts.has_shifts() && !opts.nano) ?
+                instr_cycles = (opts.has_shifts() && !opts.nano && n != 1) ?
                     cycle.variable_shift(n) : cycle.count1_shift;
             }
             else if (func == 0x0f)

@@ -94,10 +94,9 @@ module riscc_nano1 #(
     // Nano keeps only the right-shift arm. Full-only 01_110/111 may alias it.
     wire right_shift_op = register_group & memory_shift_function_group & f5[2];
     wire arithmetic_shift = f5[0];
-    // Keep the serial memory plane deliberately loose.  In the architectural
-    // map it contains LDWX (8), LDB (A), and STB (B); 9 is reserved. Letting
-    // the reserved code alias the existing stream is substantially cheaper
-    // than separating the direct store from the old indexed-memory schedule.
+    // Keep the serial memory plane deliberately loose. LDWX uses 01_000;
+    // direct loads use 01_010 and stores use 01_011. Reserved width, signed,
+    // and program-memory encodings may alias these paths in Nano.
     wire register_memory_op = register_memory_shift_group & ~right_shift_op;
     // JALR rd, ra lives in the register-indirect group (11_111, bbb=001);
     // nano has no S-bank, so ddd names a general register and rd == r0
@@ -109,6 +108,8 @@ module riscc_nano1 #(
     // Memory decode and serial read stream
     // ------------------------------------------------------------------
     wire mem_op = imm_mem_group | register_memory_op;
+    // f5[0] retains the existing direct load/store distinction. Nano does
+    // not inspect the direct-family bbb sub-operation.
     wire mem_store_decode = imm_mem_group ? instr_q[14] : f5[0];
     wire store_op = mem_op & mem_store_decode;
     wire load_op = mem_op & ~mem_store_decode;
@@ -139,7 +140,10 @@ module riscc_nano1 #(
     // The synchronous RF is addressed one cycle ahead.  Flipping address bit
     // 3 rotates a high-lane byte by eight bits; extra rotation in unrelated
     // register slots is unobserved.
-    wire loose_byte_decode = register_group & f5[1];
+    // In PREP/MEM_XFER, instr_q[15] distinguishes register-memory operations
+    // from compact immediate memory operations. The SLTU alias is harmless
+    // because it never observes the address or byte-lane controls.
+    wire loose_byte_decode = instr_q[15] & f5[1];
     wire rf_byte_rotate =
         (in_mem_xfer & loose_byte_decode & addr_q[0]) |
         (in_prep & last_bit & loose_byte_decode & addr_q[1]);
@@ -243,10 +247,7 @@ module riscc_nano1 #(
             pc_q <= {next_pc_bit, pc_q[15:1]};
             addr_q <= {first_bit ? 1'b0 : pc_q[15], addr_q[15:1]};
         end else if (in_prep) begin
-            // STB rs,[ra] has no physical index register. Copy the streamed
-            // base into the address register instead of inserting a zero
-            // mux in every bit of the shared serial adder.
-            addr_q <= {(register_memory_op & f5[0]) ? rf_read_bit : sum_bit,
+            addr_q <= {loose_byte_decode ? rf_read_bit : sum_bit,
                        addr_q[15:1]};
         end
 

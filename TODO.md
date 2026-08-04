@@ -13,9 +13,7 @@ Tasks marked *HIGH* are the near-term priorities.
   boundary tests. Remove accidental 15-bit code-address assumptions.
   Parameterize RTL physical address widths so small implementations may expose
   less memory, and add at least one full-range reference configuration.
-- [ ] *HIGH* Prototype optional `LDP rd, [ra]` in the assembler, ISS, compiler, and
-  representative RTL cores. Measure area, Fmax, cycles, and code size before
-  assigning it to an RC16 profile.
+
 - [ ] Evaluate `STP` only if a measured use case justifies its hardware and
   program-memory synchronization requirements.
 - [ ] Prototype a Nano configuration where the GPR bank and data memory share
@@ -72,7 +70,10 @@ Tasks marked *HIGH* are the near-term priorities.
 ## Compiler and release
 
 - [ ] Use measured workloads to improve RC16 code generation, initially focusing
-  on wide integers and switch lowering after `LDP` is evaluated.
+  on wide integers and switch lowering.
+- [ ] Define compiler and linker handling for program-memory constants and
+  address spaces, then measure profitable `LDPH` use for constant pools and
+  read-only tables on split-memory targets.
 - [ ] Define and test the supported freestanding C++ subset, including trivial
   classes, aggregates, cross-TU calls, and the startup-constructor policy. Keep
   exceptions, RTTI, and a full C++ runtime out of scope until required.
