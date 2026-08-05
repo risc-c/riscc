@@ -42,10 +42,10 @@
         .hidden __divsf3
         .type __divsf3,@function
 __divsf3:
-        STW     r5, [r7 - 10]
-        STW     r6, [r7 - 8]
+        ST     r5, [r7 - 10]
+        ST     r6, [r7 - 8]
         XOR     r0, r2, r4
-        STW     r0, [r7 - 6]
+        ST     r0, [r7 - 6]
 
         LI      r5, 0x7f80
         AND     r6, r2, r5
@@ -58,7 +58,7 @@ __divsf3:
         JMP8    .Learly_sign
 
 .Lnumerator_normal:
-        STW     r6, [r7 - 4]
+        ST     r6, [r7 - 4]
         AND     r0, r4, r5
         BNEZ    .Lboth_normal
 
@@ -66,22 +66,22 @@ __divsf3:
         LDI     r1, 0
         LI      r2, 0x7f80
 .Learly_sign:
-        LDW     r0, [r7 - 6]
+        LD     r0, [r7 - 6]
         BGEZ    .Learly_return
         LUI     r0, 0x80
         OR      r2, r2, r0
 .Learly_return:
-        LDW     r6, [r7 - 8]
-        LDW     r5, [r7 - 10]
+        LD     r6, [r7 - 8]
+        LD     r5, [r7 - 10]
         RET     r6
 
 .Lboth_normal:
         /* Biased result exponent: a_exp - b_exp + 127. */
-        LDW     r6, [r7 - 4]
+        LD     r6, [r7 - 4]
         SUB     r6, r6, r0
         LI      r5, 0x3f80
         ADD     r6, r6, r5
-        STW     r6, [r7 - 4]
+        ST     r6, [r7 - 4]
 
         /* Restore implicit leading ones and retain the divisor in r6:r5. */
         ANDI    r2, 0x7f
@@ -101,9 +101,9 @@ __divsf3:
 .Lnumerator_smaller:
         NANO_FSL1 r2, r2, r1
         ADD     r1, r1, r1
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         ADDI    r0, -128
-        STW     r0, [r7 - 4]
+        ST     r0, [r7 - 4]
 
 .Lnumerator_ready:
         /* remainder = normalized numerator - divisor */
@@ -114,15 +114,15 @@ __divsf3:
         LDI     r1, 1
         LDI     r2, 0
         LDI     r0, 13
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
 
 .Ldivide:
         .rept 2
         NANO_DIV_ROUND
         .endr
-        LDW     r0, [r7 - 2]
+        LD     r0, [r7 - 2]
         ADDI    r0, -1
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
         BNEZ    .Ldivide
 
         /* Any nonzero remainder is the sticky bit. */
@@ -158,10 +158,10 @@ __divsf3:
         BEQZ    .Lpack
         LDI     r1, 0
         LUI     r2, 4
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         LDI     r0, 0x80
         ADD     r5, r5, r0
-        STW     r5, [r7 - 4]
+        ST     r5, [r7 - 4]
 
 .Lpack:
         LUI     r6, 0x80
@@ -178,14 +178,14 @@ __divsf3:
         MOV     r0, r5
         BNEZ    .Lpack_shift
         ANDI    r2, 0x7f
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         OR      r2, r2, r5
-        LDW     r5, [r7 - 6]
+        LD     r5, [r7 - 6]
         LUI     r0, 0x80
         AND     r5, r5, r0
         OR      r2, r2, r5
 
-        LDW     r6, [r7 - 8]
-        LDW     r5, [r7 - 10]
+        LD     r6, [r7 - 8]
+        LD     r5, [r7 - 10]
         RET     r6
         .size __divsf3, . - __divsf3

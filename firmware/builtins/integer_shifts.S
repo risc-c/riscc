@@ -33,7 +33,7 @@
         ADD     r2, r2, r2
         OR      r2, r2, r0
 #else
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
 #endif
         ADDI    r3, -1
@@ -59,7 +59,7 @@
 .Llshrsi_no_carry:
         SRLI    r2, r2, 1
 #else
-        FSR1    r1, r1, r2
+        FSR1    r1, r2
         SRLI    r2, r2, 1
 #endif
         ADDI    r3, -1
@@ -85,7 +85,7 @@
 .Lashrsi_no_carry:
         SRAI    r2, r2, 1
 #else
-        FSR1    r1, r1, r2
+        FSR1    r1, r2
         SRAI    r2, r2, 1
 #endif
         ADDI    r3, -1
@@ -97,12 +97,12 @@
 
         FUNCTION __ashldi3
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        LDW     r0, [r7 + 0]
-        STW     r0, [r7 - 4]
+        ST     r5, [r7 - 2]
+        LD     r0, [r7 + 0]
+        ST     r0, [r7 - 4]
 #else
         MTS     s3, r5
-        LDW     r5, [r7 + 0]
+        LD     r5, [r7 + 0]
         MOV     r0, r5
 #endif
         BEQZ    .Lshldi_done
@@ -125,13 +125,13 @@
         ADD     r2, r2, r2
         OR      r2, r2, r0
         ADD     r1, r1, r1
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         ADDI    r0, -1
-        STW     r0, [r7 - 4]
+        ST     r0, [r7 - 4]
 #else
-        FSL1    r4, r4, r3
-        FSL1    r3, r3, r2
-        FSL1    r2, r2, r1
+        FSL1    r4, r3
+        FSL1    r3, r2
+        FSL1    r2, r1
         ADD     r1, r1, r1
         ADDI    r5, -1
         MOV     r0, r5
@@ -139,7 +139,7 @@
         BNEZ    .Lshldi_loop
 .Lshldi_done:
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #else
         MFS     r5, s3
 #endif
@@ -148,13 +148,13 @@
 
         FUNCTION __lshrdi3
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        LDW     r0, [r7 + 0]
-        STW     r0, [r7 - 4]
+        ST     r5, [r7 - 2]
+        LD     r0, [r7 + 0]
+        ST     r0, [r7 - 4]
         LUI     r5, 128
 #else
         MTS     s3, r5
-        LDW     r5, [r7 + 0]
+        LD     r5, [r7 + 0]
         MOV     r0, r5
 #endif
         BEQZ    .Llshrdi_done
@@ -179,13 +179,13 @@
         OR      r3, r3, r5
 .Llshrdi_carry3_done:
         SRLI    r4, r4, 1
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         ADDI    r0, -1
-        STW     r0, [r7 - 4]
+        ST     r0, [r7 - 4]
 #else
-        FSR1    r1, r1, r2
-        FSR1    r2, r2, r3
-        FSR1    r3, r3, r4
+        FSR1    r1, r2
+        FSR1    r2, r3
+        FSR1    r3, r4
         SRLI    r4, r4, 1
         ADDI    r5, -1
         MOV     r0, r5
@@ -193,7 +193,7 @@
         BNEZ    .Llshrdi_loop
 .Llshrdi_done:
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #else
         MFS     r5, s3
 #endif
@@ -202,13 +202,13 @@
 
         FUNCTION __ashrdi3
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        LDW     r0, [r7 + 0]
-        STW     r0, [r7 - 4]
+        ST     r5, [r7 - 2]
+        LD     r0, [r7 + 0]
+        ST     r0, [r7 - 4]
         LUI     r5, 128
 #else
         MTS     s3, r5
-        LDW     r5, [r7 + 0]
+        LD     r5, [r7 + 0]
         MOV     r0, r5
 #endif
         BEQZ    .Lashrdi_done
@@ -233,13 +233,13 @@
         OR      r3, r3, r5
 .Lashrdi_carry3_done:
         SRAI    r4, r4, 1
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         ADDI    r0, -1
-        STW     r0, [r7 - 4]
+        ST     r0, [r7 - 4]
 #else
-        FSR1    r1, r1, r2
-        FSR1    r2, r2, r3
-        FSR1    r3, r3, r4
+        FSR1    r1, r2
+        FSR1    r2, r3
+        FSR1    r3, r4
         SRAI    r4, r4, 1
         ADDI    r5, -1
         MOV     r0, r5
@@ -247,7 +247,7 @@
         BNEZ    .Lashrdi_loop
 .Lashrdi_done:
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #else
         MFS     r5, s3
 #endif

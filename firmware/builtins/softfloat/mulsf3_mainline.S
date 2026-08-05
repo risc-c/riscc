@@ -39,8 +39,8 @@
         SLTU    r0, r3, r5
 
 .Lmul_shift\@:
-        FSR1    r1, r1, r2
-        FSR1    r2, r2, r3
+        FSR1    r1, r2
+        FSR1    r2, r3
         SRLI    r3, r3, 1
         BEQZ    .Lmul_shift_done\@
         OR      r3, r3, r6
@@ -58,12 +58,12 @@ __mulsf3:
          * that leaf without moving r7, so its private scratch must not
          * overlap this routine's live words.
          */
-        STW     r5, [r7 - 14]
-        STW     r6, [r7 - 12]
+        ST     r5, [r7 - 14]
+        ST     r6, [r7 - 12]
         XOR     r0, r2, r4
         LUI     r5, 0x80
         AND     r0, r0, r5
-        STW     r0, [r7 - 10]          /* result sign */
+        ST     r0, [r7 - 10]          /* result sign */
 
         /* Extract both exponent fields. */
         MOV     r5, r2
@@ -126,12 +126,12 @@ __mulsf3:
 .Linfinity:
         LDI     r1, 0
         LI      r2, 0x7f80
-        LDW     r0, [r7 - 10]
+        LD     r0, [r7 - 10]
         OR      r2, r2, r0
 
 .Lspecial_return:
-        LDW     r6, [r7 - 12]
-        LDW     r5, [r7 - 14]
+        LD     r6, [r7 - 12]
+        LD     r5, [r7 - 14]
         RETS
 
 .Lfinite:
@@ -167,7 +167,7 @@ __mulsf3:
         MOV     r0, r2
         ANDI    r0, 0x80
         BNEZ    .Lnormalize_right
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
         ADDI    r5, -1
         JMP8    .Lnormalize_left
@@ -176,22 +176,22 @@ __mulsf3:
         MOV     r0, r4
         ANDI    r0, 0x80
         BNEZ    .Lnormalized
-        FSL1    r4, r4, r3
+        FSL1    r4, r3
         ADD     r3, r3, r3
         ADDI    r5, -1
         JMP8    .Lnormalize_right
 
 .Lnormalized:
-        STW     r5, [r7 - 8]           /* signed biased result exponent */
+        ST     r5, [r7 - 8]           /* signed biased result exponent */
 #ifdef __RISCC_FULL__
         /*
          * The helper returns the exact 48-bit product in r3:r2:r1. Preserve
          * the public link because this is the only non-tail call.
          */
         MFS     r0, s7
-        STW     r0, [r7 - 6]
+        ST     r0, [r7 - 6]
         JAL16   s7, __riscc_umul24x24
-        LDW     r0, [r7 - 6]
+        LD     r0, [r7 - 6]
         MTS     s7, r0
 #else
         MOV     r6, r4                 /* preserve multiplier high */
@@ -199,7 +199,7 @@ __mulsf3:
         /* Align multiplicand at bits 24..47. */
 #ifdef __RISCC_MIN__
         .rept 8
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
         .endr
 #else
@@ -217,14 +217,14 @@ __mulsf3:
         LDI     r3, 0
         LUI     r6, 0x80
         LDI     r0, 12
-        STW     r0, [r7 - 6]
+        ST     r0, [r7 - 6]
 .Lmultiply:
         .rept 2
         MUL_ROUND
         .endr
-        LDW     r0, [r7 - 6]
+        LD     r0, [r7 - 6]
         ADDI    r0, -1
-        STW     r0, [r7 - 6]
+        ST     r0, [r7 - 6]
         BNEZ    .Lmultiply
 #endif
 
@@ -242,13 +242,13 @@ __mulsf3:
 .Lproduct_bit47:
         ANDI    r4, 0x1f
         LDI     r6, 5
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         ADDI    r0, 1
-        STW     r0, [r7 - 8]
+        ST     r0, [r7 - 8]
 .Lproduct_shift:
         OR      r4, r4, r5
 .Lproduct_shift_loop:
-        FSR1    r2, r2, r3
+        FSR1    r2, r3
         SRLI    r3, r3, 1
         ADDI    r6, -1
         MOV     r0, r6
@@ -259,17 +259,17 @@ __mulsf3:
 .Lproduct_exact:
         MOV     r1, r2
         MOV     r2, r3
-        LDW     r3, [r7 - 10]
-        LDW     r4, [r7 - 8]
-        LDW     r6, [r7 - 12]
-        LDW     r5, [r7 - 14]
+        LD     r3, [r7 - 10]
+        LD     r4, [r7 - 8]
+        LD     r6, [r7 - 12]
+        LD     r5, [r7 - 14]
         TAIL_PACK                      /* tail call */
 
 .Lzero:
         LDI     r1, 0
-        LDW     r2, [r7 - 10]
+        LD     r2, [r7 - 10]
 .Lreturn:
-        LDW     r6, [r7 - 12]
-        LDW     r5, [r7 - 14]
+        LD     r6, [r7 - 12]
+        LD     r5, [r7 - 14]
         RETS
         .size __mulsf3, . - __mulsf3

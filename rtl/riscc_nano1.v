@@ -94,7 +94,7 @@ module riscc_nano1 #(
     // Nano keeps only the right-shift arm. Full-only 01_110/111 may alias it.
     wire right_shift_op = register_group & memory_shift_function_group & f5[2];
     wire arithmetic_shift = f5[0];
-    // Keep the serial memory plane deliberately loose. LDWX uses 01_000;
+    // Keep the serial memory plane deliberately loose. LDX uses 01_000;
     // direct loads use 01_010 and stores use 01_011. Reserved width, signed,
     // and program-memory encodings may alias these paths in Nano.
     wire register_memory_op = register_memory_shift_group & ~right_shift_op;

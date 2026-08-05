@@ -121,10 +121,12 @@ module riscc_tiny16_min #(
     wire right_shift_slot =
         register_memory_group &&
         register_opcode[2] && !register_opcode[1];
+    // FSL1/FSR1 share the 10_001 two-operand group. The low ooo bit selects
+    // direction; the other reserved suboperations may alias either path.
     wire funnel_op =
         register_class && register_group[1] && !register_group[0];
-    wire funnel_right_op = funnel_op && !register_opcode[0];
-    wire funnel_left_op = funnel_op && register_opcode[0];
+    wire funnel_right_op = funnel_op && rb[0];
+    wire funnel_left_op = funnel_op && !rb[0];
     wire single_step_shift_op = right_shift_slot | funnel_right_op;
 
     wire system_group = register_class && (&register_group);
@@ -154,14 +156,14 @@ module riscc_tiny16_min #(
     wire executes_directly =
         immediate_load_group | immediate_alu_op | direct_address_op |
         right_shift_slot | mfs_op | mts_op;
-    // Only genuine two-source operations read rb. Program loads stage and
-    // reissue their sole ra source through the existing operand-load state.
+    // Genuine two-source operations stage rb. Program loads and funnels use
+    // the same operand-load state to stage ra; funnels then reissue old rd.
     wire indexed_load_op =
         register_memory_decode && !register_opcode[1];
     wire ordinary_rb_operand = register_alu_group | indexed_load_op;
     wire staged_alu_operand = ordinary_rb_operand | program_load_op;
-    wire needs_rb_operand = ordinary_rb_operand | funnel_op;
-    wire needs_operand = needs_rb_operand | program_load_op;
+    wire needs_operand =
+        ordinary_rb_operand | program_load_op | funnel_op;
 
     // ------------------------------------------------------------------
     // Sequencer and synchronous RF schedule
@@ -186,8 +188,17 @@ module riscc_tiny16_min #(
     // LUI, and branches ignore RF data, so one broad immediate selector is
     // smaller than separately decoding only the immediate ALU operations.
     wire select_read_rd =
-        immediate_class | (in_execute && store_op);
-    wire select_read_rb = start_operand_load && !program_load_op;
+        immediate_class | in_execute |
+        (in_operand_load && register_group[1]);
+`ifdef RISCC_ECP5
+    wire select_read_rb =
+        start_operand_load && !program_load_op && !funnel_op;
+`else
+    // Group 10 always reads ra in the compact baseline. Using the group bit
+    // directly leaves the iCE40 RF-address path shallower at identical area.
+    wire select_read_rb =
+        start_operand_load && !program_load_op && !register_group[1];
+`endif
     wire [2:0] rf_read_register =
         select_read_rd ? rd : select_read_rb ? rb : ra;
     wire rf_read_system_bank =
@@ -238,7 +249,7 @@ module riscc_tiny16_min #(
         (in_execute &&
          (immediate_load_group | immediate_logic |
           register_logic_op | single_step_shift_op)) |
-        (in_mdr_writeback && !funnel_left_op) |
+        (in_mdr_writeback && !funnel_op) |
         in_compare_writeback;
     wire [15:0] alu_a =
         alu_a_is_pc ? {1'b0, pc_q} :
@@ -277,9 +288,17 @@ module riscc_tiny16_min #(
                                  (rf_read_data & logic_rhs)) :
             (rf_read_data ^ logic_rhs);
 
+`ifdef RISCC_INFERRED_SYNC_RF
+    // Active one-bit shifts use only groups 01 and 10. Selecting group 01
+    // directly gives the inferred-MLAB build a smaller, faster endpoint mux.
     wire single_step_shift_input =
-        funnel_right_op ? mdr_q[0] :
+        register_group[0] ?
+        (register_opcode[0] && rf_read_data[15]) : mdr_q[0];
+`else
+    wire single_step_shift_input =
+        register_group[1] ? mdr_q[0] :
         (register_opcode[0] && rf_read_data[15]);
+`endif
     wire [15:0] single_step_shift_result =
         {single_step_shift_input, rf_read_data[15:1]};
     wire [15:0] alu_b =
@@ -301,8 +320,8 @@ module riscc_tiny16_min #(
     wire [15:0] adjusted_alu_b =
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
-    // FSL1's first pass stores ra + rb[15] in MDR. Writeback adds ra once
-    // more, producing (ra << 1) | rb[15] without a carry register.
+    // FSL1's Execute pass stores old rd + ra[15] in MDR. Writeback adds old
+    // rd once more, producing (old rd << 1) | ra[15] without a carry register.
     wire alu_carry_in =
         in_instruction_capture | subtract_enable |
         (funnel_left_execute && mdr_q[15]);

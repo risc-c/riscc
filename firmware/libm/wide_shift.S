@@ -1,9 +1,9 @@
 /*
  * In-place arbitrary-precision shifts used by sqrt and fmod.
  *
- * Mainline feeds each unmodified adjacent limb directly to FSL1/FSR1.  Nano
- * lacks funnels, so it conditionally inserts the carry bit while retaining
- * the same single-pass, in-place traversal.
+ * Mainline copies each current limb to the result register, then feeds the
+ * unmodified adjacent limb to compact FSL1/FSR1.  Nano lacks funnels, so it
+ * conditionally inserts the carry bit with the same in-place traversal.
  */
 
 #ifdef __RISCC_NANO__
@@ -26,7 +26,7 @@
         MOV     r0, r2
         BEQZ    .Lmath_shl1_done
 .Lmath_shl1_loop:
-        LDW     r4, [r1 + 0]
+        LD     r4, [r1 + 0]
 #ifdef __RISCC_NANO__
         MOV     r0, r3
         BLTZ    .Lmath_shl1_carry
@@ -37,9 +37,10 @@
         ORI     r0, 1
 .Lmath_shl1_store:
 #else
-        FSL1    r0, r4, r3
+        MOV     r0, r4
+        FSL1    r0, r3
 #endif
-        STW     r0, [r1 + 0]
+        ST     r0, [r1 + 0]
         MOV     r3, r4
         ADDI    r1, 2
         ADDI    r2, -1
@@ -51,13 +52,13 @@
 
         FUNCTION __riscc_math_shift_left_two
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
+        ST     r5, [r7 - 2]
 #endif
         LDI     r3, 0                   /* previous unmodified lower limb */
         MOV     r0, r2
         BEQZ    .Lmath_shl2_done
 .Lmath_shl2_loop:
-        LDW     r4, [r1 + 0]
+        LD     r4, [r1 + 0]
 #ifdef __RISCC_NANO__
         ADD     r5, r4, r4
         ADD     r5, r5, r5
@@ -70,12 +71,13 @@
         BGEZ    .Lmath_shl2_bit14_done
         ORI     r5, 1
 .Lmath_shl2_bit14_done:
-        STW     r5, [r1 + 0]
+        ST     r5, [r1 + 0]
 #else
-        FSL1    r0, r4, r3
+        MOV     r0, r4
+        FSL1    r0, r3
         ADD     r3, r3, r3
-        FSL1    r0, r0, r3
-        STW     r0, [r1 + 0]
+        FSL1    r0, r3
+        ST     r0, [r1 + 0]
 #endif
         MOV     r3, r4
         ADDI    r1, 2
@@ -84,14 +86,14 @@
         BNEZ    .Lmath_shl2_loop
 .Lmath_shl2_done:
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #endif
         MATH_RETURN
         .size __riscc_math_shift_left_two, . - __riscc_math_shift_left_two
 
         FUNCTION __riscc_math_shift_right_one
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
+        ST     r5, [r7 - 2]
         LUI     r5, 128
 #endif
         MOV     r0, r2
@@ -101,7 +103,7 @@
         LDI     r3, 0                   /* previous unmodified upper limb */
 .Lmath_shr1_loop:
         ADDI    r1, -2
-        LDW     r4, [r1 + 0]
+        LD     r4, [r1 + 0]
 #ifdef __RISCC_NANO__
         MOV     r0, r3
         ANDI    r0, 1
@@ -113,16 +115,17 @@
         SRLI    r0, r4, 1
 .Lmath_shr1_store:
 #else
-        FSR1    r0, r4, r3
+        MOV     r0, r4
+        FSR1    r0, r3
 #endif
-        STW     r0, [r1 + 0]
+        ST     r0, [r1 + 0]
         MOV     r3, r4
         ADDI    r2, -2
         MOV     r0, r2
         BNEZ    .Lmath_shr1_loop
 .Lmath_shr1_done:
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #endif
         MATH_RETURN
         .size __riscc_math_shift_right_one, . - __riscc_math_shift_right_one

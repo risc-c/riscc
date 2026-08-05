@@ -59,7 +59,7 @@ R_FUNC = {
     "MUL": 0x07,
     "DIVU": 0x10,
     "MULHU": 0x14,
-    "LDWX": 0x08,
+    "LDX": 0x08,
     "LDPH": 0x0A,
     "LDB": 0x0A,
     "STB": 0x0B,
@@ -67,17 +67,17 @@ R_FUNC = {
     "SRAI": 0x0D,
     "LDBS": 0x0E,
     "SLLI": 0x0F,
-    "FSL1": 0x13,
-    "FSR1": 0x12,
+    "FSL1": 0x11,
+    "FSR1": 0x11,
     "SYS": 0x1F,
 }
 
-# RET/RETI share bbb=000 and CLI/STI share bbb=110.  ccc occupies ddd and is
-# 000 for the IE-preserving/clearing form and 111 for the IE-setting form.
+# RET/RETI and CLI/STI share bbb=000.  ccc occupies ddd: bit 1 selects
+# return versus direct IE control, while bits 2 and 0 duplicate the IE value.
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
-SYS_SUB = {"RET": 0, "JALR": 1, "MFS": 2, "MTS": 3, "IE": 6}
-CONTROL_CCC = {"RET": 0, "RETI": 7, "CLI": 0, "STI": 7}
+SYS_SUB = {"CONTROL": 0, "JALR": 1, "MFS": 2, "MTS": 3}
+CONTROL_CCC = {"RET": 0, "RETI": 5, "CLI": 2, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
 
@@ -486,7 +486,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
                                          R_FUNC["SYS"], SYS_SUB["JALR"]))
             sa = sreg(operands[0])
         return encode_word(enc_r(CONTROL_CCC[sub], sa, R_FUNC["SYS"],
-                                 SYS_SUB["RET"]))
+                                 SYS_SUB["CONTROL"]))
 
     if op in ("LDI16", "LI"):
         n_ops(2, "LDI16 rd, imm16")
@@ -499,7 +499,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         n_ops(0, "NOP")
         return encode_word(enc_r(0, 0, R_FUNC["OR"], 0))
 
-    if op in ("LDW", "STW"):
+    if op in ("LD", "ST"):
         n_ops(2, f"{op} rd, [ra+simm8]")
         rd = reg(operands[0])
         mem = parse_mem(operands[1])
@@ -510,7 +510,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         if disp & 1:
             raise AsmError(f"{op} simm must be even")
         imm8 = enc_i8(disp, f"{op} simm8")
-        return encode_word(enc_mem_i(op == "STW", rd, ra, imm8))
+        return encode_word(enc_mem_i(op == "ST", rd, ra, imm8))
 
     if op in I_OP:
         n_ops(2, f"{op} rd, imm8")
@@ -539,9 +539,14 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         ra = reg(operands[1])
         return encode_word(enc_r(rd, ra, R_FUNC["ADD"], ra))
 
+    if op in ("FSL1", "FSR1"):
+        n_ops(2, f"{op} rd, ra")
+        return encode_word(enc_r(reg(operands[0]), reg(operands[1]),
+                                 R_FUNC[op], int(op == "FSR1")))
+
     if op in (
         "ADD", "SUB", "AND", "OR", "XOR", "SLT", "SLTU", "MUL",
-        "DIVU", "MULHU", "FSL1", "FSR1",
+        "DIVU", "MULHU",
     ):
         n_ops(3, f"{op} rd, ra, rb")
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]), R_FUNC[op], reg(operands[2])))
@@ -555,12 +560,12 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         return encode_word(enc_r(reg(operands[0]), reg(operands[1]),
                                  R_FUNC[op], amount - 1))
 
-    if op == "LDWX":
-        n_ops(2, "LDWX rd, [ra+rb]")
+    if op == "LDX":
+        n_ops(2, "LDX rd, [ra+rb]")
         rd = reg(operands[0])
         mem = parse_mem(operands[1])
         if len(mem) != 2:
-            raise AsmError("LDWX requires [ra+rb]")
+            raise AsmError("LDX requires [ra+rb]")
         return encode_word(enc_r(rd, reg(mem[0]), R_FUNC[op], reg(mem[1])))
 
     if op in ("LDPH", "LDP"):
@@ -605,7 +610,7 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
     if op in ("CLI", "STI"):
         n_ops(0, op)
         return encode_word(enc_r(CONTROL_CCC[op], 0, R_FUNC["SYS"],
-                                 SYS_SUB["IE"]))
+                                 SYS_SUB["CONTROL"]))
 
     if op == "MFS":
         n_ops(2, "MFS rd, Sn")

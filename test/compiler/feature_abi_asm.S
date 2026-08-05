@@ -13,8 +13,8 @@ feature_check_callee_saved:
         // Nano has only one callee-saved GPR (r5). Save our incoming r6
         // return address because the nested call is allowed to clobber it.
         ADDI    r7, -4
-        STW     r5, [r7+0]
-        STW     r6, [r7+2]
+        ST     r5, [r7+0]
+        ST     r6, [r7+2]
 
         LI      r5, 0x55aa
         LDI     r1, 7
@@ -31,8 +31,8 @@ feature_check_callee_saved:
         LDI     r1, 1
 
 .Lrestore_nano:
-        LDW     r5, [r7+0]
-        LDW     r2, [r7+2]
+        LD     r5, [r7+0]
+        LD     r2, [r7+2]
         ADDI    r7, 4
         JALR    r0, r2
 
@@ -41,10 +41,10 @@ feature_check_callee_saved:
         JALR    r0, r6
 #else
         ADDI    r7, -6
-        STW     r5, [r7+0]
-        STW     r6, [r7+2]
+        ST     r5, [r7+0]
+        ST     r6, [r7+2]
         MFS     r0, S7
-        STW     r0, [r7+4]
+        ST     r0, [r7+4]
 
         LI      r5, 0x55aa
         LI      r6, 0xaa55
@@ -72,9 +72,9 @@ feature_check_callee_saved:
         LDI     r1, 2
 
 .Lrestore:
-        LDW     r5, [r7+0]
-        LDW     r6, [r7+2]
-        LDW     r0, [r7+4]
+        LD     r5, [r7+0]
+        LD     r6, [r7+2]
+        LD     r0, [r7+4]
         MTS     S7, r0
         ADDI    r7, 6
         RETS

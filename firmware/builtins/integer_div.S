@@ -15,7 +15,7 @@
 
         .macro SAVE_R5
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
+        ST     r5, [r7 - 2]
 #else
         MTS     s3, r5
 #endif
@@ -23,7 +23,7 @@
 
         .macro RESTORE_R5
 #ifdef __RISCC_NANO__
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
 #else
         MFS     r5, s3
 #endif
@@ -74,7 +74,7 @@
         OR      r3, r3, r0
         ADD     r1, r1, r1
 #else
-        FSL1    r3, r3, r1
+        FSL1    r3, r1
         ADD     r1, r1, r1
 #endif
         /*
@@ -122,7 +122,7 @@
         OR      r3, r3, r0
         ADD     r1, r1, r1
 #else
-        FSL1    r3, r3, r1
+        FSL1    r3, r1
         ADD     r1, r1, r1
 #endif
         MOV     r0, r3
@@ -156,13 +156,13 @@
 .Ludivmodhi_mdu_store:
         MFS     r0, s4
         BEQZ    .Ludivmodhi_mdu_done
-        STW     r3, [r0 + 0]
+        ST     r3, [r0 + 0]
 .Ludivmodhi_mdu_done:
         DIV_RETURN
 #else
         SAVE_R5
 #ifdef __RISCC_NANO__
-        STW     r3, [r7 - 4]
+        ST     r3, [r7 - 4]
 #else
         MTS     s4, r3
 #endif
@@ -178,7 +178,7 @@
         OR      r3, r3, r0
         ADD     r1, r1, r1
 #else
-        FSL1    r3, r3, r1
+        FSL1    r3, r1
         ADD     r1, r1, r1
 #endif
         MOV     r0, r3
@@ -196,12 +196,12 @@
         MOV     r3, r1
 .Ludivmodhi_store:
 #ifdef __RISCC_NANO__
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
 #else
         MFS     r0, s4
 #endif
         BEQZ    .Ludivmodhi_no_store
-        STW     r3, [r0 + 0]
+        ST     r3, [r0 + 0]
 .Ludivmodhi_no_store:
         MOV     r1, r4
         RESTORE_R5
@@ -243,20 +243,20 @@ __umodsi3:
         .type __udivmodsi4,@function
 __udivmodsi4:
 #ifdef __RISCC_NANO__
-        LDW     r0, [r7 + 0]
-        STW     r0, [r7 - 6]            /* remainder pointer */
+        LD     r0, [r7 + 0]
+        ST     r0, [r7 - 6]            /* remainder pointer */
 #else
-        LDW     r0, [r7 + 0]
-        STW     r0, [r7 - 2]            /* remainder pointer */
+        LD     r0, [r7 + 0]
+        ST     r0, [r7 - 2]            /* remainder pointer */
 #endif
         LDI     r0, 2                   /* quotient and stored remainder */
 
 .Ludivsi_entry:
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        STW     r0, [r7 - 4]            /* result selection */
-        STW     r3, [r7 - 8]            /* divisor low */
-        STW     r4, [r7 - 10]           /* divisor high */
+        ST     r5, [r7 - 2]
+        ST     r0, [r7 - 4]            /* result selection */
+        ST     r3, [r7 - 8]            /* divisor low */
+        ST     r4, [r7 - 10]           /* divisor high */
 #else
         MTS     s3, r5
         MTS     s4, r6
@@ -320,7 +320,7 @@ __udivmodsi4:
         LDI     r3, 0                   /* remainder low */
         LDI     r4, 0                   /* remainder high */
         LDI     r0, 32
-        STW     r0, [r7 - 12]
+        ST     r0, [r7 - 12]
 #else
         LDI     r5, 0                   /* remainder low */
         LDI     r6, 0                   /* remainder high */
@@ -349,27 +349,27 @@ __udivmodsi4:
         OR      r2, r2, r0
 
         /* Compare remainder r4:r3 with the saved divisor. */
-        LDW     r0, [r7 - 10]
+        LD     r0, [r7 - 10]
         SLTU    r0, r4, r0
         BNEZ    .Ludivsi_keep
-        LDW     r0, [r7 - 10]
+        LD     r0, [r7 - 10]
         SUB     r0, r4, r0
         BNEZ    .Ludivsi_subtract
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         SLTU    r0, r3, r0
         BNEZ    .Ludivsi_keep
 
 .Ludivsi_subtract:
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         SLTU    r5, r3, r0
         SUB     r3, r3, r0
-        LDW     r0, [r7 - 10]
+        LD     r0, [r7 - 10]
         SUB     r4, r4, r0
         SUB     r4, r4, r5
 #else
-        FSL1    r6, r6, r5
-        FSL1    r5, r5, r2
-        FSL1    r2, r2, r1
+        FSL1    r6, r5
+        FSL1    r5, r2
+        FSL1    r2, r1
         ADD     r1, r1, r1
 
         SLTU    r0, r6, r4
@@ -389,9 +389,9 @@ __udivmodsi4:
 
 .Ludivsi_keep:
 #ifdef __RISCC_NANO__
-        LDW     r0, [r7 - 12]
+        LD     r0, [r7 - 12]
         ADDI    r0, -1
-        STW     r0, [r7 - 12]
+        ST     r0, [r7 - 12]
 #else
         MFS     r0, s6
         ADDI    r0, -1
@@ -401,30 +401,30 @@ __udivmodsi4:
 
 .Ludivsi_done:
 #ifdef __RISCC_NANO__
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         ADDI    r0, -1
         BEQZ    .Ludivsi_remainder
         BLTZ    .Ludivsi_return
-        LDW     r0, [r7 - 6]
+        LD     r0, [r7 - 6]
         BEQZ    .Ludivsi_return
-        STW     r3, [r0 + 0]
-        STW     r4, [r0 + 2]
+        ST     r3, [r0 + 0]
+        ST     r4, [r0 + 2]
         JMP8    .Ludivsi_return
 .Ludivsi_remainder:
         MOV     r1, r3
         MOV     r2, r4
 .Ludivsi_return:
-        LDW     r5, [r7 - 2]
+        LD     r5, [r7 - 2]
         RET     r6
 #else
         MFS     r0, s5
         ADDI    r0, -1
         BEQZ    .Ludivsi_remainder
         BLTZ    .Ludivsi_return
-        LDW     r0, [r7 - 2]
+        LD     r0, [r7 - 2]
         BEQZ    .Ludivsi_return
-        STW     r5, [r0 + 0]
-        STW     r6, [r0 + 2]
+        ST     r5, [r0 + 0]
+        ST     r6, [r0 + 2]
         JMP8    .Ludivsi_return
 .Ludivsi_remainder:
         MOV     r1, r5
@@ -489,13 +489,13 @@ __divmodsi4:
         LDI     r0, 2                   /* signed quotient and remainder */
 
 .Ldivsi_entry:
-        STW     r5, [r7 - 18]
-        STW     r0, [r7 - 20]           /* result selection */
+        ST     r5, [r7 - 18]
+        ST     r0, [r7 - 20]           /* result selection */
 #ifdef __RISCC_NANO__
-        STW     r6, [r7 - 14]           /* incoming link */
+        ST     r6, [r7 - 14]           /* incoming link */
 #else
         MFS     r0, s7
-        STW     r0, [r7 - 14]           /* incoming link */
+        ST     r0, [r7 - 14]           /* incoming link */
 #endif
 
         /* bit 0: negate quotient; bit 1: negate remainder */
@@ -505,7 +505,7 @@ __divmodsi4:
         OR      r5, r5, r0
         SIGN_BIT r4
         XOR     r5, r5, r0
-        STW     r5, [r7 - 16]
+        ST     r5, [r7 - 16]
 
         MOV     r0, r2
         BLTZ    .Ldivsi_negate_numerator
@@ -520,7 +520,7 @@ __divmodsi4:
         NEGATE32 r3, r4, r5
 
 .Ldivsi_call:
-        LDW     r0, [r7 - 20]
+        LD     r0, [r7 - 20]
         ADDI    r0, -1
         BEQZ    .Ldivsi_call_remainder
         BLTZ    .Ldivsi_call_quotient
@@ -534,39 +534,39 @@ __divmodsi4:
         JMP8    .Ldivsi_fix_quotient
 
 .Ldivsi_fix_stored_remainder:
-        LDW     r0, [r7 - 16]
+        LD     r0, [r7 - 16]
         ANDI    r0, 2
         BEQZ    .Ldivsi_fix_quotient
-        LDW     r0, [r7 + 0]
+        LD     r0, [r7 + 0]
         BEQZ    .Ldivsi_fix_quotient
-        LDW     r3, [r0 + 0]
-        LDW     r4, [r0 + 2]
+        LD     r3, [r0 + 0]
+        LD     r4, [r0 + 2]
         NEGATE32 r3, r4, r5
-        LDW     r0, [r7 + 0]
-        STW     r3, [r0 + 0]
-        STW     r4, [r0 + 2]
+        LD     r0, [r7 + 0]
+        ST     r3, [r0 + 0]
+        ST     r4, [r0 + 2]
         JMP8    .Ldivsi_fix_quotient
 
 .Ldivsi_fix_remainder:
-        LDW     r0, [r7 - 16]
+        LD     r0, [r7 - 16]
         ANDI    r0, 2
         BEQZ    .Ldivsi_return
         NEGATE32 r1, r2, r5
         JMP8    .Ldivsi_return
 
 .Ldivsi_fix_quotient:
-        LDW     r0, [r7 - 16]
+        LD     r0, [r7 - 16]
         ANDI    r0, 1
         BEQZ    .Ldivsi_return
         NEGATE32 r1, r2, r5
 
 .Ldivsi_return:
-        LDW     r5, [r7 - 18]
+        LD     r5, [r7 - 18]
 #ifdef __RISCC_NANO__
-        LDW     r6, [r7 - 14]
+        LD     r6, [r7 - 14]
         RET     r6
 #else
-        LDW     r0, [r7 - 14]
+        LD     r0, [r7 - 14]
         MTS     s7, r0
         RETS
 #endif
@@ -603,29 +603,29 @@ __umoddi3:
         .hidden __udivmoddi4
         .type __udivmoddi4,@function
 __udivmoddi4:
-        LDW     r0, [r7 + 8]
-        STW     r0, [r7 - 8]            /* remainder pointer */
+        LD     r0, [r7 + 8]
+        ST     r0, [r7 - 8]            /* remainder pointer */
         LDI     r0, 2                   /* quotient and stored remainder */
 
 .Ludivdi_entry:
-        STW     r5, [r7 - 2]
-        STW     r6, [r7 - 4]
-        STW     r0, [r7 - 6]            /* result selection */
+        ST     r5, [r7 - 2]
+        ST     r6, [r7 - 4]
+        ST     r0, [r7 - 6]            /* result selection */
 
-        LDW     r0, [r7 + 0]
-        LDW     r6, [r7 + 2]
+        LD     r0, [r7 + 0]
+        LD     r6, [r7 + 2]
         OR      r0, r0, r6
-        LDW     r6, [r7 + 4]
+        LD     r6, [r7 + 4]
         OR      r0, r0, r6
-        LDW     r6, [r7 + 6]
+        LD     r6, [r7 + 6]
         OR      r0, r0, r6
         BNEZ    .Ludivdi_nonzero
 
         /* Project convention: division by zero gives q=0, r=numerator. */
-        STW     r1, [r7 - 10]
-        STW     r2, [r7 - 12]
-        STW     r3, [r7 - 14]
-        STW     r4, [r7 - 16]
+        ST     r1, [r7 - 10]
+        ST     r2, [r7 - 12]
+        ST     r3, [r7 - 14]
+        ST     r4, [r7 - 16]
         LDI     r1, 0
         LDI     r2, 0
         LDI     r3, 0
@@ -634,61 +634,61 @@ __udivmoddi4:
 
 .Ludivdi_nonzero:
         LDI     r0, 0
-        STW     r0, [r7 - 10]           /* remainder, low to high */
-        STW     r0, [r7 - 12]
-        STW     r0, [r7 - 14]
-        STW     r0, [r7 - 16]
+        ST     r0, [r7 - 10]           /* remainder, low to high */
+        ST     r0, [r7 - 12]
+        ST     r0, [r7 - 14]
+        ST     r0, [r7 - 16]
         LDI     r0, 64
 #ifdef __RISCC_NANO__
-        STW     r0, [r7 - 18]
+        ST     r0, [r7 - 18]
 #else
         MTS     s3, r0
 #endif
 
 .Ludivdi_loop:
         /* Shift the 128-bit remainder:quotient state left by one. */
-        LDW     r5, [r7 - 16]
-        LDW     r6, [r7 - 14]
+        LD     r5, [r7 - 16]
+        LD     r6, [r7 - 14]
 #ifdef __RISCC_NANO__
         SIGN_BIT r6
         ADD     r5, r5, r5
         OR      r5, r5, r0
 #else
-        FSL1    r5, r5, r6
+        FSL1    r5, r6
 #endif
-        STW     r5, [r7 - 16]
+        ST     r5, [r7 - 16]
 
-        LDW     r5, [r7 - 14]
-        LDW     r6, [r7 - 12]
+        LD     r5, [r7 - 14]
+        LD     r6, [r7 - 12]
 #ifdef __RISCC_NANO__
         SIGN_BIT r6
         ADD     r5, r5, r5
         OR      r5, r5, r0
 #else
-        FSL1    r5, r5, r6
+        FSL1    r5, r6
 #endif
-        STW     r5, [r7 - 14]
+        ST     r5, [r7 - 14]
 
-        LDW     r5, [r7 - 12]
-        LDW     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
 #ifdef __RISCC_NANO__
         SIGN_BIT r6
         ADD     r5, r5, r5
         OR      r5, r5, r0
 #else
-        FSL1    r5, r5, r6
+        FSL1    r5, r6
 #endif
-        STW     r5, [r7 - 12]
+        ST     r5, [r7 - 12]
 
-        LDW     r5, [r7 - 10]
+        LD     r5, [r7 - 10]
 #ifdef __RISCC_NANO__
         SIGN_BIT r4
         ADD     r5, r5, r5
         OR      r5, r5, r0
 #else
-        FSL1    r5, r5, r4
+        FSL1    r5, r4
 #endif
-        STW     r5, [r7 - 10]
+        ST     r5, [r7 - 10]
 
 #ifdef __RISCC_NANO__
         SIGN_BIT r3
@@ -702,94 +702,94 @@ __udivmoddi4:
         OR      r2, r2, r0
         ADD     r1, r1, r1
 #else
-        FSL1    r4, r4, r3
-        FSL1    r3, r3, r2
-        FSL1    r2, r2, r1
+        FSL1    r4, r3
+        FSL1    r3, r2
+        FSL1    r2, r1
         ADD     r1, r1, r1
 #endif
 
         /* Compare remainder with the denominator, high word first. */
-        LDW     r5, [r7 - 16]
-        LDW     r6, [r7 + 6]
+        LD     r5, [r7 - 16]
+        LD     r6, [r7 + 6]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
-        LDW     r5, [r7 - 14]
-        LDW     r6, [r7 + 4]
+        LD     r5, [r7 - 14]
+        LD     r6, [r7 + 4]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
-        LDW     r5, [r7 - 12]
-        LDW     r6, [r7 + 2]
+        LD     r5, [r7 - 12]
+        LD     r6, [r7 + 2]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
-        LDW     r5, [r7 - 10]
-        LDW     r6, [r7 + 0]
+        LD     r5, [r7 - 10]
+        LD     r6, [r7 + 0]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
 
 .Ludivdi_subtract:
         /* Low word has no incoming borrow. */
-        LDW     r5, [r7 - 10]
-        LDW     r0, [r7 + 0]
+        LD     r5, [r7 - 10]
+        LD     r0, [r7 + 0]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
-        STW     r5, [r7 - 10]
+        ST     r5, [r7 - 10]
 
         /*
          * For the upper words, combine the incoming-borrow underflow with
          * the ordinary word subtraction's borrow.
          */
-        LDW     r5, [r7 - 12]
+        LD     r5, [r7 - 12]
         MOV     r0, r5
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
-        STW     r0, [r7 - 20]
-        LDW     r0, [r7 + 2]
+        ST     r0, [r7 - 20]
+        LD     r0, [r7 + 2]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
-        LDW     r0, [r7 - 20]
+        LD     r0, [r7 - 20]
         OR      r6, r6, r0
-        STW     r5, [r7 - 12]
+        ST     r5, [r7 - 12]
 
-        LDW     r5, [r7 - 14]
+        LD     r5, [r7 - 14]
         MOV     r0, r5
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
-        STW     r0, [r7 - 20]
-        LDW     r0, [r7 + 4]
+        ST     r0, [r7 - 20]
+        LD     r0, [r7 + 4]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
-        LDW     r0, [r7 - 20]
+        LD     r0, [r7 - 20]
         OR      r6, r6, r0
-        STW     r5, [r7 - 14]
+        ST     r5, [r7 - 14]
 
-        LDW     r5, [r7 - 16]
+        LD     r5, [r7 - 16]
         MOV     r0, r5
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
-        STW     r0, [r7 - 20]
-        LDW     r0, [r7 + 6]
+        ST     r0, [r7 - 20]
+        LD     r0, [r7 + 6]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
-        LDW     r0, [r7 - 20]
+        LD     r0, [r7 - 20]
         OR      r6, r6, r0
-        STW     r5, [r7 - 16]
+        ST     r5, [r7 - 16]
 
         ADDI    r1, 1                   /* quotient bit */
 
 .Ludivdi_keep:
 #ifdef __RISCC_NANO__
-        LDW     r0, [r7 - 18]
+        LD     r0, [r7 - 18]
         ADDI    r0, -1
-        STW     r0, [r7 - 18]
+        ST     r0, [r7 - 18]
 #else
         MFS     r0, s3
         ADDI    r0, -1
@@ -798,32 +798,32 @@ __udivmoddi4:
         BNEZ    .Ludivdi_loop
 
 .Ludivdi_done:
-        LDW     r0, [r7 - 6]
+        LD     r0, [r7 - 6]
         ADDI    r0, -1
         BEQZ    .Ludivdi_remainder
         BLTZ    .Ludivdi_return
 
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         BEQZ    .Ludivdi_return
-        LDW     r5, [r7 - 10]
-        STW     r5, [r0 + 0]
-        LDW     r5, [r7 - 12]
-        STW     r5, [r0 + 2]
-        LDW     r5, [r7 - 14]
-        STW     r5, [r0 + 4]
-        LDW     r5, [r7 - 16]
-        STW     r5, [r0 + 6]
+        LD     r5, [r7 - 10]
+        ST     r5, [r0 + 0]
+        LD     r5, [r7 - 12]
+        ST     r5, [r0 + 2]
+        LD     r5, [r7 - 14]
+        ST     r5, [r0 + 4]
+        LD     r5, [r7 - 16]
+        ST     r5, [r0 + 6]
         JMP8    .Ludivdi_return
 
 .Ludivdi_remainder:
-        LDW     r1, [r7 - 10]
-        LDW     r2, [r7 - 12]
-        LDW     r3, [r7 - 14]
-        LDW     r4, [r7 - 16]
+        LD     r1, [r7 - 10]
+        LD     r2, [r7 - 12]
+        LD     r3, [r7 - 14]
+        LD     r4, [r7 - 16]
 
 .Ludivdi_return:
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
         DIV_RETURN
         .size __udivdi3, . - __udivdi3
         .size __umoddi3, . - __umoddi3

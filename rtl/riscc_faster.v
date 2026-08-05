@@ -76,12 +76,13 @@ module riscc_faster #(
     wire d_reg_store = d_reg_mem & ~d_f5[2] & d_f5[1] & d_f5[0];
     wire d_multiply = d_reg_alu_group & (&d_f5[2:0]);
     wire d_reg_alu = d_reg_alu_group & ~d_multiply;
-    wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
-                    ~d_f5[2] & d_f5[1];
+    // FSL1/FSR1 use f5=10_001 with ooo[0] selecting right versus left.
+    // Reserved functions in the group-10 plane may alias the same paths.
+    wire d_funnel = d_register & d_f5[4] & ~d_f5[3];
     wire d_shift_right = d_reg_mem & d_f5[2] & ~d_f5[1];
     wire d_shift_left = d_reg_mem & (&d_f5[2:0]);
     wire d_shift = d_shift_right | d_shift_left;
-    // LDWX uses ra+rb. Direct typed loads select ra on both RF ports; byte
+    // LDX uses ra+rb. Direct typed loads select ra on both RF ports; byte
     // loads suppress B in Execute, while canonical LDPH uses the duplicate to
     // form 2*ra before the normal [15:1] program-address extraction.
     wire d_native_load = d_reg_mem & ~d_f5[2] &
@@ -100,27 +101,37 @@ module riscc_faster #(
     wire d_store = d_imm_store | d_reg_store;
     wire d_load = d_memory & ~d_store;
     wire d_jal = d_system & ~d_bbb[2] & ~d_bbb[1] & d_bbb[0];
-    wire d_even_control = d_system & ~d_bbb[1] & ~d_bbb[0];
+    wire d_control_plane = d_system & ~d_bbb[1] & ~d_bbb[0];
     wire d_long_form = ~d_class[1] & ~d_class[0];
     wire d_jal16 = d_long_form;
     wire d_link_jump = d_jal | d_jal16;
-    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Register the direct
-    // IE-control plane; Execute adds RETI using the retained ccc field.
-    wire d_return = d_even_control & ~d_bbb[2];
+    // RET/RETI and CLI/STI share bbb=000. ddd[1] selects a return versus a
+    // direct IE operation; ddd[2] and ddd[0] duplicate the selected IE value.
+    wire d_return = d_control_plane & ~d_ddd[1];
     wire d_move = d_system & ~d_bbb[2] & d_bbb[1];
-    wire d_ie_control = d_system & d_bbb[2] & d_bbb[1];
+    // Both final controls are predecoded to keep the packed selector off the
+    // Execute instruction fanout.
+`ifdef RISCC_FASTER_SOFT_MUL
+    wire d_control_ie_value = d_ddd[2];
+`else
+    wire d_control_ie_value = d_ddd[0];
+`endif
+    wire d_ie_write = d_control_plane &
+                      (d_ddd[1] | d_control_ie_value);
     wire d_load_byte = d_reg_store |
                        (d_direct_load & ~d_program_load);
     wire d_signed_byte = d_load_byte & d_f5[2];
     wire d_cmpi = d_imm_alu & (d_aaa == 3'b011);
 
+    // Compact funnels read old rd on A and ra on B before writing rd.
+    wire d_src_a_is_ddd = d_class[1] & (~d_class[0] | d_f5[4]);
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
-        d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
+        d_src_a_is_ddd ? {1'b0, d_ddd} : {1'b0, d_aaa};
     wire d_src_b_is_ddd = d_class[0] &
         (~d_class[1] | (d_f5[3] & d_f5[0]));
-    wire d_src_b_is_aaa = d_class[0] & ~d_f5[4] &
-                          d_f5[3] & d_f5[1];
+    wire d_src_b_is_aaa = (d_class[1] & d_f5[4]) |
+        (d_class[0] & ~d_f5[4] & d_f5[3] & d_f5[1]);
     wire [3:0] d_src_b = {1'b0,
         d_src_b_is_ddd ? d_ddd :
         d_src_b_is_aaa ? d_aaa : d_bbb};
@@ -159,9 +170,17 @@ module riscc_faster #(
     reg x_reg_alu_q;
 `endif
     reg x_multiply_q;
+    // The fabric build merges one-step bit operations and predecodes whether a
+    // variable shift needs its side state. Separate controls route better when
+    // the multiplier is in the DSP block.
+`ifdef RISCC_FASTER_SOFT_MUL
+    reg x_bitop_q;
+    reg x_shift_nonzero_q;
+`else
     reg x_shift_q;
-    reg x_shift_left_q;
     reg x_funnel_q;
+`endif
+    reg x_shift_left_q;
 `ifndef RISCC_FASTER_SOFT_MUL
     reg x_indexed_memory_q;
 `endif
@@ -169,11 +188,11 @@ module riscc_faster #(
     reg x_store_q;
     reg x_load_byte_q;
     reg x_signed_byte_q;
-    reg x_even_control_q;
+    reg x_return_q;
     reg x_jal_q;
     reg x_jal16_q;
     reg x_move_q;
-    reg x_ie_control_q;
+    reg x_ie_write_q;
 `ifdef RISCC_FASTER_SOFT_MUL
     // Registering these mutually exclusive result selects keeps major-opcode
     // qualification out of the Execute result mux in the fabric-only build.
@@ -204,17 +223,15 @@ module riscc_faster #(
     wire x_reg_alu = x_reg_alu_q;
 `endif
     wire x_multiply = x_multiply_q;
-    wire x_shift = x_shift_q;
 `ifdef RISCC_FASTER_SOFT_MUL
-    // Preserve the registered direction on the fabric multiplier's shared
-    // shift path. Its fitter mapping is smaller than re-decoding the field.
-    wire x_shift_left = x_shift_left_q;
+    wire x_bitop = x_bitop_q;
 `else
-    // SLLI and FSL1 share f3[1:0]=11, so the DSP build needs no direction
-    // register: the retained instruction carries it through the side state.
-    wire x_shift_left = &x_f3[1:0];
-`endif
+    wire x_shift = x_shift_q;
     wire x_funnel = x_funnel_q;
+`endif
+    // Registering direction keeps ooo decode out of the Execute shifter and
+    // improves both DSP and fabric timing.
+    wire x_shift_left = x_shift_left_q;
 `ifndef RISCC_FASTER_SOFT_MUL
     wire x_indexed_memory = x_indexed_memory_q;
 `endif
@@ -222,13 +239,12 @@ module riscc_faster #(
     wire x_store = x_store_q;
     wire x_load_byte = x_load_byte_q;
     wire x_signed_byte = x_signed_byte_q;
-    wire x_return = x_even_control_q & ~x_we_q;
+    wire x_return = x_return_q;
     wire x_jal = x_jal_q;
     wire x_jal16 = x_jal16_q;
     wire x_link_jump = x_jal | x_jal16;
     wire x_move = x_move_q;
-    wire x_ie_control = x_ie_control_q;
-    wire x_ie_write = x_ie_control | (x_return & x_ddd[2]);
+    wire x_ie_write = x_ie_write_q;
 
     wire [15:0] rf_a;
     wire [15:0] rf_b;
@@ -262,19 +278,20 @@ module riscc_faster #(
     // feedback path.
     wire side_shift_active = in_shift;
     wire [15:0] side_shift_source = side_shift_active ? side_data_q : rf_a;
-    wire side_shift_left = x_shift_left | (x_funnel & x_f3[0]);
+    wire side_shift_left = x_shift_left;
+    wire side_shift_endpoint = x_instr_q[7] ? rf_b[0] :
+                               (x_f3[0] & side_shift_source[15]);
     wire [15:0] side_shift_step = side_shift_left ?
-        {side_shift_source[14:0], x_funnel & rf_b[15]} :
-        {(x_funnel & rf_b[0]) |
-         (x_f3[0] & side_shift_source[15]),
-         side_shift_source[15:1]};
+        {side_shift_source[14:0], x_instr_q[7] & rf_b[15]} :
+        {side_shift_endpoint, side_shift_source[15:1]};
     wire [15:0] x_shift_step = side_shift_step;
     wire [15:0] shift_step = side_shift_step;
 `else
+    wire x_shift_endpoint = x_instr_q[7] ? rf_b[0] :
+                            (x_f3[0] & rf_a[15]);
     wire [15:0] x_shift_step = x_shift_left ?
-        {rf_a[14:0], x_funnel & rf_b[15]} :
-        {(x_instr_q[7] & rf_b[0]) |
-         (x_f3[0] & rf_a[15]), rf_a[15:1]};
+        {rf_a[14:0], x_instr_q[7] & rf_b[15]} :
+        {x_shift_endpoint, rf_a[15:1]};
     wire [15:0] shift_step = x_shift_left ?
         {side_data_q[14:0], 1'b0} :
         {x_f3[0] & side_data_q[15], side_data_q[15:1]};
@@ -330,7 +347,11 @@ module riscc_faster #(
         run_rf_b ? rf_b :
         run_short_imm ? immediate_result :
         x_move ? rf_a :
+`ifdef RISCC_FASTER_SOFT_MUL
+        x_bitop ? x_shift_step :
+`else
         (x_shift | x_funnel) ? x_shift_step :
+`endif
         x_jal16 ? 16'h0001 : 16'h0000;
 
 `ifdef RISCC_FASTER_SOFT_MUL
@@ -380,7 +401,11 @@ module riscc_faster #(
     // X side-state starts, completion, redirects, and RAW interlock
     // ------------------------------------------------------------------
     wire x_load_start = normal_x & x_memory & ~x_store;
+`ifdef RISCC_FASTER_SOFT_MUL
+    wire x_shift_start = normal_x & x_shift_nonzero_q;
+`else
     wire x_shift_start = normal_x & x_shift & (|x_bbb);
+`endif
     wire x_mul_start = normal_x & x_multiply;
     wire x_long_start = normal_x & x_jal16;
     wire x_side_start = x_load_start | x_shift_start |
@@ -490,9 +515,14 @@ module riscc_faster #(
             x_reg_alu_q <= d_reg_alu;
 `endif
             x_multiply_q <= d_multiply;
+`ifdef RISCC_FASTER_SOFT_MUL
+            x_bitop_q <= d_shift | d_funnel;
+            x_shift_nonzero_q <= d_shift & (|d_bbb);
+`else
             x_shift_q <= d_shift;
-            x_shift_left_q <= d_shift_left;
             x_funnel_q <= d_funnel;
+`endif
+            x_shift_left_q <= d_f5[1] | (d_f5[4] & ~d_bbb[0]);
 `ifndef RISCC_FASTER_SOFT_MUL
             x_indexed_memory_q <= d_indexed_memory;
 `endif
@@ -500,11 +530,11 @@ module riscc_faster #(
             x_store_q <= d_store;
             x_load_byte_q <= d_load_byte;
             x_signed_byte_q <= d_signed_byte;
-            x_even_control_q <= d_even_control;
+            x_return_q <= d_return;
             x_jal_q <= d_jal;
             x_jal16_q <= d_jal16;
             x_move_q <= d_move;
-            x_ie_control_q <= d_ie_control;
+            x_ie_write_q <= d_ie_write;
 `ifdef RISCC_FASTER_SOFT_MUL
             x_run_imm_s_q <= d_branch | d_imm_memory |
                              (d_imm_alu & ~d_aaa[2] & d_aaa[1]);

@@ -46,11 +46,12 @@ Store data is normally read from the one-port register file during the
 pass because that schedule maps smaller. This is an internal RF schedule; it
 does not change the ISA or external memory interface.
 
-The Min-baseline `FSL1` and `FSR1` instructions reuse that staged second
-source and the existing shift/ALU paths; they do not add a second wide
-datapath. Sys and Full inherit the instructions, while Nano omits them.
+The Min-baseline `FSL1` and `FSR1` instructions stage the endpoint source
+`ra`, then read and shift the old value of `rd` through the existing shift/ALU
+paths; they do not add a second wide datapath. Sys and Full inherit the
+instructions, while Nano omits them.
 
-`LDWX` and `LDPH` share the native-load schedule. `LDWX` stages `rb` as the
+`LDX` and `LDPH` share the native-load schedule. `LDX` stages `rb` as the
 index added to `ra`; `LDPH` uses `ra` as its sole pointer and reuses the same
 transfer path for program memory. Direct `LDB`, `LDBS`, and `STB` also use
 `ra` with a zero second addend. In direct typed encodings, `bbb` refines width
@@ -89,11 +90,15 @@ Fast overlaps a synchronous fetch response with the execution of the current
 instruction in a straight two-stage F/X in-order pipeline. Loads, multi-bit
 shifts, and soft multiply use small side states. Its register file is
 replicated for two reads: ECP5 uses distributed LUTRAM, iCE40 uses EBRs, and
-Agilex uses MLAB LUTRAM plus a registered write overlay. `LDPH` uses `ra` on
-the existing load source path; `bbb=011` is decode-only, with target-specific
-equivalent factoring to avoid a separate program-address mux. There is no
-branch predictor or forwarding network; iCE40 can add a RAW stall due to its
-synchronous EBR reads.
+Agilex uses MLAB LUTRAM plus a registered write overlay. iCE40 retains the
+accepted source addresses for a possible synchronous-RF replay, ECP5 registers
+both source addresses with the X-stage instruction, and Agilex DSP registers
+only the B address. The iCE40 and ECP5 DSP datapaths route logic through ALU-A;
+their soft builds use the shared result path. Agilex soft splits both logic and
+load results from the shared path, while Agilex DSP uses the shared path.
+`LDPH` uses `ra` on the existing load source path; `bbb=011` is decode-only.
+There is no branch predictor or forwarding network; iCE40 can add a RAW stall
+due to its synchronous EBR reads.
 
 ![RISC-C/fast pipeline](riscc_fast_pipeline.svg)
 
@@ -132,64 +137,66 @@ points. Cycle counts follow them as a reference for implementation work.
 
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 119 | 131 | 158 | 217 | 259 |
-| `sys` | 154 | 163 | 198 | 260 | 291 |
-| `full` | 171 | 189 | 226 | 299 | 335 |
+| `min` | 118 | 132 | 160 | 218 | 260 |
+| `sys` | 150 | 165 | 198 | 260 | 290 |
+| `full` | 166 | 185 | 229 | 298 | 335 |
 | nano | 93 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 488 / 452 |
+| Fast soft / DSP | — | — | — | — | 487 / 450 |
 
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 163 | 173 | 198 | 252 | 283 |
-| `sys` | 190 | 205 | 238 | 292 | 319 |
-| `full` | 209 | 234 | 269 | 334 | 363 |
+| `min` | 163 | 174 | 199 | 253 | 284 |
+| `sys` | 189 | 204 | 235 | 295 | 316 |
+| `full` | 207 | 229 | 268 | 334 | 361 |
 | nano | 114 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 502 / 467 |
+| Fast soft / DSP | — | — | — | — | 516 / 475 |
 
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 121 | 132 | 163 | 220 | 259 |
-| `sys` | 148 | 162 | 202 | 259 | 295 |
-| `full` | 167 | 193 | 231 | 300 | 339 |
+| `min` | 121 | 134 | 164 | 221 | 260 |
+| `sys` | 147 | 163 | 200 | 261 | 292 |
+| `full` | 165 | 188 | 232 | 300 | 337 |
 | nano | 93 | — | — | — | — |
 
 | Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 75.5 | 89.0 | 91.1 | 116.6 | 133.9 |
-| `sys` | 91.0 | 95.7 | 112.0 | 133.0 | 155.0 |
-| `full` | 102.0 | 106.8 | 138.0 | 171.1 | 170.5 |
-| nano | 75.5 | — | — | — | — |
-| Fast soft / DSP | — | — | — | — | 275.3 / 256.9 |
-| Faster DSP / soft | — | — | — | — | 319.5 / 326.0 |
+| `min` | 93.7 | 100.1 | 108.0 | 120.1 | 118.0 |
+| `sys` | 108.1 | 116.2 | 121.6 | 141.9 | 145.2 |
+| `full` | 100.8 | 121.9 | 127.8 | 148.6 | 170.8 |
+| nano | 88.4 | — | — | — | — |
+| Fast soft / DSP | — | — | — | — | 253.9 / 268.4 |
+| Faster DSP / soft | — | — | — | — | 309.9 / 322.5 |
 
 
 ### Clock rate and benchmark throughput
 
 | UP5K Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 36.73 | 33.52 | 32.56 | 29.45 | 30.91 |
-| `sys` | 36.15 | 35.22 | 31.24 | 29.45 | 31.09 |
-| `full` | 36.87 | 33.42 | 32.19 | 29.53 | 28.80 |
+| `min` | 35.15 | 32.94 | 32.58 | 29.13 | 30.00 |
+| `sys` | 36.26 | 34.01 | 31.22 | 31.28 | 30.86 |
+| `full` | 37.18 | 32.60 | 32.58 | 29.92 | 27.95 |
 
 | ECP5 Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 112.02 | 111.43 | 99.49 | 88.68 | 96.45 |
-| `sys` | 110.24 | 110.82 | 102.18 | 88.08 | 96.52 |
-| `full` | 104.28 | 105.05 | 92.78 | 86.91 | 91.32 |
+| `min` | 110.06 | 108.19 | 93.03 | 83.58 | 90.78 |
+| `sys` | 116.65 | 112.17 | 102.52 | 93.08 | 96.62 |
+| `full` | 105.09 | 105.16 | 96.30 | 89.99 | 92.03 |
 
 | Agilex 3 Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `sys` | 305.90 | 284.50 | 276.17 | 247.83 | 232.34 |
+| `min` | 323.42 | 317.76 | 289.44 | 278.71 | 270.12 |
+| `sys` | 323.83 | 304.69 | 278.24 | 290.28 | 248.20 |
+| `full` | 304.79 | 313.28 | 313.68 | 283.37 | 245.46 |
 
 | Other implementation Fmax (MHz) | UP5K | ECP5 | Agilex 3 |
 |---|---:|---:|---:|
-| nano | 35.56 | 115.93 | 306.37 |
-| Full paired MulH `/16` | 27.54 | 88.22 | — |
-| Full paired MulDiv `/16` | 24.18 | 84.38 | — |
-| Fast soft | 25.86 | 72.71 | 195.35 |
-| Fast DSP | 24.16 | 71.00 | 149.79 |
-| Faster DSP | — | — | 240.91 |
-| Faster soft | — | — | 250.31 |
+| nano | 35.56 | 115.93 | 306.28 |
+| Full paired MulH `/16` | 27.87 | 87.21 | — |
+| Full paired MulDiv `/16` | 25.56 | 86.09 | — |
+| Fast soft | 25.13 | 77.85 | 190.91 |
+| Fast DSP | 24.88 | 75.43 | 152.53 |
+| Faster DSP | — | — | 240.21 |
+| Faster soft | — | — | 250.13 |
 
 The tables report current reproducible iCE40/ECP5 open-FPGA measurements and
 current post-fit Agilex 3 characterizations for `A3CZ135BB18AE7S`. Agilex
@@ -197,10 +204,10 @@ Fmax is a restricted-Fmax estimate, not closure at every listed clock. Run
 `make -j16 tables` to regenerate the open-FPGA area/Fmax matrices and
 benchmarks; the command prints the current Agilex characterization alongside
 them. The Fast and Faster points use a 4 ns target with Quartus High
-Performance Effort; the selected Faster DSP route disables physical-synthesis
-high effort. The Tiny16 Sys and Full area-oriented points use Quartus
-Aggressive Area. Faster has validation and benchmark targets but no standalone
-open-FPGA area/Fmax target.
+Performance Effort. The Tiny16 Sys/Full and Tiny Full `/1`, `/4`, and `/8`
+area-oriented points use Quartus Aggressive Area with independently
+characterized timing targets. Faster has validation and benchmark targets but
+no standalone open-FPGA area/Fmax target.
 
 The serial width columns below retain the established normalized comparison:
 they combine the common benchmark cycle count with the `sys` area and Fmax
@@ -209,16 +216,16 @@ on iCE40 and its generic cycle count on ECP5 and Agilex.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 1.02 | 1.83 | 2.79 | 4.11 | 7.46 | 1.15 | 11.57 | 12.46 | — | — |
-| ECP5 | 3.12 | 5.77 | 9.12 | 12.28 | 23.16 | 3.73 | 40.80 | 48.43 | — | — |
-| Agilex 3 | 8.67 | 14.81 | 24.65 | 34.56 | 55.75 | 9.87 | 109.61 | 102.17 | 142.06 | 126.90 |
+| iCE40 UP5K | 1.03 | 1.77 | 2.79 | 4.36 | 7.40 | 1.15 | 11.25 | 12.84 | — | — |
+| ECP5 | 3.31 | 5.84 | 9.15 | 12.98 | 23.18 | 3.73 | 43.68 | 51.45 | — | — |
+| Agilex 3 | 9.18 | 15.86 | 24.84 | 40.48 | 59.55 | 9.86 | 107.12 | 104.04 | 141.65 | 126.74 |
 
 | Benchmark MIPS per thousand logic units | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K, LUT4 | 6.7 | 11.2 | 14.1 | 15.8 | 25.6 | 12.3 | 23.7 | 27.6 | — | — |
-| ECP5, block RF sites | 21.1 | 35.6 | 45.2 | 47.4 | 78.5 | 40.1 | 81.3 | 103.7 | — | — |
-| ECP5, LUTRAM RF sites | 16.4 | 28.1 | 38.3 | 42.1 | 72.6 | 32.7 | 81.3 | 103.7 | — | — |
-| Agilex 3, ALM | 95.3 | 154.8 | 220.1 | 259.8 | 359.7 | 130.7 | 398.1 | 397.7 | 444.6 | 389.3 |
+| iCE40 UP5K, LUT4 | 6.9 | 10.7 | 14.1 | 16.8 | 25.5 | 12.3 | 23.1 | 28.5 | — | — |
+| ECP5, block RF sites | 22.5 | 35.8 | 45.8 | 49.7 | 79.4 | 40.1 | 84.7 | 108.3 | — | — |
+| ECP5, LUTRAM RF sites | 17.5 | 28.6 | 38.9 | 44.0 | 73.4 | 32.7 | 84.7 | 108.3 | — | — |
+| Agilex 3, ALM | 84.9 | 136.5 | 204.2 | 285.3 | 410.1 | 111.6 | 421.9 | 387.6 | 457.1 | 392.8 |
 
 The common mainline benchmark retires 3238 instructions; Nano's
 software-multiply version retires 8491 instructions. When comparing ISA
@@ -233,8 +240,8 @@ Faster implement `full` only; Nano runs its separate profile.
 | Validation cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `min` | 6504 | 3632 | 2196 | 1478 | 870 | — | — | — | — | — |
-| `sys` | 10083 | 5571 | 3331 | 2211 | 1344 | — | — | — | — | — |
-| `full` | 12045 | 6613 | 3905 | 2543 | 1522 | — | 607 | 527 | 568 | 638 |
+| `sys` | 11789 | 6525 | 3909 | 2601 | 1574 | — | — | — | — | — |
+| `full` | 13751 | 7567 | 4483 | 2933 | 1752 | — | 694 | 614 | 667 | 737 |
 | `nano` | — | — | — | — | — | 3792 | — | — | — | — |
 
 | Common benchmark cycles | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
@@ -251,26 +258,28 @@ implementations are provided by the separate `/16` multi-cycle sources.
 
 | Implementation | iCE40 LUT4 | ECP5 LUTRAM RF | ECP5 block RF |
 |---|---:|---:|---:|
-| Full (`MUL`) | 335 | 363 | 339 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 345 | 375 | 351 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 386 | 410 | 386 |
+| Full (`MUL`) | 335 | 361 | 337 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 345 | 373 | 349 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 374 | 403 | 379 |
 
 | Routed Fmax (MHz) | iCE40 UP5K | ECP5 LFE5U-25F |
 |---|---:|---:|
-| Full (`MUL`) | 28.80 | 91.32 |
-| Full paired MulH (`MUL` + paired `MULHU`) | 27.54 | 88.22 |
-| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 24.18 | 84.38 |
+| Full (`MUL`) | 27.95 | 86.78 |
+| Full paired MulH (`MUL` + paired `MULHU`) | 27.87 | 87.21 |
+| Full paired MulDiv (`MUL` + paired `MULHU` + `DIVU`) | 25.56 | 86.09 |
 
-`test-all` runs the normal Full ISA image and an extension-specific
-MULHU/DIVU image on both optional cores. The aggregate area and Fmax tables
-include these cores as well as the Fast and Faster soft/DSP configurations on
-their supported FPGA families.
+`test-all` runs the normal Full ISA image, an extension-specific MULHU/DIVU
+image, and the compact funnel-shift image on both optional cores in their
+generic and ECP5 register-file configurations. The aggregate area and Fmax
+tables include these cores as well as the Fast and Faster soft/DSP
+configurations on their supported FPGA families.
 
 `MULHU` writes its high half to `rh` and its low half to `rl`. The Tiny16
 implementations retain the product across one extra writeback cycle so both
-writes reuse the existing RF and ALU paths. The MulH source keeps a dedicated
-byte-lane bit because that maps smaller and faster than sharing unrelated
-iteration state.
+writes reuse the existing RF and ALU paths. The compact two-operand funnel
+schedule lets the MulH source avoid a separate boundary register: generic
+logic reuses the adder over two passes, while ECP5 doubles the old destination
+in the execute pass.
 
 `DIVU` keeps its live quotient and remainder in the architectural RF. Its
 shift phases are folded into the shared ALU-B OR plane rather than selecting a
@@ -279,7 +288,8 @@ follows each subtract, keeping the subtract carry path out of RF-write and
 `r0`-shadow controls. MulDiv deliberately shares byte-lane and compare state
 in `iteration_count_q[0]`; moving it to separate state is substantially larger.
 Equivalent lane sources are selected per target: the shared adder result on
-iCE40 and the direct RF low bit on ECP5.
+iCE40 and the direct RF low bit on ECP5. `FSL1` reuses the divider boundary bit
+for its inserted endpoint.
 
 These optional-`mdu` timing measurements use the same core-only routed
 harness and the characterized seeds selected by the normal build targets. Use
@@ -312,7 +322,180 @@ and 6858 cycles (2.84%) from `matrix` relative to the former MDU runtime. It
 increases `__divsf3` from 352 to 402 bytes, so it remains a speed choice rather
 than a size optimization.
 
-## 4. FPGA toolchain
+## 4. Implementation history
+
+The tables above are the current reference. Historical tables committed with
+older versions are useful implementation snapshots, but most are not results
+from one controlled longitudinal experiment. RTL organization, synthesis
+options, routing seeds, benchmark code, and some reporting conventions evolved
+with the design.
+
+### Architecture milestones
+
+- **v0.14 (`aa902db`)** established the original implementation family:
+  parameterized serial Tiny, Tiny16, Nano, Fast, and the experimental Faster
+  pipeline.
+- **v0.15 (`d60971e`)** consolidated interrupt-control encodings and retuned
+  control and state decoding across the cores. The contemporary Atum design
+  first closed its 225 MHz system target.
+- **v0.16 (`d7f6922`)** made `FSL1` and `FSR1` architectural instructions and
+  split the serial and Tiny16 ladders into profile-specialized Min, Sys, and
+  Full RTL. This was the largest structural change to the small-core family.
+- **v0.17 (`ea4cf5a`)** formalized the optional paired-result MDU and its
+  Tiny16 MulH and MulDiv implementations. The preceding development commit
+  `de2af8a` also added Faster's write-edge RF bypass and the first RC32
+  specification groundwork; its temporary hardware `LDI16` was removed by
+  v0.18.
+- **v0.18 (`44c01ce`)** completed the compact native-word load/store redesign,
+  assigned the `00` prefix to canonical `JAL16`, and introduced independently
+  characterized synthesis options and routing seeds for many open-FPGA points.
+- **v0.19 (`7768d69`, `755224e`)** standardized instruction names, organized
+  RC32 and X32 as extensions, changed compact typed accesses to direct forms,
+  and implemented `LDPH` in every mainline RC16 core.
+- **v0.20 (current)** changes compact funnels to two-operand operations,
+  defines register-count `SLL`, `SRL`, and `SRA` in the optional VSH extension,
+  packs return and interrupt-enable controls into one system row, and retunes
+  the mainline and optional MDU implementations for the new decode and operand
+  flow. RC32 and X32 remain ISA specifications; the current RTL cores are RC16.
+
+### Tiny size history
+
+The following tables contain the complete Tiny area rows published with each
+version. Every slash-separated cell is ordered `/1 /2 /4 /8 /16`. iCE40 LUT4
+excludes the register-file EBR; ECP5 LUTRAM-RF sites include the RF; ECP5
+block-RF logic excludes the DP16KD. Agilex values are CPU-hierarchy ALMs.
+
+#### Min
+
+| version | iCE40 LUT4 | ECP5 LUTRAM-RF sites | ECP5 block-RF logic | Agilex ALMs |
+|---|---:|---:|---:|---:|
+| v0.14 | 121 / 134 / 162 / 219 / 252 | 164 / 179 / 201 / 255 / 278 | 125 / 139 / 165 / 233 / 274 | 99.3 / 111.9 / 118.0 / 132.4 / 125.1 |
+| v0.15 | 121 / 134 / 162 / 219 / 252 | 164 / 179 / 201 / 255 / 278 | 125 / 139 / 165 / 233 / 274 | 99.3 / 111.9 / 118.0 / 132.4 / 125.1 |
+| v0.16 | 118 / 132 / 161 / 215 / 256 | 163 / 172 / 201 / 252 / 281 | 123 / 132 / 165 / 230 / 276 | 75.5 / 89.0 / 91.1 / 116.6 / 133.9 |
+| v0.17 | 118 / 132 / 161 / 215 / 256 | 163 / 172 / 201 / 252 / 281 | 123 / 132 / 165 / 230 / 276 | 75.5 / 89.0 / 91.1 / 116.6 / 133.9 |
+| v0.18 | 118 / 132 / 161 / 215 / 256 | 162 / 172 / 201 / 251 / 281 | 120 / 132 / 165 / 218 / 257 | 75.5 / 89.0 / 91.1 / 116.6 / 133.9 |
+| v0.19 | 119 / 131 / 158 / 217 / 259 | 163 / 173 / 198 / 252 / 283 | 121 / 132 / 163 / 220 / 259 | 75.5 / 89.0 / 91.1 / 116.6 / 133.9 |
+| v0.20 current | 118 / 132 / 160 / 218 / 260 | 163 / 174 / 199 / 253 / 284 | 121 / 134 / 164 / 221 / 260 | 93.7 / 100.1 / 108.0 / 120.1 / 118.0 |
+
+#### Sys
+
+| version | iCE40 LUT4 | ECP5 LUTRAM-RF sites | ECP5 block-RF logic | Agilex ALMs |
+|---|---:|---:|---:|---:|
+| v0.14 | 148 / 165 / 198 / 260 / 279 | 192 / 205 / 235 / 293 / 306 | 153 / 165 / 200 / 273 / 303 | 116.8 / 121.5 / 133.9 / 151.9 / 151.4 |
+| v0.15 | 147 / 165 / 198 / 260 / 278 | 191 / 204 / 235 / 293 / 305 | 149 / 165 / 200 / 273 / 302 | 116.8 / 121.5 / 133.9 / 151.9 / 151.4 |
+| v0.16 | 149 / 163 / 200 / 261 / 282 | 192 / 205 / 237 / 293 / 310 | 152 / 163 / 202 / 274 / 306 | 91.0 / 95.7 / 112.0 / 133.0 / 155.4 |
+| v0.17 | 149 / 163 / 200 / 261 / 282 | 192 / 205 / 237 / 293 / 310 | 152 / 163 / 202 / 274 / 306 | 91.0 / 95.7 / 112.0 / 133.0 / 155.4 |
+| v0.18 | 151 / 162 / 197 / 260 / 292 | 191 / 204 / 237 / 292 / 319 | 148 / 162 / 200 / 259 / 295 | 91.0 / 95.7 / 112.0 / 133.0 / 155.0 |
+| v0.19 | 154 / 163 / 198 / 260 / 291 | 190 / 205 / 238 / 292 / 319 | 148 / 162 / 202 / 259 / 295 | 91.0 / 95.7 / 112.0 / 133.0 / 155.0 |
+| v0.20 current | 150 / 165 / 198 / 260 / 290 | 189 / 204 / 235 / 295 / 316 | 147 / 163 / 200 / 261 / 292 | 108.1 / 116.2 / 121.6 / 141.9 / 145.2 |
+
+#### Full
+
+| version | iCE40 LUT4 | ECP5 LUTRAM-RF sites | ECP5 block-RF logic | Agilex ALMs |
+|---|---:|---:|---:|---:|
+| v0.14 | 169 / 189 / 228 / 296 / 332 | 213 / 232 / 267 / 331 / 364 | 171 / 189 / 229 / 309 / 358 | 131.9 / 144.6 / 151.4 / 170.4 / 218.6 |
+| v0.15 | 169 / 189 / 228 / 296 / 329 | 212 / 232 / 263 / 328 / 361 | 171 / 189 / 228 / 309 / 355 | 131.9 / 144.6 / 151.4 / 170.4 / 218.6 |
+| v0.16 | 173 / 193 / 231 / 300 / 334 | 213 / 235 / 265 / 331 / 359 | 172 / 194 / 230 / 312 / 354 | 102.0 / 106.8 / 142.0 / 171.1 / 169.0 |
+| v0.17 | 173 / 193 / 231 / 300 / 334 | 213 / 235 / 265 / 331 / 359 | 172 / 194 / 230 / 312 / 354 | 102.0 / 106.8 / 142.0 / 171.1 / 169.0 |
+| v0.18 | 174 / 190 / 226 / 298 / 338 | 212 / 232 / 268 / 331 / 366 | 166 / 191 / 229 / 298 / 341 | 102.0 / 106.8 / 138.0 / 171.1 / 170.5 |
+| v0.19 | 171 / 189 / 226 / 299 / 335 | 209 / 234 / 269 / 334 / 363 | 167 / 193 / 231 / 300 / 339 | 102.0 / 106.8 / 138.0 / 171.1 / 170.5 |
+| v0.20 current | 166 / 185 / 229 / 298 / 335 | 207 / 229 / 268 / 334 / 361 | 165 / 188 / 232 / 300 / 337 | 100.8 / 121.9 / 127.8 / 148.6 / 170.8 |
+
+Nano remained at 93 iCE40 LUT4 and 114 occupied ECP5 sites throughout these
+snapshots. The open-FPGA Tiny rows show no general size inflation: Min and Sys
+move by a few sites at most widths, while current Full is smaller than v0.14 at
+most iCE40 and ECP5 points. The wider block-RF implementations have generally
+shrunk. Agilex was recharacterized independently, so its version rows are
+published snapshots rather than a controlled delta.
+
+### Fast and Faster size history
+
+The pipelined-core sizes published with each release are collected below.
+Fast open-FPGA values use LUT4 or occupied ECP5 sites, including the ECP5
+LUTRAM RF. Agilex values are CPU-hierarchy ALMs; Fast lists soft/DSP and Faster
+lists DSP/soft, matching their normal presentation. Faster has no maintained
+open-FPGA implementation.
+
+| version and snapshot | Fast iCE40 soft / DSP | Fast ECP5 soft / DSP | Fast Agilex soft / DSP | Faster Agilex DSP / soft |
+|---|---:|---:|---:|---:|
+| v0.14 `aa902db` | 480 / 440 | — | 308.0 / 310.0 | 299.3 / 326.4 |
+| v0.15 `d60971e` | 479 / 439 | 498 / 450 | 277.2 / 235.3 | 310.4 / 328.7 |
+| v0.16 `d7f6922` | 480 / 441 | 497 / 457 | 277.2 / 235.3 | 310.4 / 310.4 |
+| v0.17 `ea4cf5a` | 480 / 441 | 497 / 457 | 285.0 / 261.0 | 349.0 / 339.0 |
+| v0.18 `44c01ce` | 479 / 448 | 496 / 467 | 265.1 / 243.2 | 334.0 / 317.5 |
+| v0.19 `755224e` | 488 / 452 | 502 / 467 | 275.3 / 256.9 | 319.5 / 326.0 |
+| v0.20 current | 487 / 450 | 516 / 475 | 253.9 / 268.4 | 309.9 / 322.5 |
+
+The current Fast open-FPGA trend is mixed rather than general size inflation.
+From v0.14 to v0.20, iCE40 rises by 7 LUT4 soft and 10 LUT4 DSP. From the first
+published ECP5 Fast point in v0.15, the increases are 18 and 25 occupied sites.
+Relative to v0.19, current v0.20 is 1/2 LUT4 smaller on iCE40 and 14/8 sites
+larger on ECP5. The remaining growth includes the direct typed/program-load
+path added in v0.19 and target-specific performance paths.
+
+The initial v0.20 mapping was 502/467 iCE40 LUT4 and 516/480 ECP5 sites.
+Retaining raw compact-funnel fields, retaining decoded synchronous-RF replay
+addresses, and retuning the target datapath splits reduce those points by
+15/17 iCE40 LUT4 and 0/5 ECP5 sites without a material routed-frequency
+regression.
+
+Faster does not show monotonic size growth. Its published DSP points span
+299.3 to 349.0 ALMs and its soft points 310.4 to 339.0 ALMs. Current DSP is
+10.6 ALMs above v0.14 but 39.1 below the v0.17 peak; current soft is 3.9 ALMs
+below v0.14. Relative to v0.19, current Faster is -9.6 ALMs DSP and -3.5 ALMs
+soft. These Agilex differences include independent fitter characterizations,
+so they indicate trend and scale rather than isolated RTL cost.
+
+### Direct v0.19 to v0.20 comparison
+
+Commit `755224e` and the current tree have unchanged common benchmark cycle
+counts. Each uses synthesis recipes and routing seeds characterized for its
+RTL, making this the closest implementation comparison. Each entry is
+`logic / routed Fmax in MHz`; ECP5 logic includes the LUTRAM RF.
+
+| point | v0.19 `755224e` | v0.20 current | change |
+|---|---:|---:|---:|
+| UP5K Sys `/1` | 154 / 36.15 | 150 / 36.26 | -4 / +0.11 |
+| UP5K Sys `/4` | 198 / 31.24 | 198 / 31.22 | 0 / -0.02 |
+| UP5K Sys `/16` | 291 / 31.09 | 290 / 30.86 | -1 / -0.23 |
+| ECP5 Sys `/1` | 190 / 110.24 | 189 / 116.65 | -1 / +6.41 |
+| ECP5 Sys `/4` | 238 / 102.18 | 235 / 102.52 | -3 / +0.34 |
+| ECP5 Sys `/16` | 319 / 96.52 | 316 / 96.62 | -3 / +0.10 |
+| UP5K Fast soft | 488 / 25.86 | 487 / 25.13 | -1 / -0.73 |
+| UP5K Fast DSP | 452 / 24.16 | 450 / 24.88 | -2 / +0.72 |
+| ECP5 Fast soft | 502 / 72.71 | 516 / 77.85 | +14 / +5.14 |
+| ECP5 Fast DSP | 467 / 71.00 | 475 / 75.43 | +8 / +4.43 |
+
+The v0.20 compact changes are consequently close to area-neutral on the Tiny
+Sys examples. Retuned ECP5 routes preserve or improve frequency at the
+representative points, including a 6.41 MHz gain at `/1`. Fast is smaller on
+iCE40; its soft route loses 0.73 MHz while its DSP route gains 0.72 MHz. ECP5
+Fast retains a 14/8-site cost and gains 5.14/4.43 MHz.
+The current section 3 tables, rather than this selected comparison, remain the
+complete result set.
+
+### Measurement provenance
+
+- v0.14 and v0.15 used shared Tiny RTL and mostly default routing seeds. v0.16
+  introduced profile-specific sources; v0.18 and later increasingly use
+  target-, width-, and profile-specific Boolean factorizations, synthesis
+  options, and characterized seeds. Small historical deltas can therefore be
+  mapper effects as well as RTL effects.
+- ECP5 LUTRAM-RF counts include occupied RF sites; block-RF counts exclude the
+  DP16KD itself. Agilex reports ALMs separately from MLAB and DSP resources.
+  These units must not be compared directly.
+- Through v0.18 the common benchmark retired 3165 mainline instructions and
+  8418 Nano instructions. v0.19 and v0.20 retire 3238 and 8491. Across that
+  boundary, compare benchmark cycles or Fmax divided by cycles rather than raw
+  MIPS. Before v0.19, published UP5K Fast MIPS also used generic asynchronous-RF
+  cycle counts instead of the actual synchronous-EBR counts.
+- Historical Agilex points were refreshed independently and older efficiency
+  rows used kLE rather than ALM. Treat them as implementation snapshots. The
+  current full Quartus Pro matrix is the reference for cross-core Agilex
+  comparisons; all listed Agilex Fmax values are restricted-Fmax estimates,
+  not guaranteed closure at every frequency.
+
+## 5. FPGA toolchain
 
 The open-source flow needs yosys, Verilator 5 or newer, g++, Python 3,
 nextpnr-ice40, nextpnr-ecp5, icestorm, prjtrellis, and optionally ccache and
@@ -338,7 +521,7 @@ C++ ISS, and host C/C++ compilation for the LLVM build. It uses ccache's
 configured persistent directory (normally `~/.cache/ccache`), not `/tmp`.
 Yosys synthesis is not a ccache workload.
 
-## 5. Validation and measurement
+## 6. Validation and measurement
 
 ```sh
 make test-<width>-<profile>   # Tiny width 1/2/4/8/16
@@ -417,7 +600,7 @@ Build artifacts, generated programs, traces, and reports belong under
 `build/`; keep source-tree RTL and board directories free of generated flow
 output.
 
-## 6. Board builds and demos
+## 7. Board builds and demos
 
 Each board SoC provides:
 

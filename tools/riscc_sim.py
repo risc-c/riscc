@@ -199,7 +199,7 @@ class Sim:
                ((self.uart_irq_en & 2) and self.uart_tx_ready)
 
     # -- memory helpers (byte addressing, word-aligned word access) -------
-    def ldw(self, baddr):
+    def load_word(self, baddr):
         waddr = (baddr >> 1) & 0x7FFF
         if waddr == TEST_IRQ_W:
             cause = 1 if self.irq_line else 0
@@ -218,7 +218,7 @@ class Sim:
         val = self.mem[waddr]
         return val
 
-    def stw(self, baddr, val, mask=3):
+    def store_word(self, baddr, val, mask=3):
         w = (baddr >> 1) & 0x7FFF
         if self.uart and w in (UART_DATA_W, UART_STATE_W):
             self.mem_written[w] = True
@@ -250,9 +250,9 @@ class Sim:
 
     def stb(self, baddr, val):
         if baddr & 1:
-            self.stw(baddr, (val & 0xFF) << 8, mask=2)
+            self.store_word(baddr, (val & 0xFF) << 8, mask=2)
         else:
-            self.stw(baddr, val & 0xFF, mask=1)
+            self.store_word(baddr, val & 0xFF, mask=1)
 
     def emit_trace(self, pc_before, ir):
         if not self.trace:
@@ -299,9 +299,9 @@ class Sim:
         elif opc == 1:
             addr = (self.r[aaa] + sx8(imm8 & 0xFE)) & 0xFFFF
             if ir & 1:
-                self.stw(addr, self.r[ddd])
+                self.store_word(addr, self.r[ddd])
             else:
-                self.r[ddd] = self.ldw(addr)
+                self.r[ddd] = self.load_word(addr)
         elif opc == 2:
             if aaa == 0:                                # LDI
                 self.r[ddd] = imm8
@@ -359,9 +359,9 @@ class Sim:
                         raise Undefined("MUL without the full profile")
                     res = (a * b) & 0xFFFF
                 self.r[ddd] = res
-            elif f5 == 0x08:                            # LDWX rd, [ra+rb]
+            elif f5 == 0x08:                            # LDX rd, [ra+rb]
                 addr = (self.r[aaa] + self.r[bbb]) & 0xFFFF
-                self.r[ddd] = self.ldw(addr)
+                self.r[ddd] = self.load_word(addr)
             elif f5 == 0x0A:                            # LDB / LDPH rd, [ra]
                 if bbb == 0:
                     self.r[ddd] = self.ldb(self.r[aaa], False)
@@ -404,14 +404,16 @@ class Sim:
                     dividend = (remainder << 16) | quotient
                     self.r[aaa] = dividend // divisor
                     self.r[ddd] = dividend % divisor
-            elif f5 in (0x12, 0x13):                    # FSR1 / FSL1
+            elif f5 == 0x11:                            # FSL1 / FSR1
+                if bbb > 1:
+                    raise Undefined("compact funnel selector reserved")
                 if self.nano:
                     raise Undefined("funnel shift in nano")
-                a, b = self.r[aaa], self.r[bbb]
-                if f5 == 0x13:
-                    self.r[ddd] = ((a << 1) | (b >> 15)) & 0xFFFF
+                shifted, endpoint = self.r[ddd], self.r[aaa]
+                if bbb == 0:
+                    self.r[ddd] = ((shifted << 1) | (endpoint >> 15)) & 0xFFFF
                 else:
-                    self.r[ddd] = (a >> 1) | ((b & 1) << 15)
+                    self.r[ddd] = (shifted >> 1) | ((endpoint & 1) << 15)
             elif f5 == 0x0B:                            # STB rd, [ra]
                 if bbb != 0:
                     raise Undefined("STB sub-op reserved")
@@ -427,14 +429,18 @@ class Sim:
                     self.pc = pc_next
                     self.emit_trace(pc_before, ir)
                     return
-                if bbb == 0:                            # RET/RETI Sa
+                if bbb == 0:                            # control subgroup
                     if ddd == 0:
                         pc_next = self.s[aaa] & 0x7FFF
-                    elif ddd == 7 and self.sys_tier:
+                    elif ddd == 5 and self.sys_tier:
                         self.ie = 1
                         pc_next = self.s[aaa] & 0x7FFF
+                    elif ddd in (2, 7) and self.sys_tier:
+                        if aaa != 0:
+                            raise Undefined("CLI/STI aaa field reserved")
+                        self.ie = int(ddd == 7)
                     else:
-                        raise Undefined("return control selector reserved")
+                        raise Undefined("control selector reserved")
                 elif bbb == 1:                          # JALR Sd, ra
                     target = self.r[aaa] & 0x7FFF
                     if ddd != 0:
@@ -444,17 +450,6 @@ class Sim:
                     self.r[ddd] = self.s[aaa]
                 elif bbb == 3:                          # MTS Sd, ra
                     self.s[ddd] = self.r[aaa]
-                elif bbb == 6:                          # CLI / STI
-                    if not self.sys_tier:
-                        raise Undefined("sys-profile op in min")
-                    if aaa != 0:
-                        raise Undefined("CLI/STI aaa field reserved")
-                    if ddd == 0:
-                        self.ie = 0
-                    elif ddd == 7:
-                        self.ie = 1
-                    else:
-                        raise Undefined("IE control selector reserved")
                 else:
                     raise Undefined("system sub-op reserved")
             else:

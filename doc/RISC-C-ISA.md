@@ -10,7 +10,7 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.19.0`.
+Version: `v0.20.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
@@ -123,8 +123,15 @@ behavior.
 | `x = y` | define temporary value `x` as `y` |
 | `sxN(x)`, `zxN(x)` | sign-extend or zero-extend the N-bit value `x` to XLEN bits |
 | `signedXLEN(x)` | interpret XLEN-bit value `x` as a signed two's-complement integer |
+| `unsignedXLEN(x)` | interpret XLEN-bit value `x` as an unsigned integer |
+| `x << n`, `x >> n` | logical left or logical right shift of the XLEN-bit value `x` by `n` bits |
 | `x >>> n` | arithmetic right shift of signed value `x` by `n` bits |
 | `x[h:l]` | bit field |
+
+Comparison operators applied directly to XLEN-bit values use unsigned
+interpretation. Unless an instruction masks the count before shifting, a
+logical shift by `n >= XLEN` produces zero and an arithmetic right shift by
+`n >= XLEN` produces XLEN copies of the original sign bit.
 
 Arithmetic register results wrap modulo `2^XLEN`.
 
@@ -177,7 +184,7 @@ effects. A platform or extension may define them.
 
 ### 2.2 Alignment
 
-`LDW`, `STW`, and `LDWX` require a two-byte-aligned effective address. The
+`LD`, `ST`, and `LDX` require a two-byte-aligned effective address. The
 effective address, rather than an individual base or displacement, determines
 alignment. An unaligned access has undefined behavior; software must not depend
 on whether an implementation traps, rounds the address, or performs another
@@ -205,14 +212,14 @@ The displacement is:
 simm = sx8({ i[7:1], 0 })
 ```
 
-For `LDW`, `ddd` selects `rd`; for `STW`, it selects `rs`.
+For `LD`, `ddd` selects `rd`; for `ST`, it selects `rs`.
 
 | `S` | instruction | operation |
 |:---:|---|---|
-| `0` | `LDW rd, [ra+simm]` | `R[d] ← MXLEN[R[a] + simm]` |
-| `1` | `STW rs, [ra+simm]` | `MXLEN[R[a] + simm] ← R[s]` |
+| `0` | `LD rd, [ra+simm]` | `R[d] ← MXLEN[R[a] + simm]` |
+| `1` | `ST rs, [ra+simm]` | `MXLEN[R[a] + simm] ← R[s]` |
 
-The omitted displacement is zero. `LDW` and `STW` must meet the data-word
+The omitted displacement is zero. `LD` and `ST` must meet the data-word
 alignment requirement in section 2.2.
 
 An indexed native-width load uses the register format:
@@ -223,10 +230,10 @@ An indexed native-width load uses the register format:
 
 | `fffff` | instruction | operation |
 |:---:|---|---|
-| `01_000` | `LDWX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
+| `01000` | `LDX rd, [ra+rb]` | `R[d] ← MXLEN[R[a] + R[b]]` |
 
-Here `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and `rb`. `LDWX` has the same
-data-word alignment requirement as `LDW` and `STW`. There is no indexed
+Here `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and `rb`. `LDX` has the same
+data-word alignment requirement as `LD` and `ST`. There is no indexed
 native-width store: a store uses the immediate-offset form above.
 
 ### 3.2 Direct Typed Access Encoding
@@ -254,9 +261,9 @@ The function field selects the operation class:
 
 | `fffff` | operation class |
 |:---:|---|
-| `01_010` | direct zero-extending load |
-| `01_011` | direct store |
-| `01_110` | direct sign-extending load |
+| `01010` | direct zero-extending load |
+| `01011` | direct store |
+| `01110` | direct sign-extending load |
 
 ### 3.3 RC16 Typed Data-Byte Accesses
 
@@ -265,9 +272,9 @@ RC16 direct data accesses are byte accesses. They use the data selector
 
 | `fffff` | `bbb` | instruction | operation |
 |:---:|:---:|---|---|
-| `01_010` | `000` | `LDB rd, [ra]` | `R[d] ← zx8(M8[R[a]])` |
-| `01_011` | `000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
-| `01_110` | `000` | `LDBS rd, [ra]` | `R[d] ← sx8(M8[R[a]])` |
+| `01010` | `000` | `LDB rd, [ra]` | `R[d] ← zx8(M8[R[a]])` |
+| `01011` | `000` | `STB rs, [ra]` | `M8[R[a]] ← R[s][7:0]` |
+| `01110` | `000` | `LDBS rd, [ra]` | `R[d] ← sx8(M8[R[a]])` |
 
 `LDB` and `LDBS` zero- and sign-extend the addressed byte to XLEN bits.
 `STB` writes the low byte of its source register. Byte data-memory accesses
@@ -280,14 +287,14 @@ RC16 defines one direct program-memory access. It uses `bbb=011`
 
 | `fffff` | `bbb` | instruction | operation |
 |:---:|:---:|---|---|
-| `01_010` | `011` | `LDPH rd, [ra]` | `R[d] ← zx16(P16[R[a]])` |
+| `01010` | `011` | `LDPH rd, [ra]` | `R[d] ← zx16(P16[R[a]])` |
 
 `LDPH` reads the program-memory halfword at instruction address `ra`,
 zero-extends it to XLEN bits, and does not modify `pc`. `LDP` is the
 native-width program-memory-load alias; in RC16 it names `LDPH`.
 
 Program-memory byte accesses and stores are not defined in RC16. The direct
-store encodings `01_011` with `bbb=011` and `bbb=101` are retained as forward
+store encodings `01011` with `bbb=011` and `bbb=101` are retained as forward
 allocations for `STPH` and `STPW`, respectively.
 
 ## 4. Immediate and Branch Instructions
@@ -381,26 +388,25 @@ Unless specified otherwise, `ddd`, `aaa`, and `bbb` select `rd`, `ra`, and
 
 | `fffff` | instruction | operation |
 |---|---|---|
-| `00_000` | `ADD rd, ra, rb` | `R[d] ← R[a] + R[b]` |
-| `00_001` | `SUB rd, ra, rb` | `R[d] ← R[a] - R[b]` |
-| `00_010` | `SLT rd, ra, rb` | `R[d] ← (signedXLEN(R[a]) < signedXLEN(R[b])) ? 1 : 0` |
-| `00_011` | `SLTU rd, ra, rb` | `R[d] ← (R[a] < R[b]) ? 1 : 0` |
-| `00_100` | `AND rd, ra, rb` | `R[d] ← R[a] & R[b]` |
-| `00_101` | `OR rd, ra, rb` | `R[d] ← R[a] \| R[b]` |
-| `00_110` | `XOR rd, ra, rb` | `R[d] ← R[a] ^ R[b]` |
-| `00_111` | `MUL rd, ra, rb` | `R[d] ← (R[a] * R[b])[XLEN-1:0]` |
-| `01_000` | indexed native-width load | section 3.1 |
-| `01_010` | direct zero-extending load | section 3.2 |
-| `01_011` | direct store | section 3.2 |
-| `01_100` | `SRLI rd, ra, imm` | `R[d] ← R[a] >> (bbb + 1)` |
-| `01_101` | `SRAI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
-| `01_110` | direct sign-extending load | section 3.2 |
-| `01_111` | `SLLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
-| `10_000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; Appendix B |
-| `10_010` | `FSR1 rd, ra, rb` | `R[d] ← (R[a] >> 1) \| (R[b][0] << (XLEN-1))` |
-| `10_011` | `FSL1 rd, ra, rb` | `R[d] ← (R[a] << 1) \| R[b][XLEN-1]` |
-| `10_100` | `MULHU rl, rh, rb` | paired unsigned product; Appendix B |
-| `11_111` | control and S-register group | section 6 |
+| `00000` | `ADD rd, ra, rb` | `R[d] ← R[a] + R[b]` |
+| `00001` | `SUB rd, ra, rb` | `R[d] ← R[a] - R[b]` |
+| `00010` | `SLT rd, ra, rb` | `R[d] ← (signedXLEN(R[a]) < signedXLEN(R[b])) ? 1 : 0` |
+| `00011` | `SLTU rd, ra, rb` | `R[d] ← (unsignedXLEN(R[a]) < unsignedXLEN(R[b])) ? 1 : 0` |
+| `00100` | `AND rd, ra, rb` | `R[d] ← R[a] & R[b]` |
+| `00101` | `OR rd, ra, rb` | `R[d] ← R[a] \| R[b]` |
+| `00110` | `XOR rd, ra, rb` | `R[d] ← R[a] ^ R[b]` |
+| `00111` | `MUL rd, ra, rb` | `R[d] ← (R[a] * R[b])[XLEN-1:0]` |
+| `01000` | indexed native-width load | section 3.1 |
+| `01010` | direct zero-extending load | section 3.2 |
+| `01011` | direct store | section 3.2 |
+| `01100` | `SRLI rd, ra, imm` | `R[d] ← R[a] >> (bbb + 1)` |
+| `01101` | `SRAI rd, ra, imm` | `R[d] ← signedXLEN(R[a]) >>> (bbb + 1)` |
+| `01110` | direct sign-extending load | section 3.2 |
+| `01111` | `SLLI rd, ra, imm` | `R[d] ← R[a] << (bbb + 1)` |
+| `10000` | `DIVU rr, rq, rb` | paired unsigned divide/remainder; Appendix B |
+| `10001` | two-operand group | section 5.1 |
+| `10100` | `MULHU rl, rh, rb` | paired unsigned product; Appendix B |
+| `11111` | control and S-register group | section 6 |
 
 All unlisted `fffff` values are reserved and undefined. The load and store
 encodings in this table are specified in section 3.
@@ -418,12 +424,6 @@ it writes zero.
 `AND`, `OR`, and `XOR` perform the corresponding bitwise operation on `ra`
 and `rb`, then write the result to `rd`.
 
-`FSL1` and `FSR1` are one-bit funnel shifts. `FSL1` shifts `ra` left and
-inserts the sign-position bit of `rb` at bit 0. `FSR1` shifts `ra` right and
-inserts bit 0 of `rb` at the sign position. Both source registers are read
-before `rd` is written, so
-`rd` may name either source register.
-
 `SLLI` and `SRLI` shift `ra` left and right, respectively, inserting zeros
 into the vacated bits. Their shift count is `bbb+1`.
 
@@ -438,6 +438,33 @@ low XLEN-bit portion is the same for signed and unsigned multiplication.
 must be zero; `SLLI` is undefined. `MUL` is available only in the `full`
 profile.
 
+### 5.1 Two-Operand Group
+
+The compact two-operand format is:
+
+```text
+11 ddd aaa 10_001 ooo
+```
+
+`ddd` selects the read/write register `rd`, `aaa` selects the source register
+`ra`, and `ooo = { A, V, R }` selects the operation. `A` selects arithmetic
+shifting, `V` selects a variable shift rather than a funnel shift, and `R`
+selects right rather than left:
+
+| `ooo` | instruction | operation |
+|:---:|---|---|
+| `000` | `FSL1 rd, ra` | `R[d] ← (R[d] << 1) \| R[a][XLEN-1]` |
+| `001` | `FSR1 rd, ra` | `R[d] ← (R[d] >> 1) \| (R[a][0] << (XLEN-1))` |
+| `010` | `SLL rd, ra` | variable logical-left shift; Appendix E |
+| `011` | `SRL rd, ra` | variable logical-right shift; Appendix E |
+| `100..110` | reserved | undefined |
+| `111` | `SRA rd, ra` | variable arithmetic-right shift; Appendix E |
+
+`FSL1` and `FSR1` shift `rd` by one bit and insert one endpoint bit from `ra`.
+Both operands are read before `rd` is written, including when `rd` and `ra`
+name the same register. The `SLL`, `SRL`, and `SRA` encodings are defined only
+when the optional extension in Appendix E is implemented.
+
 ## 6. Control Transfer and S-Register Instructions
 
 Most control and S-register instructions have the following format:
@@ -446,17 +473,22 @@ Most control and S-register instructions have the following format:
 11 ddd aaa 11111 bbb
 ```
 
-For `bbb = 000` and `bbb = 110`, `ddd` is a control selector. Only the
-following control-selector values are defined:
+For `bbb = 000`, `ddd` is a control selector. Only the following
+control-selector values are defined:
 
 | `bbb` | `ddd` | instruction | operation |
 |---|---|---|---|
 | `000` | `000` | `RET Sa` | `pc ← S[a]` |
-| `000` | `111` | `RETI Sa` | `IE ← 1`; `pc ← S[a]` |
-| `110` | `000` | `CLI` | `IE ← 0` |
-| `110` | `111` | `STI` | `IE ← 1` |
+| `000` | `101` | `RETI Sa` | `IE ← 1`; `pc ← S[a]` |
+| `000` | `010` | `CLI` | `IE ← 0` |
+| `000` | `111` | `STI` | `IE ← 1` |
 
-All other `ddd` values in those two `bbb` rows are reserved and undefined.
+In these selectors, `ddd[1]` selects a return (`0`) or a direct `IE`
+operation (`1`), and `ddd[2] = ddd[0]` supplies the zero/one value. The
+return/value-zero combination preserves `IE`; the other three combinations
+write the selected value.
+
+All other `ddd` values in the `bbb = 000` row are reserved and undefined.
 `aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
 
 The remaining `bbb` values have the following definitions:
@@ -466,13 +498,13 @@ The remaining `bbb` values have the following definitions:
 | `001` | `JALR Sd, ra` | if `d != 0`, `S[d] ← pc_next`; `pc ← R[a]` |
 | `010` | `MFS rd, Sa` | `R[d] ← S[a]` |
 | `011` | `MTS Sd, ra` | `S[d] ← R[a]` |
-| `100..101` | reserved | undefined |
-| `111` | reserved | undefined |
+| `100..111` | reserved | undefined |
 
 `RET` transfers control through its S-register operand. It does not change
 `IE`.
 
 `RETI` transfers control through its S-register operand and sets `IE` to one.
+Consequently, `RET S0` preserves `IE`, while `RETI S0` sets it.
 
 `CLI` clears `IE`.
 
@@ -511,12 +543,16 @@ from `min`.
 
 ## 8. Interrupts
 
-Interrupts are optional and are implemented by some profiles. A platform may
-provide
-one or more interrupt sources and may use an interrupt controller to select
-an interrupt vector. Interrupts are sampled between completed architectural
-instructions, using the value of `IE` resulting from the preceding
-instruction. A maskable interrupt is taken only when that value is one.
+The `sys` and `full` profiles implement `IE` and the interrupt-entry mechanism
+defined below. The `min` profile and Nano do not define interrupt entry. A
+platform may provide zero or more interrupt sources and may use an interrupt
+controller to select an interrupt vector.
+
+RISC-C defines only maskable interrupts. Non-maskable interrupt behavior,
+if present, must be defined by a platform or extension. Interrupts defined by
+this section are sampled between completed architectural instructions, using
+the value of `IE` resulting from the preceding instruction, and are taken only
+when that value is one.
 
 At an interrupt boundary, `pc` is the instruction address of the next
 instruction that would have executed had the interrupt not been taken.
@@ -550,9 +586,9 @@ smaller profile's defined instructions is valid on a larger profile.
 
 | instruction | `min` | `sys` | `full` |
 |---|:---:|:---:|:---:|
-| `LDW rd, [ra+simm]` | X | X | X |
-| `STW rs, [ra+simm]` | X | X | X |
-| `LDWX rd, [ra+rb]` | X | X | X |
+| `LD rd, [ra+simm]` | X | X | X |
+| `ST rs, [ra+simm]` | X | X | X |
+| `LDX rd, [ra+rb]` | X | X | X |
 | `LDB rd, [ra]` | X | X | X |
 | `LDBS rd, [ra]` | X | X | X |
 | `STB rs, [ra]` | X | X | X |
@@ -577,8 +613,11 @@ smaller profile's defined instructions is valid on a larger profile.
 | `AND rd, ra, rb` | X | X | X |
 | `OR rd, ra, rb` | X | X | X |
 | `XOR rd, ra, rb` | X | X | X |
-| `FSL1 rd, ra, rb` | X | X | X |
-| `FSR1 rd, ra, rb` | X | X | X |
+| `FSL1 rd, ra` | X | X | X |
+| `FSR1 rd, ra` | X | X | X |
+| `SLL rd, ra` § |  |  |  |
+| `SRL rd, ra` § |  |  |  |
+| `SRA rd, ra` § |  |  |  |
 | `SLLI rd, ra, 1..8` |  | X | X |
 | `SRLI rd, ra, 1` | X | X | X |
 | `SRLI rd, ra, 2..8` |  | X | X |
@@ -597,15 +636,15 @@ smaller profile's defined instructions is valid on a larger profile.
 
 
 
-§ `MULHU` and `DIVU` are optional Appendix B instructions; neither is required
-by any profile.
+§ `SLL`, `SRL`, and `SRA` are optional Appendix E instructions. `MULHU` and
+`DIVU` are optional Appendix B instructions. None is required by any profile.
 
 # Appendices
 
 ## Appendix A. Nano Profile
 
 Nano is a separate reduced RC16 variant rather than a mainline profile. It does
-not combine with the extensions in Appendices B, C, or D.
+not combine with the extensions in Appendices B through E.
 
 ### A.1 Architectural State
 
@@ -620,7 +659,7 @@ Nano defines only the following compact instructions:
 
 | class | instructions |
 |---|---|
-| memory | `LDW`, `STW`, `LDWX`, `LDB`, `STB` |
+| memory | `LD`, `ST`, `LDX`, `LDB`, `STB` |
 | immediate | `LDI`, `LUI`, `ADDI`, `ANDI`, `ORI`, `XORI` |
 | branch | `BEQZ`, `BNEZ`, `BLTZ`, `BGEZ`, `JMP8` |
 | register | `ADD`, `SUB`, `SLTU`, `AND`, `OR`, `XOR` |
@@ -638,7 +677,7 @@ writes `pc_next` to general register `rd` and transfers control through `R[a]`.
 With `rd = r0`, no link is written; this is a plain register jump. Assemblers
 may spell these forms as `CALL rd, ra` and `JMP ra`, respectively.
 
-## Appendix B. Multiply-Divide Instructions Extension
+## Appendix B. Multiply-Divide Instructions (MDU) Extension
 
 This optional extension may be combined with RC16 or RC32. When the optional
 X32 extension is implemented with RC32, Appendix D supplies long forms with
@@ -671,17 +710,17 @@ pair `rr:rq` as a two-XLEN-bit unsigned partial dividend. More precisely,
 using the input register values:
 
 ```text
-N       = (R[rr] << XLEN) | R[rq]
+N       = unsignedXLEN(R[rr]) * 2^XLEN + unsignedXLEN(R[rq])
 divisor = R[rb]
 R[rq]   ← N / divisor
 R[rr]   ← N % divisor
 ```
 
 `rr`, `rq`, and `rb` must name different registers. `divisor` must be
-nonzero, and `R[rr] < divisor` is required on entry; this guarantees that the
-quotient fits in XLEN bits. If any of these requirements is not met, the result
-is undefined. These operand restrictions are an exception to the general
-source-before-destination ordering rule.
+nonzero, and `unsignedXLEN(R[rr]) < unsignedXLEN(divisor)` is required on
+entry; this guarantees that the quotient fits in XLEN bits. If any of these
+requirements is not met, the result is undefined. These operand restrictions
+are an exception to the general source-before-destination ordering rule.
 
 ## Appendix C. RC32 Width Extension
 
@@ -721,7 +760,7 @@ other result bits, including bits `[31:16]`.
 
 ### C.2 RC32 Memory Access
 
-In RC32, `MXLEN[a]` is the 32-bit data word `M32[a]`. `LDW`, `STW`, and `LDWX`
+In RC32, `MXLEN[a]` is the 32-bit data word `M32[a]`. `LD`, `ST`, and `LDX`
 therefore transfer 32 bits. They require a four-byte-aligned effective address.
 An unaligned access has undefined behavior unless another architectural
 extension defines it. An aligned 32-bit data-word access has the atomicity
@@ -735,7 +774,7 @@ PXLEN[a][15:0]  = P16[a]
 PXLEN[a][31:16] = P16[a + 1]
 ```
 
-The compact `LDW` and `STW` format is unchanged, but its displacement is:
+The compact `LD` and `ST` format is unchanged, but its displacement is:
 
 ```text
 simm = sx9({ i[1], i[7:2], 0, 0 })
@@ -746,24 +785,24 @@ families from section 3.2:
 
 | `fffff` | `bbb` | instruction | operation |
 |:---:|:---:|---|---|
-| `01_010` | `010` | `LDH rd, [ra]` | `R[d] ← zx16(M16[R[a]])` |
-| `01_010` | `101` | `LDPW rd, [ra]` | `R[d] ← PXLEN[R[a]]` |
-| `01_011` | `010` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
-| `01_110` | `010` | `LDHS rd, [ra]` | `R[d] ← sx16(M16[R[a]])` |
-| `01_110` | `011` | `LDPHS rd, [ra]` | `R[d] ← sx16(P16[R[a]])` |
+| `01010` | `010` | `LDH rd, [ra]` | `R[d] ← zx16(M16[R[a]])` |
+| `01010` | `101` | `LDPW rd, [ra]` | `R[d] ← PXLEN[R[a]]` |
+| `01011` | `010` | `STH rs, [ra]` | `M16[R[a]] ← R[s][15:0]` |
+| `01110` | `010` | `LDHS rd, [ra]` | `R[d] ← sx16(M16[R[a]])` |
+| `01110` | `011` | `LDPHS rd, [ra]` | `R[d] ← sx16(P16[R[a]])` |
 
 `LDH`, `LDHS`, and `STH` require a two-byte-aligned data address. The compact
-`LDPH` inherited from RC16 and the optional `LDPHS` access one program-memory
-halfword and have no additional alignment requirement. `LDPW` is a 32-bit word
+`LDPH` inherited from RC16 and `LDPHS` access one program-memory halfword and
+have no additional alignment requirement. `LDPW` is a 32-bit word
 access and follows the normal word-alignment rule: its effective instruction
 address must be even. An unaligned access has undefined behavior unless another
 architectural extension defines it.
 
 `LDP` is the native-width alias for `LDPW` in RC32. `LDPHS` and `LDPW` are
-optional and are required by no RC32 profile; compact `LDPH` remains mandatory
-through the inherited mainline profile. The data-memory
+mandatory in every RC32 profile; compact `LDPH` remains mandatory through the
+inherited mainline profile. The data-memory
 `bbb=100` forms remain undefined because native 32-bit access already uses
-`LDW` or `STW` with a zero displacement. The direct program-store encodings
+`LD` or `ST` with a zero displacement. The direct program-store encodings
 `bbb=011` and `bbb=101` remain the forward allocations for `STPH` and `STPW`;
 all other program-memory stores and all 64-bit width encodings remain reserved.
 RC32 byte loads extend their result to 32 bits.
@@ -846,6 +885,8 @@ The following instructions are mandatory in every RC32 mainline profile:
 | `LDH rd, [ra]` | X | X | X |
 | `LDHS rd, [ra]` | X | X | X |
 | `STH rs, [ra]` | X | X | X |
+| `LDPHS rd, [ra]` | X | X | X |
+| `LDPW rd, [ra]` | X | X | X |
 | `LUIL rd, imm20` | X | X | X |
 | `ADDI rd, ra, simm12` | X | X | X |
 | `JAL Sd, rel23` | X | X | X |
@@ -941,32 +982,36 @@ xb = { BB, bbb }
 The zero low byte of the first halfword selects the register format. In the
 second halfword, `fffff` and `bbb` occupy the same positions as in a compact
 register instruction. For typed indexed data-memory loads, `ww` selects the
-access width using the width codes from section 3.2. All other register
+access width using the width codes from section 3.2. For shifts and the
+`10001` group, `ww` extends the operation as listed below. All other register
 instructions require `ww=00`. Stores use the long displacement format in
 section D.5, avoiding three-register-input long store operations.
 
 | `ww` | `fffff` | instruction | operation |
 |:---:|:---:|---|---|
-| `00` | `00_000` | `ADD Xd, Xa, Xb` | `X[xd] ← X[xa] + X[xb]` |
-| `00` | `00_001` | `SUB Xd, Xa, Xb` | `X[xd] ← X[xa] - X[xb]` |
-| `00` | `00_010` | `SLT Xd, Xa, Xb` | `X[xd] ← (signedXLEN(X[xa]) < signedXLEN(X[xb])) ? 1 : 0` |
-| `00` | `00_011` | `SLTU Xd, Xa, Xb` | `X[xd] ← (X[xa] < X[xb]) ? 1 : 0` |
-| `00` | `00_100` | `AND Xd, Xa, Xb` | `X[xd] ← X[xa] & X[xb]` |
-| `00` | `00_101` | `OR Xd, Xa, Xb` | `X[xd] ← X[xa] \| X[xb]` |
-| `00` | `00_110` | `XOR Xd, Xa, Xb` | `X[xd] ← X[xa] ^ X[xb]` |
-| `00` | `00_111` | `MUL Xd, Xa, Xb` | `X[xd] ← (X[xa] * X[xb])[31:0]` |
-| `00` | `01_000` | `LDWX Xd, [Xa+Xb]` | `X[xd] ← M32[X[xa] + X[xb]]` |
-| `00` | `01_010` | `LDB Xd, [Xa+Xb]` | `X[xd] ← zx8(M8[X[xa] + X[xb]])` |
-| `01` | `01_010` | `LDH Xd, [Xa+Xb]` | `X[xd] ← zx16(M16[X[xa] + X[xb]])` |
-| `00` | `01_100` | `SRLI Xd, Xa, 1..32` | `X[xd] ← X[xa] >> (xb + 1)` |
-| `00` | `01_101` | `SRAI Xd, Xa, 1..32` | `X[xd] ← signedXLEN(X[xa]) >>> (xb + 1)` |
-| `00` | `01_110` | `LDBS Xd, [Xa+Xb]` | `X[xd] ← sx8(M8[X[xa] + X[xb]])` |
-| `01` | `01_110` | `LDHS Xd, [Xa+Xb]` | `X[xd] ← sx16(M16[X[xa] + X[xb]])` |
-| `00` | `01_111` | `SLLI Xd, Xa, 1..32` | `X[xd] ← X[xa] << (xb + 1)` |
-| `00` | `10_000` | `DIVU Xr, Xq, Xb` § | paired unsigned divide/remainder; Appendix B |
-| `00` | `10_010` | `FSR1 Xd, Xa, Xb` | `X[xd] ← (X[xa] >> 1) \| (X[xb][0] << 31)` |
-| `00` | `10_011` | `FSL1 Xd, Xa, Xb` | `X[xd] ← (X[xa] << 1) \| X[xb][31]` |
-| `00` | `10_100` | `MULHU Xl, Xh, Xb` § | paired unsigned product; Appendix B |
+| `00` | `00000` | `ADD Xd, Xa, Xb` | `X[xd] ← X[xa] + X[xb]` |
+| `00` | `00001` | `SUB Xd, Xa, Xb` | `X[xd] ← X[xa] - X[xb]` |
+| `00` | `00010` | `SLT Xd, Xa, Xb` | `X[xd] ← (signedXLEN(X[xa]) < signedXLEN(X[xb])) ? 1 : 0` |
+| `00` | `00011` | `SLTU Xd, Xa, Xb` | `X[xd] ← (unsignedXLEN(X[xa]) < unsignedXLEN(X[xb])) ? 1 : 0` |
+| `00` | `00100` | `AND Xd, Xa, Xb` | `X[xd] ← X[xa] & X[xb]` |
+| `00` | `00101` | `OR Xd, Xa, Xb` | `X[xd] ← X[xa] \| X[xb]` |
+| `00` | `00110` | `XOR Xd, Xa, Xb` | `X[xd] ← X[xa] ^ X[xb]` |
+| `00` | `00111` | `MUL Xd, Xa, Xb` | `X[xd] ← (X[xa] * X[xb])[31:0]` |
+| `00` | `01000` | `LDX Xd, [Xa+Xb]` | `X[xd] ← M32[X[xa] + X[xb]]` |
+| `00` | `01010` | `LDB Xd, [Xa+Xb]` | `X[xd] ← zx8(M8[X[xa] + X[xb]])` |
+| `01` | `01010` | `LDH Xd, [Xa+Xb]` | `X[xd] ← zx16(M16[X[xa] + X[xb]])` |
+| `00` | `01100` | `SRLI Xd, Xa, 1..32` | `X[xd] ← X[xa] >> (xb + 1)` |
+| `01` | `01100` | `SRL Xd, Xa, Xb` § | `X[xd] ← X[xa] >> (X[xb] & 31)` |
+| `00` | `01101` | `SRAI Xd, Xa, 1..32` | `X[xd] ← signedXLEN(X[xa]) >>> (xb + 1)` |
+| `01` | `01101` | `SRA Xd, Xa, Xb` § | `X[xd] ← signedXLEN(X[xa]) >>> (X[xb] & 31)` |
+| `00` | `01110` | `LDBS Xd, [Xa+Xb]` | `X[xd] ← sx8(M8[X[xa] + X[xb]])` |
+| `01` | `01110` | `LDHS Xd, [Xa+Xb]` | `X[xd] ← sx16(M16[X[xa] + X[xb]])` |
+| `00` | `01111` | `SLLI Xd, Xa, 1..32` | `X[xd] ← X[xa] << (xb + 1)` |
+| `01` | `01111` | `SLL Xd, Xa, Xb` § | `X[xd] ← X[xa] << (X[xb] & 31)` |
+| `00` | `10000` | `DIVU Xr, Xq, Xb` § | paired unsigned divide/remainder; Appendix B |
+| `00` | `10001` | `FSL1 Xd, Xa, Xb` | `X[xd] ← (X[xa] << 1) \| X[xb][31]` |
+| `01` | `10001` | `FSR1 Xd, Xa, Xb` | `X[xd] ← (X[xa] >> 1) \| (X[xb][0] << 31)` |
+| `00` | `10100` | `MULHU Xl, Xh, Xb` § | paired unsigned product; Appendix B |
 
 All unlisted `ww` and `fffff` combinations are reserved and undefined. The
 indexed integer loads are available in every X32 profile. `ww=11` is reserved
@@ -974,15 +1019,22 @@ for 64-bit memory operations in a future XLEN=64 extension; that extension may
 also define `ww=10` zero- and sign-extending 32-bit indexed loads. Floating-
 point memory operations are not defined by X32.
 
-The arithmetic and shift encodings use the same selected-profile availability
-as their compact counterparts. The five-bit `MULHU` and `DIVU` forms are
-defined only when Appendix B is implemented and retain its operand
-restrictions.
+The arithmetic and immediate-shift encodings use the same selected-profile
+availability as their compact counterparts. § The variable `SLL`, `SRL`, and
+`SRA` forms are defined only when Appendix E is implemented. The five-bit
+`MULHU` and `DIVU` forms are defined only when Appendix B is implemented and
+retain its operand restrictions.
 
 For `SLLI`, `SRLI`, and `SRAI`, `xb` is an unsigned five-bit shift-count
 encoding rather than a register selector; the shift count is `xb + 1`, from
-one through 32. X32 `min` permits only the existing one-bit `SRLI` and `SRAI`
-forms, while X32 `sys` and `full` permit the full range and `SLLI`.
+one through 32. Appendix E defines the register-count forms. X32 `min` permits
+only the existing one-bit `SRLI` and `SRAI` forms, while X32 `sys` and `full`
+permit the full immediate-shift set. At a count of 32, `SLLI` and `SRLI`
+produce zero, while `SRAI` produces 32 copies of the original sign bit.
+
+The long `FSL1` and `FSR1` forms are full three-register operations. The
+compact forms in section 5.1 are equivalent to tying `Xa` to `Xd` and using
+the compact `ra` as `Xb`.
 
 ### D.3 U20 Instructions
 
@@ -1023,7 +1075,7 @@ bank. The twelve `i` bits form `imm12`.
 | `0000` | `ADDI Xd, Xa, simm12` | `X[xd] ← X[xa] + sx12(imm12)` |
 | `0001` | `JALR Sd, [Xa+simm12]` | if `d != 0`, `S[d] ← pc_next`; `pc ← X[xa] + sx12(imm12)` |
 | `0010` | `SLTI Xd, Xa, simm12` | `X[xd] ← (signedXLEN(X[xa]) < signedXLEN(sx12(imm12))) ? 1 : 0` |
-| `0011` | `SLTIU Xd, Xa, simm12` | `X[xd] ← (X[xa] < sx12(imm12)) ? 1 : 0` |
+| `0011` | `SLTIU Xd, Xa, simm12` | `X[xd] ← (unsignedXLEN(X[xa]) < unsignedXLEN(sx12(imm12))) ? 1 : 0` |
 | `0100` | `XORI Xd, Xa, simm12` | `X[xd] ← X[xa] ^ sx12(imm12)` |
 | `0101` | `LDP Xd, [Xa+simm12]` | `X[xd] ← PXLEN[X[xa] + sx12(imm12)]` |
 | `0110` | `ORI Xd, Xa, simm12` | `X[xd] ← X[xa] \| sx12(imm12)` |
@@ -1106,8 +1158,8 @@ pc_target = pc_next + sx12(rel12)
 | `0001` | `BNE Xd, Xa, rel12` | branch when `X[xd] != X[xa]` |
 | `0010` | `BLT Xd, Xa, rel12` | branch when `signedXLEN(X[xd]) < signedXLEN(X[xa])` |
 | `0011` | `BGE Xd, Xa, rel12` | branch when `signedXLEN(X[xd]) >= signedXLEN(X[xa])` |
-| `0100` | `BLTU Xd, Xa, rel12` | branch when `X[xd] < X[xa]` |
-| `0101` | `BGEU Xd, Xa, rel12` | branch when `X[xd] >= X[xa]` |
+| `0100` | `BLTU Xd, Xa, rel12` | branch when `unsignedXLEN(X[xd]) < unsignedXLEN(X[xa])` |
+| `0101` | `BGEU Xd, Xa, rel12` | branch when `unsignedXLEN(X[xd]) >= unsignedXLEN(X[xa])` |
 | `0110..1111` | reserved | undefined |
 
 Because instruction addresses select 16-bit halfwords, `rel12` has a signed
@@ -1123,3 +1175,160 @@ format. X32 adds five-bit-selector forms of the mandatory RC32 `LUIL` and
 sections D.3 and D.4. The long memory operations and conditional branches are
 also supplied by X32 itself in every X32 mainline profile. The extension has no
 Nano form and does not apply to RC16.
+
+## Appendix E. Variable-Shift (VSH) Instructions Extension
+
+This optional extension adds register-count logical-left, logical-right, and
+arithmetic-right shifts. It may be combined with RC16 or RC32, is required by
+no profile, and has no Nano form. The immediate-count `SLLI`, `SRLI`, and
+`SRAI` instructions are not part of VSH and retain their base profile
+availability.
+
+### E.1 Compact Variable Shifts
+
+VSH defines the following compact two-operand encodings from section 5.1:
+
+| `ooo` | instruction | operation |
+|:---:|---|---|
+| `010` | `SLL rd, ra` | `R[d] ← R[d] << n` |
+| `011` | `SRL rd, ra` | `R[d] ← R[d] >> n` |
+| `111` | `SRA rd, ra` | `R[d] ← signedXLEN(R[d]) >>> n` |
+
+In RC16, `n = R[a][3:0]`, from zero through 15. In RC32,
+`n = R[a][4:0]`, from zero through 31. Both operands are read before `rd` is
+written, including when `rd` and `ra` name the same register.
+
+### E.2 X32 Variable Shifts
+
+When X32 is also implemented, VSH defines the following long three-register
+forms from section D.2:
+
+| `ww` | `fffff` | instruction | operation |
+|:---:|:---:|---|---|
+| `01` | `01111` | `SLL Xd, Xa, Xb` | `X[xd] ← X[xa] << n` |
+| `01` | `01100` | `SRL Xd, Xa, Xb` | `X[xd] ← X[xa] >> n` |
+| `01` | `01101` | `SRA Xd, Xa, Xb` | `X[xd] ← signedXLEN(X[xa]) >>> n` |
+
+Here `n = X[xb] & 31`, from zero through 31. All source operands are read
+before `Xd` is written.
+
+## Appendix F. Complete Instruction Encoding Table
+
+This table indexes every defined instruction encoding in RC16, RC32, Nano, and
+the optional extensions. In the profile / extension column, `all` includes
+RC16, RC32, and Nano. `RC16` instructions are inherited by RC32 unless marked
+`RC16 only`; `RC32` identifies instructions added by the width extension. A
+profile qualifier includes that profile and every larger ordered profile; for
+example, `RC16 sys` includes `sys` and `full` for both RC16 and RC32. A
+displayed immediate-shift range constrains the corresponding encoded count;
+the `2..8` and `2..32` rows therefore exclude the separately listed one-bit
+encoding.
+
+| halfword 1 | halfword 2 | instruction | profile / extension |
+|---|---|---|---|
+| `01dddaaaiiiiiii0` | — | `LD rd, [ra+simm]` | all |
+| `01dddaaaiiiiiii1` | — | `ST rs, [ra+simm]` | all |
+| `10ddd000iiiiiiii` | — | `LDI rd, imm8` | all |
+| `10ddd001iiiiiiii` | — | `LUI rd, imm8` | all |
+| `10ddd010iiiiiiii` | — | `ADDI rd, simm8` | all |
+| `10ddd011iiiiiiii` | — | `CMPI rs, simm8` | RC16 |
+| `10ddd100iiiiiiii` | — | `ANDI rd, imm8` | all |
+| `10ddd101iiiiiiii` | — | `ORI rd, imm8` | all |
+| `10ddd110iiiiiiii` | — | `XORI rd, imm8` | all |
+| `10000111rrrrrrrr` | — | `BEQZ rel8` | all |
+| `10001111rrrrrrrr` | — | `BNEZ rel8` | all |
+| `10010111rrrrrrrr` | — | `BLTZ rel8` | all |
+| `10011111rrrrrrrr` | — | `BGEZ rel8` | all |
+| `10100111rrrrrrrr` | — | `JMP8 rel8` | all |
+| `11dddaaa00000bbb` | — | `ADD rd, ra, rb` | all |
+| `11dddaaa00001bbb` | — | `SUB rd, ra, rb` | all |
+| `11dddaaa00010bbb` | — | `SLT rd, ra, rb` | RC16 |
+| `11dddaaa00011bbb` | — | `SLTU rd, ra, rb` | all |
+| `11dddaaa00100bbb` | — | `AND rd, ra, rb` | all |
+| `11dddaaa00101bbb` | — | `OR rd, ra, rb` | all |
+| `11dddaaa00110bbb` | — | `XOR rd, ra, rb` | all |
+| `11dddaaa00111bbb` | — | `MUL rd, ra, rb` | RC16 full |
+| `11dddaaa01000bbb` | — | `LDX rd, [ra+rb]` | all |
+| `11dddaaa01010000` | — | `LDB rd, [ra]` | all |
+| `11dddaaa01010010` | — | `LDH rd, [ra]` | RC32 |
+| `11dddaaa01010011` | — | `LDPH rd, [ra]` | RC16 |
+| `11dddaaa01010101` | — | `LDPW rd, [ra]` | RC32 |
+| `11dddaaa01011000` | — | `STB rs, [ra]` | all |
+| `11dddaaa01011010` | — | `STH rs, [ra]` | RC32 |
+| `11dddaaa01100000` | — | `SRLI rd, ra, 1` | all |
+| `11dddaaa01100bbb` | — | `SRLI rd, ra, 2..8` | RC16 sys |
+| `11dddaaa01101000` | — | `SRAI rd, ra, 1` | all |
+| `11dddaaa01101bbb` | — | `SRAI rd, ra, 2..8` | RC16 sys |
+| `11dddaaa01110000` | — | `LDBS rd, [ra]` | RC16 |
+| `11dddaaa01110010` | — | `LDHS rd, [ra]` | RC32 |
+| `11dddaaa01110011` | — | `LDPHS rd, [ra]` | RC32 |
+| `11dddaaa01111bbb` | — | `SLLI rd, ra, 1..8` | RC16 sys |
+| `11dddaaa10000bbb` | — | `DIVU rr, rq, rb` | RC16 MDU |
+| `11dddaaa10001000` | — | `FSL1 rd, ra` | RC16 |
+| `11dddaaa10001001` | — | `FSR1 rd, ra` | RC16 |
+| `11dddaaa10001010` | — | `SLL rd, ra` | RC16 VSH |
+| `11dddaaa10001011` | — | `SRL rd, ra` | RC16 VSH |
+| `11dddaaa10001111` | — | `SRA rd, ra` | RC16 VSH |
+| `11dddaaa10100bbb` | — | `MULHU rl, rh, rb` | RC16 MDU |
+| `11000aaa11111000` | — | `RET Sa` | RC16 |
+| `11101aaa11111000` | — | `RETI Sa` | RC16 sys |
+| `11dddaaa11111001` | — | `JALR Sd, ra` | RC16 |
+| `11dddaaa11111001` | — | `JALR rd, ra` | Nano |
+| `11dddaaa11111010` | — | `MFS rd, Sa` | RC16 |
+| `11dddaaa11111011` | — | `MTS Sd, ra` | RC16 |
+| `1101000011111000` | — | `CLI` | RC16 sys |
+| `1111100011111000` | — | `STI` | RC16 sys |
+| `00ddd11100000000` | `aaaaaaaaaaaaaaaa` | `JAL16 Sd, addr16` | RC16 only sys |
+| `0000011100000000` | `aaaaaaaaaaaaaaaa` | `JMP16 addr16` | RC16 only sys |
+| `00dddhhh00h00100` | `llllllllllllllll` | `LUIL rd, imm20` | RC32 |
+| `00dddhhhhhhh1011` | `llllllllllllllll` | `JAL Sd, rel23` | RC32 |
+| `00dddaaa00001100` | `0000iiiiiiiiiiii` | `ADDI rd, ra, simm12` | RC32 |
+| `00dddaaa00000000` | `DDAABB0000000bbb` | `ADD Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000001bbb` | `SUB Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000010bbb` | `SLT Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000011bbb` | `SLTU Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000100bbb` | `AND Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000101bbb` | `OR Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000110bbb` | `XOR Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0000111bbb` | `MUL Xd, Xa, Xb` | X32 full |
+| `00dddaaa00000000` | `DDAABB0001000bbb` | `LDX Xd, [Xa+Xb]` | X32 |
+| `00dddaaa00000000` | `DDAABB0001010bbb` | `LDB Xd, [Xa+Xb]` | X32 |
+| `00dddaaa00000000` | `DDAABB0101010bbb` | `LDH Xd, [Xa+Xb]` | X32 |
+| `00dddaaa00000000` | `DDAA000001100000` | `SRLI Xd, Xa, 1` | X32 |
+| `00dddaaa00000000` | `DDAABB0001100bbb` | `SRLI Xd, Xa, 2..32` | X32 sys |
+| `00dddaaa00000000` | `DDAABB0101100bbb` | `SRL Xd, Xa, Xb` | X32 VSH |
+| `00dddaaa00000000` | `DDAA000001101000` | `SRAI Xd, Xa, 1` | X32 |
+| `00dddaaa00000000` | `DDAABB0001101bbb` | `SRAI Xd, Xa, 2..32` | X32 sys |
+| `00dddaaa00000000` | `DDAABB0101101bbb` | `SRA Xd, Xa, Xb` | X32 VSH |
+| `00dddaaa00000000` | `DDAABB0001110bbb` | `LDBS Xd, [Xa+Xb]` | X32 |
+| `00dddaaa00000000` | `DDAABB0101110bbb` | `LDHS Xd, [Xa+Xb]` | X32 |
+| `00dddaaa00000000` | `DDAABB0001111bbb` | `SLLI Xd, Xa, 1..32` | X32 sys |
+| `00dddaaa00000000` | `DDAABB0101111bbb` | `SLL Xd, Xa, Xb` | X32 VSH |
+| `00dddaaa00000000` | `DDAABB0010000bbb` | `DIVU Xr, Xq, Xb` | X32 MDU |
+| `00dddaaa00000000` | `DDAABB0010001bbb` | `FSL1 Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0110001bbb` | `FSR1 Xd, Xa, Xb` | X32 |
+| `00dddaaa00000000` | `DDAABB0010100bbb` | `MULHU Xl, Xh, Xb` | X32 MDU |
+| `00dddhhhDDh00100` | `llllllllllllllll` | `LUIL Xd, imm20` | X32 |
+| `00dddhhhDDh10100` | `llllllllllllllll` | `AUIPC Xd, imm20` | X32 |
+| `00dddaaaDDAA1100` | `0000iiiiiiiiiiii` | `ADDI Xd, Xa, simm12` | X32 |
+| `00dddaaa00AA1100` | `0001iiiiiiiiiiii` | `JALR Sd, [Xa+simm12]` | X32 |
+| `00dddaaaDDAA1100` | `0010iiiiiiiiiiii` | `SLTI Xd, Xa, simm12` | X32 |
+| `00dddaaaDDAA1100` | `0011iiiiiiiiiiii` | `SLTIU Xd, Xa, simm12` | X32 |
+| `00dddaaaDDAA1100` | `0100iiiiiiiiiiii` | `XORI Xd, Xa, simm12` | X32 |
+| `00dddaaaDDAA1100` | `0101iiiiiiiiiiii` | `LDP Xd, [Xa+simm12]` | X32 |
+| `00dddaaaDDAA1100` | `0110iiiiiiiiiiii` | `ORI Xd, Xa, simm12` | X32 |
+| `00dddaaaDDAA1100` | `0111iiiiiiiiiiii` | `ANDI Xd, Xa, simm12` | X32 |
+| `00dddaaaDDAA0101` | `iiiiiiiiiiiiiii0` | `LDB Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0101` | `iiiiiiiiiiiiii01` | `LDH Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0101` | `iiiiiiiiiiiii011` | `LDW Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0110` | `iiiiiiiiiiiiiii0` | `STB Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0110` | `iiiiiiiiiiiiii01` | `STH Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0110` | `iiiiiiiiiiiii011` | `STW Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0111` | `iiiiiiiiiiiiiii0` | `LDBS Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA0111` | `iiiiiiiiiiiiii01` | `LDHS Xd, [Xa+simm]` | X32 |
+| `00dddaaaDDAA1000` | `0000rrrrrrrrrrrr` | `BEQ Xd, Xa, rel12` | X32 |
+| `00dddaaaDDAA1000` | `0001rrrrrrrrrrrr` | `BNE Xd, Xa, rel12` | X32 |
+| `00dddaaaDDAA1000` | `0010rrrrrrrrrrrr` | `BLT Xd, Xa, rel12` | X32 |
+| `00dddaaaDDAA1000` | `0011rrrrrrrrrrrr` | `BGE Xd, Xa, rel12` | X32 |
+| `00dddaaaDDAA1000` | `0100rrrrrrrrrrrr` | `BLTU Xd, Xa, rel12` | X32 |
+| `00dddaaaDDAA1000` | `0101rrrrrrrrrrrr` | `BGEU Xd, Xa, rel12` | X32 |

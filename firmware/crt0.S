@@ -23,7 +23,7 @@ _start:
 .Lclear_zero:
         SUB     r0, r1, r2
         BEQZ    .Lzero_done
-        STW     r3, [r1+0]
+        ST     r3, [r1+0]
         ADDI    r1, 2
         JMP8    .Lclear_zero
 

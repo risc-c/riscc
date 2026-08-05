@@ -51,7 +51,6 @@ module riscc_tiny16 #(
     reg        register_format_q;
     reg [14:0] pc_q;        // 15-bit word address
     reg [15:0] mdr_q;
-    reg        funnel_bit_q;
     // Byte-lane selection and the compare result have disjoint lifetimes.
     reg        interrupt_enable_q;
     reg        r0_zero_q;       // branch-condition shadows for r0
@@ -107,13 +106,13 @@ module riscc_tiny16 #(
     // ------------------------------------------------------------------
     // Register and system decode
     // ------------------------------------------------------------------
-    // Group 10 keeps three register fields throughout. Its 100 slot holds
-    // MULHU and x1x contains the funnel shifts.
+    // Group 10 holds compact two-operand funnels in 001 and three-register
+    // MULHU in 100.
     wire register_alu_group = register_class &&
                               !register_group[1] && !register_group[0];
     wire register_memory_group = register_class &&
                                  !register_group[1] && register_group[0];
-    // 01_000 is LDWX. LDB/LDPH share 01_010, with canonical LDPH fixing
+    // 01_000 is LDX. LDB/LDPH share 01_010, with canonical LDPH fixing
     // bbb=011 as a modifier rather than an r3 source; 01_110 is LDBS and
     // 01_011 is direct STB. Reserved slots may alias existing paths where that
     // avoids a wider exact decoder; defined encodings retain their ISA behavior.
@@ -133,14 +132,15 @@ module riscc_tiny16 #(
     wire signed_byte_load = register_opcode[2];
     wire right_shift_slot = register_memory_group &&
                             register_opcode[2] && !register_opcode[1];
+    // FSL1/FSR1 share the 10_001 two-operand group. The low function bit
+    // separates them from canonical MULHU at 10_100; reserved functions may
+    // alias either side of this area-oriented split.
     wire register_funnel_group =
         register_class && register_group[1] && !register_group[0];
-    wire funnel_op = register_funnel_group && register_opcode[1];
-    wire mulhu_op =
-        register_class && register_group[1] && !register_group[0] &&
-        !register_opcode[1] && register_opcode[2];
-    wire funnel_right_op = funnel_op && !register_opcode[0];
-    wire funnel_left_op = funnel_op && register_opcode[0];
+    wire funnel_op = register_funnel_group && register_opcode[0];
+    wire mulhu_op = register_funnel_group && !register_opcode[0];
+    wire funnel_right_op = funnel_op && rb[0];
+    wire funnel_left_op = funnel_op && !rb[0];
     wire jal_register_op = system_group && ~rb[2] && ~rb[1] && rb[0];
 
     // ------------------------------------------------------------------
@@ -177,15 +177,21 @@ module riscc_tiny16 #(
     // MULHU spends one extra writeback cycle: high to ra, then low to rd.
     wire mulhu_high_write = in_mdr_writeback && mulhu_op;
     wire mulhu_low_write = in_execute && mulhu_op;
-    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
-    // selectors are 000/111, so any ccc bit is the new IE value.
+    // RET/RETI and CLI/STI share bbb=000.  rd[1] selects a return versus a
+    // direct IE operation; rd[2] and rd[0] duplicate the selected IE value.
     wire system_group = register_class && (&register_group);
-    // Full packs best when RETI joins CLI/STI at the decode boundary.
+    // Full packs best when RETI joins the direct controls at Decode.
+    // The duplicated value bits map differently in area- and timing-oriented
+    // builds; both choices are identical for every defined control encoding.
+`ifdef RISCC_TINY16_MULH_FMAX
     wire control_ie_value = rd[2];
-    wire return_sets_ie = return_op && rd[2];
-    wire interrupt_enable_op = system_group && rb[2] && rb[1];
-    wire return_op = system_group && register_opcode[1] &&
-                     ~rb[1] && ~rb[0];
+`else
+    wire control_ie_value = rd[0];
+`endif
+    wire control_plane = system_group && ~rb[1] && ~rb[0];
+    wire return_op = control_plane && ~rd[1];
+    wire return_sets_ie = return_op && control_ie_value;
+    wire interrupt_enable_op = control_plane && rd[1];
     wire mfs_op = system_group && ~rb[2] && rb[1] && ~rb[0];
     wire mts_op = system_group && ~rb[2] && rb[1] && rb[0];
 
@@ -203,14 +209,14 @@ module riscc_tiny16 #(
         immediate_memory | byte_memory_op |
         mfs_op | mts_op;
 
-    // LDWX uses bbb as its index. LDPH stages and reuses aaa; canonical
+    // LDX uses bbb as its index. Compact funnels stage aaa, then reissue old
+    // ddd; MULHU still stages bbb. LDPH stages and reuses aaa; canonical
     // bbb=011 is only a modifier. Direct byte operations also address aaa.
     wire indexed_load_op =
         register_memory_decode && !register_opcode[1];
     wire ordinary_rb_operand = register_alu_group | indexed_load_op;
     wire staged_alu_operand = ordinary_rb_operand | program_load_op;
-    wire needs_rb_operand =
-        ordinary_rb_operand | funnel_op | mulhu_op;
+    wire needs_rb_operand = ordinary_rb_operand | register_funnel_group;
     wire alu_b_uses_mdr = staged_alu_operand;
 
     wire start_register_call = in_decode && jal_register_op;
@@ -226,7 +232,11 @@ module riscc_tiny16 #(
     // States that keep the external memory port pointed at PC can begin a
     // fetch; ST_INSTRUCTION_CAPTURE then latches it before ST_DECODE.
     wire execute_complete =
-        (in_execute && !memory_op && !register_compare && !funnel_left_op) |
+        (in_execute && !memory_op && !register_compare
+`ifndef RISCC_ECP5
+         && !funnel_left_op
+`endif
+        ) |
         (in_mdr_writeback && !mulhu_op);
     wire start_fetch =
         in_fetch_request | execute_complete | in_compare_writeback |
@@ -241,11 +251,13 @@ module riscc_tiny16 #(
     // selector priority is rd, then rb; ra is the default.
     wire select_read_rd = immediate_alu_op |
                           (memory_address_ready && store_op) |
-                          (in_iteration_operand_load && immediate_shift_op);
+                          (in_iteration_operand_load && immediate_shift_op) |
+                          (funnel_op && (in_operand_load | in_execute));
     // LDPH keeps aaa selected in both operand-load phases; bbb is never an
-    // RF address for the compact program-load form.
+    // RF address for the compact program-load form. Funnels also default to
+    // aaa in Decode; MULHU retains its bbb-first operand schedule.
     wire select_read_rb = start_operand_load &&
-        !program_load_op && !immediate_shift_op;
+        !program_load_op && !immediate_shift_op && !funnel_op;
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
     // Upper (system) bank: bbb[0]=0 group ops read S[aaa] (RET/RETI/MFS).
@@ -300,7 +312,11 @@ module riscc_tiny16 #(
     wire alu_a_is_zero =
         (in_execute && (immediate_load_group | immediate_logic |
                         register_logic_op | single_step_shift_op | mulhu_low_write)) |
+`ifdef RISCC_ECP5
+        in_mdr_writeback |
+`else
         (in_mdr_writeback && !funnel_left_op) |
+`endif
         in_compare_writeback | (in_jump_commit && jal16_op) |
         (in_iterate && product_iteration_op && !mdr_q[0]) |
         shift_right_iteration;
@@ -324,6 +340,9 @@ module riscc_tiny16 #(
              mulhu_accumulator_writeback}} &
          multiply_accumulator_q) |
         {15'h0000, in_compare_writeback && captured_bit_q} |
+`ifdef RISCC_ECP5
+        ({16{funnel_left_execute}} & rf_read_data) |
+`endif
         ({16{alu_b_is_mdr && !mulhu_accumulator_writeback}} & mdr_q) |
         ({16{alu_b_is_upper_imm}} & upper_immediate) |
         ({16{alu_b_is_zero_extended_imm}} & zero_extended_imm8);
@@ -339,9 +358,16 @@ module riscc_tiny16 #(
                                  shift_right_iteration;
     wire arithmetic_right_shift =
         shift_iteration && !shift_left_immediate && register_opcode[0];
+`ifdef RISCC_ECP5
+    wire arithmetic_shift_input =
+        arithmetic_right_shift && rf_read_data[15];
+    wire shift_right_input = arithmetic_shift_input ^
+        (register_group[1] && (arithmetic_shift_input ^ mdr_q[0]));
+`else
     wire shift_right_input =
         (in_execute && funnel_right_op) ? mdr_q[0] :
         (arithmetic_right_shift && rf_read_data[15]);
+`endif
     wire [15:0] iterative_shift_result =
         {shift_right_input, rf_read_data[15:1]};
     wire [15:0] alu_b =
@@ -361,9 +387,11 @@ module riscc_tiny16 #(
     wire [15:0] adjusted_alu_b =
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
+    // ECP5 doubles old rd directly in Execute. Other targets store old rd +
+    // ra[15] in MDR, then add old rd again in the following writeback pass.
     wire alu_carry_in =
         in_decode | subtract_enable | (in_link_writeback && long_form_op) |
-        (in_mdr_writeback && funnel_left_op && funnel_bit_q);
+        (funnel_left_execute && mdr_q[15]);
     wire [16:0] alu_sum_ext = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                               {16'h0000, alu_carry_in};
     wire [15:0] alu_result = alu_sum_ext[15:0];
@@ -432,8 +460,11 @@ module riscc_tiny16 #(
             state_q[ST_IRQ_ENTRY] <= take_interrupt;
             state_q[ST_MDR_WRITEBACK] <=
                 (in_load_capture && !jal16_op) |
-                product_complete |
-                funnel_left_execute;
+                product_complete
+`ifndef RISCC_ECP5
+                | funnel_left_execute
+`endif
+                ;
 
             // Capture the next instruction after its synchronous read.
             if (in_instruction_capture) begin
@@ -455,8 +486,10 @@ module riscc_tiny16 #(
                 mdr_q <= alu_result;
             else if (in_load_capture)
                 mdr_q <= load_result;
+`ifndef RISCC_ECP5
             else if (funnel_left_execute)
                 mdr_q <= alu_result;
+`endif
 
             if (in_operand_load && iterative_op) begin
                 iteration_count_q <= product_iteration_op ?
@@ -478,10 +511,7 @@ module riscc_tiny16 #(
                 iteration_count_q <= iteration_count_q - 4'd1;
             end
 
-            // Save the funnel boundary bit and the less-than result.
-            if (funnel_left_execute) begin
-                funnel_bit_q <= mdr_q[15];
-            end
+            // Save the less-than result.
             if (in_execute && register_compare)
                 iteration_count_q[0] <= compare_less;
 

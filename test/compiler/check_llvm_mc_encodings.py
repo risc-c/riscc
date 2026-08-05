@@ -107,7 +107,7 @@ def main() -> int:
             write(".text")
 
             # Byte-displacement memory format.
-            for op in ("LDW", "STW"):
+            for op in ("LD", "ST"):
                 for rd in range(8):
                     for base in range(8):
                         for disp in range(-128, 128, 2):
@@ -151,21 +151,29 @@ def main() -> int:
                         emit_space(2 * rel)
                         emit_label(label)
 
-            # Three-register ALU, indexed-load, and direct-memory formats.
+            # Three-register ALU formats.
             for op in (
                 "ADD", "SUB", "SLT", "SLTU", "AND", "OR", "XOR", "MUL",
-                "FSL1", "FSR1",
             ):
                 for rd in range(8):
                     for ra in range(8):
                         for rb in range(8):
                             operands = [f"r{rd}", f"r{ra}", f"r{rb}"]
                             emit(f"{op.lower()} {', '.join(operands)}", op, operands)
+
+            # Compact two-operand funnel shifts.
+            for op in ("FSL1", "FSR1"):
+                for rd in range(8):
+                    for ra in range(8):
+                        operands = [f"r{rd}", f"r{ra}"]
+                        emit(f"{op.lower()} {', '.join(operands)}", op, operands)
+
+            # Indexed-load and direct-memory formats.
             for rd in range(8):
                 for ra in range(8):
                     for rb in range(8):
                         operands = [f"r{rd}", f"[r{ra} + r{rb}]"]
-                        emit(f"ldwx {', '.join(operands)}", "LDWX", operands)
+                        emit(f"ldx {', '.join(operands)}", "LDX", operands)
             for op in ("LDB", "LDBS", "LDPH"):
                 for rd in range(8):
                     for ra in range(8):

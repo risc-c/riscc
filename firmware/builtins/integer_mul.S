@@ -35,68 +35,68 @@
  */
 
         FUNCTION __muldi3
-        STW     r5, [r7 - 2]
-        STW     r6, [r7 - 4]
+        ST     r5, [r7 - 2]
+        ST     r6, [r7 - 4]
 
         LDI     r0, 0
-        STW     r0, [r7 - 6]            /* result, low to high */
-        STW     r0, [r7 - 8]
-        STW     r0, [r7 - 10]
-        STW     r0, [r7 - 12]
+        ST     r0, [r7 - 6]            /* result, low to high */
+        ST     r0, [r7 - 8]
+        ST     r0, [r7 - 10]
+        ST     r0, [r7 - 12]
 
-        LDW     r5, [r7 + 0]
-        STW     r5, [r7 - 14]           /* multiplier, low to high */
+        LD     r5, [r7 + 0]
+        ST     r5, [r7 - 14]           /* multiplier, low to high */
         OR      r0, r0, r5
-        LDW     r5, [r7 + 2]
-        STW     r5, [r7 - 16]
+        LD     r5, [r7 + 2]
+        ST     r5, [r7 - 16]
         OR      r0, r0, r5
-        LDW     r5, [r7 + 4]
-        STW     r5, [r7 - 18]
+        LD     r5, [r7 + 4]
+        ST     r5, [r7 - 18]
         OR      r0, r0, r5
-        LDW     r5, [r7 + 6]
-        STW     r5, [r7 - 20]
+        LD     r5, [r7 + 6]
+        ST     r5, [r7 - 20]
         OR      r0, r0, r5
         BEQZ    .Lmuldi_done
 
 .Lmuldi_loop:
-        LDW     r0, [r7 - 14]
+        LD     r0, [r7 - 14]
         ANDI    r0, 1
         BEQZ    .Lmuldi_no_add
 
-        LDW     r5, [r7 - 6]
+        LD     r5, [r7 - 6]
         MOV     r0, r5
         ADD     r5, r5, r1
         SLTU    r6, r5, r0
-        STW     r5, [r7 - 6]
+        ST     r5, [r7 - 6]
 
-        LDW     r5, [r7 - 8]
+        LD     r5, [r7 - 8]
         MOV     r0, r5
         ADD     r5, r5, r6
         SLTU    r0, r5, r0
-        STW     r0, [r7 - 22]
+        ST     r0, [r7 - 22]
         MOV     r0, r5
         ADD     r5, r5, r2
         SLTU    r6, r5, r0
-        LDW     r0, [r7 - 22]
+        LD     r0, [r7 - 22]
         OR      r6, r6, r0
-        STW     r5, [r7 - 8]
+        ST     r5, [r7 - 8]
 
-        LDW     r5, [r7 - 10]
+        LD     r5, [r7 - 10]
         MOV     r0, r5
         ADD     r5, r5, r6
         SLTU    r0, r5, r0
-        STW     r0, [r7 - 22]
+        ST     r0, [r7 - 22]
         MOV     r0, r5
         ADD     r5, r5, r3
         SLTU    r6, r5, r0
-        LDW     r0, [r7 - 22]
+        LD     r0, [r7 - 22]
         OR      r6, r6, r0
-        STW     r5, [r7 - 10]
+        ST     r5, [r7 - 10]
 
-        LDW     r5, [r7 - 12]
+        LD     r5, [r7 - 12]
         ADD     r5, r5, r6
         ADD     r5, r5, r4
-        STW     r5, [r7 - 12]
+        ST     r5, [r7 - 12]
 
 .Lmuldi_no_add:
 #ifdef __RISCC_NANO__
@@ -117,15 +117,15 @@
         OR      r2, r2, r0
         ADD     r1, r1, r1
 #else
-        FSL1    r4, r4, r3
-        FSL1    r3, r3, r2
-        FSL1    r2, r2, r1
+        FSL1    r4, r3
+        FSL1    r3, r2
+        FSL1    r2, r1
         ADD     r1, r1, r1
 #endif
 
         /* Shift the saved multiplier right by one. */
-        LDW     r5, [r7 - 14]
-        LDW     r6, [r7 - 16]
+        LD     r5, [r7 - 14]
+        LD     r6, [r7 - 16]
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
@@ -135,12 +135,12 @@
         OR      r5, r5, r0
 .Lmuldi_shr0_done:
 #else
-        FSR1    r5, r5, r6
+        FSR1    r5, r6
 #endif
-        STW     r5, [r7 - 14]
+        ST     r5, [r7 - 14]
 
-        LDW     r5, [r7 - 16]
-        LDW     r6, [r7 - 18]
+        LD     r5, [r7 - 16]
+        LD     r6, [r7 - 18]
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
@@ -150,12 +150,12 @@
         OR      r5, r5, r0
 .Lmuldi_shr1_done:
 #else
-        FSR1    r5, r5, r6
+        FSR1    r5, r6
 #endif
-        STW     r5, [r7 - 16]
+        ST     r5, [r7 - 16]
 
-        LDW     r5, [r7 - 18]
-        LDW     r6, [r7 - 20]
+        LD     r5, [r7 - 18]
+        LD     r6, [r7 - 20]
 #ifdef __RISCC_NANO__
         MOV     r0, r6
         ANDI    r0, 1
@@ -165,30 +165,30 @@
         OR      r5, r5, r0
 .Lmuldi_shr2_done:
 #else
-        FSR1    r5, r5, r6
+        FSR1    r5, r6
 #endif
-        STW     r5, [r7 - 18]
+        ST     r5, [r7 - 18]
 
-        LDW     r5, [r7 - 20]
+        LD     r5, [r7 - 20]
         SRLI    r5, r5, 1
-        STW     r5, [r7 - 20]
+        ST     r5, [r7 - 20]
 
-        LDW     r0, [r7 - 14]
-        LDW     r5, [r7 - 16]
+        LD     r0, [r7 - 14]
+        LD     r5, [r7 - 16]
         OR      r0, r0, r5
-        LDW     r5, [r7 - 18]
+        LD     r5, [r7 - 18]
         OR      r0, r0, r5
-        LDW     r5, [r7 - 20]
+        LD     r5, [r7 - 20]
         OR      r0, r0, r5
         BNEZ    .Lmuldi_loop
 
 .Lmuldi_done:
-        LDW     r1, [r7 - 6]
-        LDW     r2, [r7 - 8]
-        LDW     r3, [r7 - 10]
-        LDW     r4, [r7 - 12]
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r1, [r7 - 6]
+        LD     r2, [r7 - 8]
+        LD     r3, [r7 - 10]
+        LD     r4, [r7 - 12]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
         MUL_RETURN
         .size __muldi3, . - __muldi3
 
@@ -293,8 +293,8 @@
 #else
         FUNCTION __mulsi3
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        STW     r6, [r7 - 4]
+        ST     r5, [r7 - 2]
+        ST     r6, [r7 - 4]
 #else
         MTS     s5, r5
         MTS     s6, r6
@@ -332,9 +332,9 @@
 .Lmulsi_no_shift_carry:
         SRLI    r4, r4, 1
 #else
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
-        FSR1    r3, r3, r4
+        FSR1    r3, r4
         SRLI    r4, r4, 1
 #endif
         OR      r0, r3, r4
@@ -344,8 +344,8 @@
         MOV     r1, r5
         MOV     r2, r6
 #ifdef __RISCC_NANO__
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
 #else
         MFS     r6, s6
         MFS     r5, s5

@@ -31,14 +31,14 @@
         .hidden __addsf3
         .type __addsf3,@function
 __addsf3:
-        STW     r5, [r7 - 12]
-        STW     r6, [r7 - 10]
+        ST     r5, [r7 - 12]
+        ST     r6, [r7 - 10]
 
         LUI     r5, 0x80
         AND     r0, r2, r5
-        STW     r0, [r7 - 8]           /* left sign */
+        ST     r0, [r7 - 8]           /* left sign */
         AND     r0, r4, r5
-        STW     r0, [r7 - 6]           /* right sign */
+        ST     r0, [r7 - 6]           /* right sign */
 
         MOV     r5, r2
         MOV     r6, r4
@@ -62,8 +62,8 @@ __addsf3:
         ANDI    r0, 0x7f
         OR      r0, r0, r3
         BNEZ    .Lquiet_right
-        LDW     r0, [r7 - 8]
-        LDW     r5, [r7 - 6]
+        LD     r0, [r7 - 8]
+        LD     r5, [r7 - 6]
         XOR     r0, r0, r5
         BLTZ    .Lqnan
         JMP8    .Lspecial_return
@@ -92,8 +92,8 @@ __addsf3:
         LDI     r1, 0
         LI      r2, 0x7fc0
 .Lspecial_return:
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RETS
 
 .Lfinite:
@@ -108,8 +108,8 @@ __addsf3:
         OR      r0, r0, r3
         OR      r0, r0, r6
         BNEZ    .Lreturn_right
-        LDW     r2, [r7 - 8]
-        LDW     r0, [r7 - 6]
+        LD     r2, [r7 - 8]
+        LD     r0, [r7 - 6]
         AND     r2, r2, r0
         LDI     r1, 0
         JMP8    .Lspecial_return
@@ -163,25 +163,25 @@ __addsf3:
         MOV     r0, r5
         MOV     r5, r6
         MOV     r6, r0
-        LDW     r0, [r7 - 8]
-        STW     r0, [r7 - 4]
-        LDW     r0, [r7 - 6]
-        STW     r0, [r7 - 8]
-        LDW     r0, [r7 - 4]
-        STW     r0, [r7 - 6]
+        LD     r0, [r7 - 8]
+        ST     r0, [r7 - 4]
+        LD     r0, [r7 - 6]
+        ST     r0, [r7 - 8]
+        LD     r0, [r7 - 4]
+        ST     r0, [r7 - 6]
 
 .Lordered:
         /* Add GRS bits before aligning the smaller operand. */
         .rept 3
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
-        FSL1    r4, r4, r3
+        FSL1    r4, r3
         ADD     r3, r3, r3
         .endr
 
         SUB     r6, r5, r6
         LDI     r0, 0
-        STW     r0, [r7 - 4]           /* alignment sticky */
+        ST     r0, [r7 - 4]           /* alignment sticky */
         LDI     r0, 32
         SLTU    r0, r6, r0
         BNEZ    .Lalign_test
@@ -189,26 +189,26 @@ __addsf3:
         LDI     r4, 0
         JMP8    .Laligned
 .Lalign_loop:
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         MOV     r6, r3
         ANDI    r6, 1
         OR      r0, r0, r6
-        STW     r0, [r7 - 4]
-        FSR1    r3, r3, r4
+        ST     r0, [r7 - 4]
+        FSR1    r3, r4
         SRLI    r4, r4, 1
-        LDW     r6, [r7 - 2]
+        LD     r6, [r7 - 2]
         ADDI    r6, -1
-        STW     r6, [r7 - 2]
+        ST     r6, [r7 - 2]
 .Lalign_test:
-        STW     r6, [r7 - 2]
+        ST     r6, [r7 - 2]
         MOV     r0, r6
         BNEZ    .Lalign_loop
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         OR      r3, r3, r0
 .Laligned:
 
-        LDW     r6, [r7 - 8]
-        LDW     r0, [r7 - 6]
+        LD     r6, [r7 - 8]
+        LD     r0, [r7 - 6]
         XOR     r0, r6, r0
         BLTZ    .Lsubtract
 
@@ -222,7 +222,7 @@ __addsf3:
         BEQZ    .Lpack
         MOV     r6, r1
         ANDI    r6, 1
-        FSR1    r1, r1, r2
+        FSR1    r1, r2
         SRLI    r2, r2, 1
         OR      r1, r1, r6
         ADDI    r5, 1
@@ -241,7 +241,7 @@ __addsf3:
         BNEZ    .Lpack
         CMPI    r5, 1
         BEQZ    .Lpack
-        FSL1    r2, r2, r1
+        FSL1    r2, r1
         ADD     r1, r1, r1
         ADDI    r5, -1
         JMP8    .Lnormalize
@@ -249,14 +249,14 @@ __addsf3:
 .Lcancelled:
         LDI     r1, 0
         LDI     r2, 0
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RETS
 
 .Lpack:
-        LDW     r3, [r7 - 8]
+        LD     r3, [r7 - 8]
         MOV     r4, r5
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         TAIL_PACK                      /* tail call */
         .size __addsf3, . - __addsf3

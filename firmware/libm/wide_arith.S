@@ -21,7 +21,7 @@
         MOV     r0, r2
         BEQZ    .Lmath_zero_yes
 .Lmath_zero_loop:
-        LDW     r0, [r1 + 0]
+        LD     r0, [r1 + 0]
         BNEZ    .Lmath_zero_no
         ADDI    r1, 2
         ADDI    r2, -1
@@ -39,9 +39,9 @@
         MOV     r0, r2
         BEQZ    .Lmath_increment_done
 .Lmath_increment_loop:
-        LDW     r0, [r1 + 0]
+        LD     r0, [r1 + 0]
         ADDI    r0, 1
-        STW     r0, [r1 + 0]
+        ST     r0, [r1 + 0]
         BNEZ    .Lmath_increment_done
         ADDI    r1, 2
         ADDI    r2, -1
@@ -53,8 +53,8 @@
 
         FUNCTION __riscc_math_subtract
 #ifdef __RISCC_NANO__
-        STW     r5, [r7 - 2]
-        STW     r6, [r7 - 4]
+        ST     r5, [r7 - 2]
+        ST     r6, [r7 - 4]
 #else
         MTS     s4, r5
         MTS     s5, r6
@@ -63,14 +63,14 @@
         MOV     r0, r3
         BEQZ    .Lmath_subtract_done
 .Lmath_subtract_loop:
-        LDW     r5, [r1 + 0]
-        LDW     r6, [r2 + 0]
+        LD     r5, [r1 + 0]
+        LD     r6, [r2 + 0]
         SUB     r0, r5, r4
         SLTU    r4, r5, r4
         SUB     r5, r0, r6
         SLTU    r0, r0, r6
         OR      r4, r4, r0
-        STW     r5, [r1 + 0]
+        ST     r5, [r1 + 0]
         ADDI    r1, 2
         ADDI    r2, 2
         ADDI    r3, -1
@@ -78,8 +78,8 @@
         BNEZ    .Lmath_subtract_loop
 .Lmath_subtract_done:
 #ifdef __RISCC_NANO__
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
 #else
         MFS     r6, s5
         MFS     r5, s4

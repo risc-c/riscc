@@ -41,7 +41,7 @@ __riscc_irq_stack_top:
         .type riscc_irq_set_handler,@function
 riscc_irq_set_handler:
         LDI16   r0, __riscc_irq_handler_ptr
-        STW     r1, [r0+0]
+        ST     r1, [r0+0]
         RETS
         .size riscc_irq_set_handler, . - riscc_irq_set_handler
 
@@ -56,26 +56,26 @@ __riscc_irq_entry:
         MTS     S1, r0
 
         MFS     r0, S2
-        STW     r1, [r0-10]
-        STW     r2, [r0-8]
-        STW     r3, [r0-6]
-        STW     r4, [r0-4]
+        ST     r1, [r0-10]
+        ST     r2, [r0-8]
+        ST     r3, [r0-6]
+        ST     r4, [r0-4]
         MFS     r1, S7
-        STW     r1, [r0-2]
-        STW     r7, [r0-14]
+        ST     r1, [r0-2]
+        ST     r7, [r0-14]
         MFS     r1, S1
-        STW     r1, [r0-12]
+        ST     r1, [r0-12]
         MFS     r1, S3
-        STW     r1, [r0-22]
+        ST     r1, [r0-22]
         MFS     r1, S4
-        STW     r1, [r0-20]
+        ST     r1, [r0-20]
         MFS     r1, S5
-        STW     r1, [r0-18]
+        ST     r1, [r0-18]
         MFS     r1, S6
-        STW     r1, [r0-16]
+        ST     r1, [r0-16]
 
         LDI16   r0, __riscc_irq_handler_ptr
-        LDW     r0, [r0+0]
+        LD     r0, [r0+0]
         BNEZ    .Lhandler_set
         JAL16   S0, __default_irq
 .Lhandler_set:
@@ -83,23 +83,23 @@ __riscc_irq_entry:
         JALR    S7, r0
 
         MFS     r0, S2
-        LDW     r1, [r0-14]
+        LD     r1, [r0-14]
         MTS     S1, r1
-        LDW     r1, [r0-22]
+        LD     r1, [r0-22]
         MTS     S3, r1
-        LDW     r1, [r0-20]
+        LD     r1, [r0-20]
         MTS     S4, r1
-        LDW     r1, [r0-18]
+        LD     r1, [r0-18]
         MTS     S5, r1
-        LDW     r1, [r0-16]
+        LD     r1, [r0-16]
         MTS     S6, r1
-        LDW     r1, [r0-2]
+        LD     r1, [r0-2]
         MTS     S7, r1
-        LDW     r4, [r0-4]
-        LDW     r3, [r0-6]
-        LDW     r2, [r0-8]
-        LDW     r1, [r0-10]
-        LDW     r0, [r0-12]
+        LD     r4, [r0-4]
+        LD     r3, [r0-6]
+        LD     r2, [r0-8]
+        LD     r1, [r0-10]
+        LD     r0, [r0-12]
         MFS     r7, S1
         RETI    S0
         .size __riscc_irq_vector, . - __riscc_irq_vector

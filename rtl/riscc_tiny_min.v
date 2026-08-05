@@ -29,15 +29,15 @@ module riscc_tiny_min #(
     localparam integer SLICE_BITS = $clog2(SLICES);
     localparam integer RF_ADDR_WIDTH = 4 + SLICE_BITS;
 
-    // The encoding is area-tuned: state_q[2] enables all counted states.
+    // Area-tuned encoding: state_q[2] counts and the W2 globals legalize.
     localparam [2:0] ST_FETCH_WAIT    = 3'd0;
     localparam [2:0] ST_FETCH_CAPTURE = 3'd3;
-    localparam [2:0] ST_DECODE        = 3'd2;
-    localparam [2:0] ST_MEM_WAIT      = 3'd1;
-    localparam [2:0] ST_EXECUTE       = 3'd5;
+    localparam [2:0] ST_DECODE        = 3'd1;
+    localparam [2:0] ST_MEM_WAIT      = 3'd2;
+    localparam [2:0] ST_EXECUTE       = 3'd6;
     localparam [2:0] ST_MEM_XFER      = 3'd7;
     localparam [2:0] ST_INIT          = 3'd4;
-    localparam [2:0] ST_INIT2         = 3'd6;
+    localparam [2:0] ST_INIT2         = 3'd5;
 
     reg [2:0] state_q;
     reg [SLICE_BITS-1:0] slice_idx_q;
@@ -85,11 +85,11 @@ module riscc_tiny_min #(
     wire system_op = register_group & f5[4] & f5[3];
     wire register_alu_op = register_group & ~f5[3];
 
-    // FSR1/FSL1 occupy adjacent encodings 10_010/10_011. Other reserved
-    // 10_xxx encodings may alias them to keep this decode small.
+    // FSL1/FSR1 share the 10_001 two-operand group; bbb[0] selects
+    // direction. Other reserved 10_xxx encodings and sub-operations may alias
+    // them to keep this decode small.
     wire funnel_op = register_alu_op & f5[4];
-    wire funnel_right_op = funnel_op & ~f5[0];
-    wire funnel_left_op = funnel_op & f5[0];
+    wire funnel_right_op = funnel_op & bbb[0];
 
     // FSR shares the normal two-source ALU schedule.
     wire ordinary_alu_op = register_alu_op & ~f5[4];
@@ -101,7 +101,7 @@ module riscc_tiny_min #(
     wire any_shift_op = right_shift_op | funnel_right_op;
 
     wire register_memory_plane = register_group & f_group_01;
-    // Native LDWX uses 01_000. Direct unsigned loads, stores, and signed loads
+    // Native LDX uses 01_000. Direct unsigned loads, stores, and signed loads
     // use 01_010, 01_011, and 01_110; bbb[0] selects data or program space.
     // Min may alias unsupported widths within those families.
     wire indexed_mem_op =
@@ -125,10 +125,11 @@ module riscc_tiny_min #(
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
-    // Program loads stage their sole aaa source, then add it to itself to
-    // convert the architectural halfword pointer to a byte address.
     wire needs_operand_pass = needs_rb_pass |
         (((W == 2) ? direct_load_op : direct_mem_op) & bbb[0]);
+    // Funnel shifts stage aaa, then stream the old read/write destination ddd.
+    // Program loads stage aaa, then add it to itself to convert the
+    // architectural halfword pointer to a byte address.
     wire needs_init_pass = mem_op | slt_op | funnel_op;
 
     // ------------------------------------------------------------------
@@ -136,8 +137,20 @@ module riscc_tiny_min #(
     // ------------------------------------------------------------------
     wire src_system_bank = system_op & ~bbb[0];
     wire dst_system_bank = system_op & bbb[0];
-    wire [3:0] rf_src_reg =
-        {src_system_bank, immediate_group ? ddd : aaa};
+    // The funnel operand pass selects aaa; fallback is old ddd in INIT/EXECUTE.
+    // Equivalent mux spellings below fit the characterized mappers better.
+    wire source_is_rd = instr_q[15] &
+        (~register_format_q | (f5[4] & ~f5[3]));
+`ifdef RISCC_ECP5
+    wire [3:0] rf_src_reg = {src_system_bank,
+        (W == 1) ?
+        (aaa ^ ({3{source_is_rd}} & (aaa ^ ddd))) :
+        (ddd ^ ({3{~source_is_rd}} & (aaa ^ ddd)))};
+`else
+    wire [3:0] rf_src_reg = {src_system_bank,
+        (W == 8) ? (source_is_rd ? ddd : aaa) :
+        (aaa ^ ({3{source_is_rd}} & (aaa ^ ddd)))};
+`endif
     wire [3:0] rf_dst_reg = {dst_system_bank, ddd & {3{~cmpi_op}}};
 
     wire rf_read_rb = needs_rb_pass &
@@ -145,7 +158,8 @@ module riscc_tiny_min #(
     wire rf_read_rd =
         (in_init & last_slice & store_op) |
         (in_mem_xfer & store_op);
-    wire [3:0] rf_read_reg = rf_read_rb ? {1'b0, bbb} :
+    wire [3:0] rf_read_reg = rf_read_rb ?
+                             {1'b0, (f5[4] ? aaa : bbb)} :
                              rf_read_rd ? {1'b0, ddd} : rf_src_reg;
 
     wire store_high_byte = register_store_op;
@@ -237,10 +251,10 @@ module riscc_tiny_min #(
             (slt_op ? less_than_result : data_stream_q[W-1]) :
             alu_active ? alu_sum_ext[W] : alu_subtract;
 
-    // INIT2 has staged rb in data_stream_q when INIT begins.  Preserve its
-    // low bit while INIT streams ra; this is the only extra FSR1 storage.
-    // On INIT's last slice, data_stream_q still exposes rb[15], allowing FSL1
-    // to seed the existing ALU carry without another saved bit.
+    // INIT2 has staged ra in data_stream_q when a funnel INIT begins. Preserve
+    // its low bit while INIT streams the old rd; this is the only extra FSR1
+    // storage. On INIT's last slice, data_stream_q still exposes ra[15],
+    // allowing FSL1 to seed the existing ALU carry without another saved bit.
     always @(posedge clk)
         if (in_init & first_slice)
             funnel_bit_q <= data_stream_q[0];
@@ -275,9 +289,19 @@ module riscc_tiny_min #(
                 address_stream_q[15:W]};
     end
 
+    // f5[4] and ~f5[3] are equivalent at the shift/funnel boundary. Keep the
+    // width choices that map best for the inferred Agilex RF and open targets.
+`ifdef RISCC_INFERRED_SYNC_RF
+    localparam F4_SHIFT_BOUNDARY = (W == 1) || (W == 4);
+`else
+    localparam F4_SHIFT_BOUNDARY = (W == 2) || (W == 4);
+`endif
     wire right_shift_input = last_slice ?
-        (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
-         funnel_bit_q) :
+        (F4_SHIFT_BOUNDARY ?
+             (f5[4] ? funnel_bit_q :
+                      (arithmetic_shift & data_stream_q[W-1])) :
+             (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
+                      funnel_bit_q)) :
         data_stream_q[W];
     wire [W-1:0] shift_result_slice =
         (data_stream_q[W-1:0] >> 1) |

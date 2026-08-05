@@ -9,11 +9,11 @@ main:
         CALL16  riscc_irq_enable
         LDI16   r0, 1
         LDI16   r1, 0xfffa
-        STW     r0, [r1+0]        // Testbench IRQ raise register.
+        ST     r0, [r1+0]        // Testbench IRQ raise register.
 
         LDI16   r0, 0x600d
         LDI16   r1, 0xfffe
-        STW     r0, [r1+0]
+        ST     r0, [r1+0]
 .Ldone:
         JMP8    .Ldone
         .size main, . - main
@@ -24,6 +24,6 @@ main:
         .type __riscc_irq_vector,@function
 __riscc_irq_vector:
         LDI16   r1, 0xfffa
-        LDW     r0, [r1+0]        // Read acknowledges the testbench IRQ.
+        LD     r0, [r1+0]        // Read acknowledges the testbench IRQ.
         RETI    S0
         .size __riscc_irq_vector, . - __riscc_irq_vector

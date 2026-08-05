@@ -34,7 +34,7 @@ main:
         LDI16   r5, 0x6666
         LDI16   r6, 0xfffa
         LDI16   r7, 0x7777
-        STW     r5, [r6+0]        // Testbench IRQ raise register.
+        ST     r5, [r6+0]        // Testbench IRQ raise register.
 
         // The IRQ is accepted before this instruction. S1 is
         // interrupt-clobbered and safe for retaining the resumed r7 value.
@@ -44,13 +44,13 @@ main:
         // resumed GPRs in a normal data-stack frame for comparison.
         MFS     r7, S3
         ADDI    r7, -14
-        STW     r0, [r7+0]
-        STW     r1, [r7+2]
-        STW     r2, [r7+4]
-        STW     r3, [r7+6]
-        STW     r4, [r7+8]
-        STW     r5, [r7+10]
-        STW     r6, [r7+12]
+        ST     r0, [r7+0]
+        ST     r1, [r7+2]
+        ST     r2, [r7+4]
+        ST     r3, [r7+6]
+        ST     r4, [r7+8]
+        ST     r5, [r7+10]
+        ST     r6, [r7+12]
 
         LDI16   r0, 0x7777
         MFS     r1, S1
@@ -58,35 +58,35 @@ main:
         BNEZ    .Lfail
 
         LDI16   r0, irq_count
-        LDW     r0, [r0+0]
+        LD     r0, [r0+0]
         ADDI    r0, -1
         BNEZ    .Lfail
 
-        LDW     r0, [r7+0]
+        LD     r0, [r7+0]
         LDI16   r1, 0x1111
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+2]
+        LD     r0, [r7+2]
         LDI16   r1, 0x2222
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+4]
+        LD     r0, [r7+4]
         LDI16   r1, 0x3333
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+6]
+        LD     r0, [r7+6]
         LDI16   r1, 0x4444
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+8]
+        LD     r0, [r7+8]
         LDI16   r1, 0x5555
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+10]
+        LD     r0, [r7+10]
         LDI16   r1, 0x6666
         SUB     r0, r0, r1
         BNEZ    .Lfail
-        LDW     r0, [r7+12]
+        LD     r0, [r7+12]
         LDI16   r1, 0xfffa
         SUB     r0, r0, r1
         BNEZ    .Lfail
@@ -117,14 +117,14 @@ main:
         CALL16  riscc_irq_disable
         LDI16   r0, 0x600d
         LDI16   r1, 0xfffe
-        STW     r0, [r1+0]
+        ST     r0, [r1+0]
 .Ldone:
         JMP8    .Ldone
 
 .Lfail:
         LDI16   r0, 0xdead
         LDI16   r1, 0xfffe
-        STW     r0, [r1+0]
+        ST     r0, [r1+0]
 .Lfail_halt:
         JMP8    .Lfail_halt
         .size main, . - main

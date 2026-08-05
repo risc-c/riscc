@@ -42,7 +42,7 @@ __riscc_pack_sf:
 .Lunderflow_loop:
         MOV     r6, r1
         ANDI    r6, 1
-        FSR1    r1, r1, r2
+        FSR1    r1, r2
         SRLI    r2, r2, 1
         OR      r1, r1, r6
         ADDI    r5, -1
@@ -103,7 +103,7 @@ __riscc_pack_sf:
         /* Low result word: (extended >> 3). */
 #ifdef __RISCC_MIN__
         .rept 3
-        FSR1    r1, r1, r2
+        FSR1    r1, r2
         SRLI    r2, r2, 1
         .endr
 #else

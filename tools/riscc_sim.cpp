@@ -79,9 +79,9 @@ constexpr CycleTable TINY16_CYCLES =
     3,  // count-1 SRLI/SRAI in min/sys builds
     5,  // FSL1 stages its result through MDR writeback
     4,  // FSR1 follows the normal two-source execute path
-    6,  // LDW rd, [ra+simm8]
-    5,  // STW rd, [ra+simm8]
-    7,  // LDWX/LDPH
+    6,  // LD rd, [ra+simm8]
+    5,  // ST rd, [ra+simm8]
+    7,  // LDX/LDPH
     6,  // direct-register LDB/LDBS
     5,  // direct-register STB
     4,  // RET/RETI
@@ -812,20 +812,22 @@ struct Sim
                     instr_cycles = 85;
                 }
             }
-            else if (func == 0x12 || func == 0x13)
+            else if (func == 0x11)
             {
+                if (rb > 1)
+                    throw std::runtime_error("compact funnel selector reserved");
                 if (opts.nano)
                     throw std::runtime_error("funnel shift in nano");
-                uint16_t a = r[ra];
-                uint16_t b = r[rb];
-                if (func == 0x13)
+                uint16_t shifted = r[rd];
+                uint16_t endpoint = r[ra];
+                if (rb == 0)
                 {
-                    r[rd] = static_cast<uint16_t>((a << 1) | (b >> 15));
+                    r[rd] = static_cast<uint16_t>((shifted << 1) | (endpoint >> 15));
                     instr_cycles = cycle.funnel_left;
                 }
                 else
                 {
-                    r[rd] = static_cast<uint16_t>((a >> 1) | (b << 15));
+                    r[rd] = static_cast<uint16_t>((shifted >> 1) | ((endpoint & 1) << 15));
                     instr_cycles = cycle.funnel_right;
                 }
             }
@@ -858,15 +860,22 @@ struct Sim
                         pc_next = s[ra] & 0x7fff;
                         instr_cycles = cycle.ret;
                     }
-                    else if (rd == 7 && opts.has_sys())
+                    else if (rd == 5 && opts.has_sys())
                     {// RETI Sa
                         ie = true;
                         pc_next = s[ra] & 0x7fff;
                         instr_cycles = cycle.ret;
                     }
+                    else if ((rd == 2 || rd == 7) && opts.has_sys())
+                    {// CLI / STI
+                        if (ra != 0)
+                            throw std::runtime_error("CLI/STI ra field reserved");
+                        ie = rd == 7;
+                        instr_cycles = cycle.direct;
+                    }
                     else
                     {
-                        throw std::runtime_error("return control selector reserved");
+                        throw std::runtime_error("control selector reserved");
                     }
                 }
                 else if (rb == 1)
@@ -885,20 +894,6 @@ struct Sim
                 else if (rb == 3)
                 {
                     s[rd] = r[ra];
-                    instr_cycles = cycle.direct;
-                }
-                else if (rb == 6)
-                {
-                    if (!opts.has_sys())
-                        throw std::runtime_error("sys-profile op in min");
-                    if (ra != 0)
-                        throw std::runtime_error("CLI/STI ra field reserved");
-                    if (rd == 0)
-                        ie = false; // CLI
-                    else if (rd == 7)
-                        ie = true;  // STI
-                    else
-                        throw std::runtime_error("IE control selector reserved");
                     instr_cycles = cycle.direct;
                 }
                 else

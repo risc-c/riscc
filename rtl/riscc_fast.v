@@ -8,6 +8,25 @@
 
 `default_nettype none
 
+// Device datapaths retain only splits that improve routed efficiency.
+// iCE40 and ECP5 DSP builds route logic through ALU-A; their soft builds use
+// the shared result path. Agilex soft uses both splits, while DSP uses neither.
+`ifdef RISCC_ECP5
+`ifdef RISCC_FAST_DSP
+`define RISCC_FAST_LOGIC_TO_A
+`endif
+`elsif RISCC_FAST_SYNC_RF
+`ifdef RISCC_FAST_DSP
+`define RISCC_FAST_LOGIC_TO_A
+`endif
+`elsif RISCC_FAST_AGILEX
+`ifndef RISCC_FAST_DSP
+`define RISCC_FAST_CONTROL_NORMALIZE
+`define RISCC_FAST_LOGIC_TO_A
+`define RISCC_FAST_LOAD_EXECUTE
+`endif
+`endif
+
 module riscc_fast #(
     parameter [15:0] RESET_PC = 16'h0000
 ) (
@@ -54,6 +73,20 @@ module riscc_fast #(
     reg        x_valid_q;
     reg [14:0] x_pc_q;
     reg [15:0] x_instr_q;
+`ifdef RISCC_ECP5
+    // ECP5 LUTRAM consumes both source addresses registered with X.
+    reg [3:0]  x_raddr_a_q;
+    reg [3:0]  x_raddr_b_q;
+`elsif RISCC_FAST_SYNC_RF
+    // Retain accepted source addresses for a possible synchronous-RF replay.
+    reg [3:0]  x_raddr_a_q;
+    reg [2:0]  x_raddr_b_q;
+`elsif RISCC_FAST_AGILEX
+`ifdef RISCC_FAST_DSP
+    // The Agilex DSP critical path benefits from predecoding only RF-B.
+    reg [3:0]  x_raddr_b_q;
+`endif
+`endif
 `ifdef RISCC_FAST_SYNC_RF
     reg        x_rf_wait_q;
 `endif
@@ -67,6 +100,7 @@ module riscc_fast #(
     reg [3:0]  side_count_q;
 `endif
 `ifdef RISCC_TRACE
+    reg [15:0] x_trace_instr_q;
     reg [14:0] side_pc_q;
     reg [15:0] side_instr_q;
     reg [14:0] trace_pc_live_q;
@@ -98,14 +132,25 @@ module riscc_fast #(
     wire x_system = x_high_group;
     wire x_multiply = x_reg_alu_group & (&x_f5[2:0]);
     wire x_shift_left = x_reg_mem & (&x_f5[2:0]);
-    // FSL1/FSR1 occupy the reserved 10_xxx plane. Undefined selectors in
-    // that plane may alias them; x_f5[0] still selects left versus right.
-    wire x_funnel =
-        x_register & x_f5[4] & ~x_f5[3] & x_f5[1];
+`ifdef RISCC_ECP5
+    // Keep the architectural compact encoding in X. f5[0] selects the compact
+    // group and ooo[1] excludes every defined VSH selector.
+    wire x_funnel = x_register & x_f5[4] & ~x_f5[3] &
+                      x_f5[0] & ~x_bbb[1];
+`else
+    // The synchronous-RF path keeps compact funnels in their architectural
+    // encoding; other paths normalize their fields at the fetch/X boundary.
+    wire x_funnel = x_register & x_f5[4] & ~x_f5[3] &
+`ifdef RISCC_FAST_SYNC_RF
+        ~x_bbb[1];
+`else
+        ~x_f5[2];
+`endif
+`endif
     wire x_reg_alu = x_reg_alu_group & ~x_multiply;
     wire x_shift_right = x_reg_mem & x_f5[2] & ~x_f5[1];
     wire x_shift = x_shift_right | x_shift_left;
-    // LDWX uses ra+rb. Direct typed loads use ra; their B-port copy is
+    // LDX uses ra+rb. Direct typed loads use ra; their B-port copy is
     // suppressed for byte operations or reused to double LDPH's halfword
     // program pointer before the normal [15:1] address extraction.
     wire x_indexed_memory = x_reg_mem & ~x_f5[0] &
@@ -115,7 +160,7 @@ module riscc_fast #(
     wire x_program_load = x_direct_load & ~x_f5[2] & x_program_type;
 `ifndef RISCC_FAST_SYNC_RF
     // The asynchronous-RF mapper prefers the complete register-memory truth
-    // set factored once: LDWX, direct typed loads, and STB.
+    // set factored once: LDX, direct typed loads, and STB.
     wire x_reg_memory = x_reg_mem &
         ((~x_f5[2] & (~x_f5[0] | x_f5[1])) |
          (x_f5[1] & ~x_f5[0]));
@@ -139,45 +184,119 @@ module riscc_fast #(
 `else
     wire x_signed_byte = x_indexed_memory & x_f5[2];
 `endif
-    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined controls
-    // duplicate the new IE value in every ddd bit, allowing each characterized
-    // FPGA mapping to use the better-packed copy.
-`ifdef RISCC_FAST_AGILEX
+    // RET/RETI and CLI/STI share bbb=000.  ddd[1] selects a return versus a
+    // direct IE operation; ddd[2] and ddd[0] duplicate the selected IE value.
+    // The copies are interchangeable architecturally, allowing each FPGA
+    // mapping to use the better-packed copy.
+`ifdef RISCC_FAST_CONTROL_NORMALIZE
+    // Agilex normalizes packed controls at the fetch/X boundary, retaining
+    // the original Execute decode and its established instruction fanout.
     wire x_control_ie_value = x_ddd[0];
-`elsif RISCC_FAST_DSP
-`ifdef RISCC_ECP5
-    wire x_control_ie_value = x_ddd[0];
-`else
-    wire x_control_ie_value = x_ddd[1];
-`endif
-`else
-    wire x_control_ie_value = x_ddd[1];
-`endif
     wire x_return = x_system & ~x_bbb[2] & ~x_bbb[1] & ~x_bbb[0];
     wire x_return_sets_ie = x_return & x_control_ie_value;
+    wire x_ie_control = x_system & x_bbb[2] & x_bbb[1];
+`elsif RISCC_FAST_DSP
+`ifdef RISCC_FAST_SYNC_RF
+    wire x_control_ie_value = x_ddd[0];
+`else
+    wire x_control_ie_value = x_ddd[2];
+`endif
+`else
+    wire x_control_ie_value = x_ddd[0];
+`endif
+`ifndef RISCC_FAST_CONTROL_NORMALIZE
+    wire x_control_plane = x_system & ~x_bbb[1] & ~x_bbb[0];
+    wire x_return = x_control_plane & ~x_ddd[1];
+    // CLI/STI select directly with ddd[1]; RETI is the only return that
+    // writes IE. DSP prefers one merged enable; fabric routes better with the
+    // two product terms preserved up to the sequential fanout.
+`ifdef RISCC_FAST_DSP
+    wire x_control_ie_write = x_control_plane &
+                              (x_ddd[1] | x_control_ie_value);
+`else
+    wire x_return_sets_ie = x_return & x_control_ie_value;
+    wire x_ie_control = x_control_plane & x_ddd[1];
+`endif
+`endif
     wire x_jal = x_system & ~x_bbb[2] & ~x_bbb[1] & x_bbb[0];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
     wire x_long_form = ~x_class[1] & ~x_class[0];
     wire x_jal16 = x_long_form;
     wire x_link_jump = x_jal | x_jal16;
-    wire x_ie_control = x_system & x_bbb[2] & x_bbb[1];
 
+    wire x_src_a_is_ddd = x_immediate | x_funnel;
     wire [3:0] x_src_a = x_branch ? 4'h0 :
         x_system ? {~x_bbb[0], x_aaa} :
-        x_immediate ? {1'b0, x_ddd} : {1'b0, x_aaa};
+        x_src_a_is_ddd ? {1'b0, x_ddd} : {1'b0, x_aaa};
     // Stores consume ddd on B. Direct typed loads broaden that existing
     // select because their B value is ignored; bbb remains decode-only.
     wire x_src_b_is_ddd = x_class[0] &
         (~x_class[1] | (x_f5[3] & x_f5[1]));
+`ifdef RISCC_ECP5
+    wire [2:0] x_src_b_low = x_src_b_is_ddd ? x_ddd :
+                             (x_funnel ? x_aaa : x_bbb);
+    wire [3:0] x_src_b = {1'b0, x_src_b_low};
+`elsif RISCC_FAST_SYNC_RF
+    wire [2:0] x_src_b_low = x_src_b_is_ddd ? x_ddd :
+                             (x_funnel ? x_aaa : x_bbb);
+    wire [3:0] x_src_b = {1'b0, x_src_b_low};
+`else
     wire [3:0] x_src_b = {1'b0, x_src_b_is_ddd ? x_ddd : x_bbb};
+`endif
     wire accept_fetch;
     wire [1:0] d_class = mem_rdata[15:14];
-    wire [2:0] d_ddd = mem_rdata[13:11];
+    wire [2:0] d_ddd_raw = mem_rdata[13:11];
+`ifdef RISCC_ECP5
+    wire [2:0] d_ddd = d_ddd_raw;
     wire [2:0] d_aaa = mem_rdata[10:8];
     wire [4:0] d_f5 = mem_rdata[7:3];
     wire [2:0] d_bbb = mem_rdata[2:0];
+`elsif RISCC_FAST_SYNC_RF
+    wire [2:0] d_ddd = d_ddd_raw;
+    wire [2:0] d_aaa = mem_rdata[10:8];
+    wire [4:0] d_f5 = mem_rdata[7:3];
+    wire [2:0] d_bbb = mem_rdata[2:0];
+`else
+    wire d_compact_funnel = &d_class & mem_rdata[7] & ~mem_rdata[6];
+`ifdef RISCC_FAST_CONTROL_NORMALIZE
+    wire d_packed_control = &d_class & (&mem_rdata[7:3]) &
+                            ~mem_rdata[2] & ~mem_rdata[1] & ~mem_rdata[0];
+    wire d_control_direct = mem_rdata[12];
+    wire d_control_ie_value = mem_rdata[11];
+    wire [2:0] d_ddd = d_ddd_raw;
+    wire [2:0] d_x_ddd = d_packed_control ?
+        {3{d_control_ie_value}} : d_ddd_raw;
+`else
+    wire [2:0] d_ddd = d_ddd_raw;
+    wire [2:0] d_x_ddd = d_ddd;
+`endif
+    wire [2:0] d_aaa = mem_rdata[10:8];
+    wire [4:0] d_f5 = d_compact_funnel ?
+        {mem_rdata[7:4], ~mem_rdata[0]} : mem_rdata[7:3];
+    wire [2:0] d_bbb =
+        d_compact_funnel ? mem_rdata[10:8] : mem_rdata[2:0];
+`ifdef RISCC_FAST_CONTROL_NORMALIZE
+    wire [2:0] d_x_bbb = d_packed_control ?
+        {d_control_direct, d_control_direct, 1'b0} :
+        d_bbb;
+`else
+    wire [2:0] d_x_bbb = d_bbb;
+`endif
+    wire [15:0] d_instr = {d_class, d_x_ddd, d_aaa, d_f5, d_x_bbb};
+`endif
     wire d_immediate = d_class[1] & ~d_class[0];
     wire d_register = &d_class;
+`ifdef RISCC_ECP5
+    wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
+                    d_f5[0] & ~d_bbb[1];
+`else
+    wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
+`ifdef RISCC_FAST_SYNC_RF
+        ~d_bbb[1];
+`else
+        ~d_f5[2];
+`endif
+`endif
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
@@ -189,20 +308,41 @@ module riscc_fast #(
     // loads need only the A hazard check because both RF addresses select aaa.
     wire d_uses_b = d_class[0] &
         (~d_class[1] | ~d_f5[4] | ~d_f5[3]) & ~d_direct_load;
+    wire d_src_a_is_ddd = d_immediate | d_funnel;
     wire [3:0] d_src_a = d_branch ? 4'h0 :
         d_system ? {~d_bbb[0], d_aaa} :
-        d_immediate ? {1'b0, d_ddd} : {1'b0, d_aaa};
+        d_src_a_is_ddd ? {1'b0, d_ddd} : {1'b0, d_aaa};
     wire d_src_b_is_ddd = d_class[0] &
         (~d_class[1] | (d_f5[3] & d_f5[1]));
+`ifdef RISCC_ECP5
+    wire [2:0] d_src_b_low = d_src_b_is_ddd ? d_ddd :
+                             (d_funnel ? d_aaa : d_bbb);
+    wire [3:0] d_src_b = {1'b0, d_src_b_low};
+`elsif RISCC_FAST_SYNC_RF
+    wire [2:0] d_src_b_low = d_src_b_is_ddd ? d_ddd :
+                             (d_funnel ? d_aaa : d_bbb);
+    wire [3:0] d_src_b = {1'b0, d_src_b_low};
+`else
     wire [3:0] d_src_b = {1'b0, d_src_b_is_ddd ? d_ddd : d_bbb};
+`endif
     wire [3:0] rf_raddr_a;
     wire [3:0] rf_raddr_b;
     wire [15:0] rf_a;
     wire [15:0] rf_b;
 
 `ifdef RISCC_FAST_SYNC_RF
-    assign rf_raddr_a = accept_fetch ? d_src_a : x_src_a;
-    assign rf_raddr_b = accept_fetch ? d_src_b : x_src_b;
+    assign rf_raddr_a = accept_fetch ? d_src_a : x_raddr_a_q;
+    assign rf_raddr_b = accept_fetch ? d_src_b : {1'b0, x_raddr_b_q};
+`elsif RISCC_ECP5
+    assign rf_raddr_a = x_raddr_a_q;
+    assign rf_raddr_b = x_raddr_b_q;
+`elsif RISCC_FAST_AGILEX
+    assign rf_raddr_a = x_src_a;
+`ifdef RISCC_FAST_DSP
+    assign rf_raddr_b = x_raddr_b_q;
+`else
+    assign rf_raddr_b = x_src_b;
+`endif
 `else
     assign rf_raddr_a = x_src_a;
     assign rf_raddr_b = x_src_b;
@@ -234,11 +374,20 @@ module riscc_fast #(
 
     wire x_shift_step_left =
 `ifdef RISCC_FAST_DSP
-`ifndef RISCC_FAST_AGILEX
+`ifndef RISCC_FAST_CONTROL_NORMALIZE
         x_program_load |
 `endif
 `endif
-        x_shift_left | (x_funnel & x_f5[0]);
+`ifdef RISCC_ECP5
+        x_shift_left | (x_funnel & ~x_bbb[0]);
+`else
+        x_shift_left | (x_funnel &
+`ifdef RISCC_FAST_SYNC_RF
+        ~x_bbb[0]);
+`else
+        x_f5[0]);
+`endif
+`endif
 `ifdef RISCC_FAST_SYNC_RF
     // The broader term packs with the EBR read path; the asynchronous RF
     // mapping below benefits from retaining the operation qualifier.
@@ -246,10 +395,21 @@ module riscc_fast #(
 `else
     wire x_funnel_left_bit = x_funnel & rf_b[15];
 `endif
+`ifdef RISCC_ECP5
     wire [15:0] x_shift_step = x_shift_step_left ?
         {rf_a[14:0], x_funnel_left_bit} :
         {(x_f5[4] & rf_b[0]) |
+         (~x_f5[4] & x_f5[0] & rf_a[15]), rf_a[15:1]};
+`else
+    wire [15:0] x_shift_step = x_shift_step_left ?
+        {rf_a[14:0], x_funnel_left_bit} :
+        {(x_f5[4] & rf_b[0]) |
+`ifdef RISCC_FAST_SYNC_RF
+         (~x_f5[4] & x_f5[0] & rf_a[15]), rf_a[15:1]};
+`else
          (x_f5[0] & rf_a[15]), rf_a[15:1]};
+`endif
+`endif
     wire saved_shift_left = side_aux_q[3];
     wire saved_shift_arithmetic = side_aux_q[4];
     wire [15:0] shift_step = saved_shift_left ?
@@ -295,13 +455,15 @@ module riscc_fast #(
 `else
          x_memory));
 `endif
-`ifdef RISCC_FAST_DSP
-    wire [15:0] alu_a = alu_a_is_pc ?
-        {1'b0, x_pc_q} :
+`ifdef RISCC_FAST_LOGIC_TO_A
+    wire [15:0] alu_a = (normal_x && run_logic) ? x_logic_result :
+        alu_a_is_pc ? {1'b0, x_pc_q} :
         alu_a_is_rf ? rf_a : 16'h0000;
 `else
     wire [15:0] alu_a = alu_a_is_pc ? {1'b0, x_pc_q} :
         alu_a_is_rf ? rf_a : 16'h0000;
+`endif
+`ifndef RISCC_FAST_DSP
     // Consume the saved RF multiplier MSB first. This Horner-form multiply,
     // acc = (acc << 1) + (bit ? multiplicand : 0), needs only one 16-bit
     // side register; the low product is complete after the sixteenth step.
@@ -332,12 +494,15 @@ module riscc_fast #(
     wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
     wire x_bit_result =
 `ifdef RISCC_FAST_DSP
-`ifndef RISCC_FAST_AGILEX
+`ifndef RISCC_FAST_CONTROL_NORMALIZE
         x_program_load |
 `endif
 `endif
         x_shift | x_funnel;
-    wire [15:0] run_result = run_logic ? x_logic_result :
+    wire [15:0] run_result =
+`ifndef RISCC_FAST_LOGIC_TO_A
+        run_logic ? x_logic_result :
+`endif
         run_imm_s ? x_imm_s :
 `ifndef RISCC_FAST_DSP
         (x_move | x_program_load) ? rf_a :
@@ -356,13 +521,19 @@ module riscc_fast #(
         x_jal16 ? 16'h0001 : 16'h0000;
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
+`ifndef RISCC_FAST_LOAD_EXECUTE
         in_load ? load_value :
+`endif
         normal_x ? run_result : 16'h0000;
 `else
     wire [15:0] alu_b = normal_x ? run_result :
         state_q[1] ?
             (state_q[0] ? shift_step : {side_data_q[14:0], 1'b0}) :
+`ifndef RISCC_FAST_LOAD_EXECUTE
         ~state_q[0] ? load_value : 16'h0000;
+`else
+        16'h0000;
+`endif
 `endif
     wire alu_subtract = normal_x &
         ((x_imm_arithmetic & x_aaa[0]) |
@@ -392,7 +563,11 @@ module riscc_fast #(
         (normal_x && x_multiply) ? direct_mul_result :
 `endif
         (normal_x && x_compare) ?
-        {15'h0000, x_f5[0] ? unsigned_less : signed_less} : alu_result;
+        {15'h0000, x_f5[0] ? unsigned_less : signed_less} :
+`ifdef RISCC_FAST_LOAD_EXECUTE
+        in_load ? load_value :
+`endif
+        alu_result;
 
     wire x_r0_zero = ~|rf_a;
     wire x_branch_taken = x_ddd[2] |
@@ -585,16 +760,26 @@ module riscc_fast #(
             trace_ie_live_q <= 1'b0;
         end else if (run_commit) begin
             trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
+`ifdef RISCC_FAST_DSP
+            if (x_control_ie_write)
+                trace_ie_live_q <= x_control_ie_value;
+`else
             if (x_ie_control | x_return_sets_ie)
                 trace_ie_live_q <= x_control_ie_value;
+`endif
         end else if (side_commit) begin
             trace_pc_live_q <= side_pc_q + 15'd1;
         end
 `endif
 
         // Architectural interrupt-enable updates commit with their op.
+`ifdef RISCC_FAST_DSP
+        if (run_commit && x_control_ie_write)
+            interrupt_enable_q <= x_control_ie_value;
+`else
         if (run_commit && (x_ie_control | x_return_sets_ie))
             interrupt_enable_q <= x_control_ie_value;
+`endif
 
         // Side datapath updates. The data register holds either the iterative
         // shift value or the soft-MUL accumulator.
@@ -616,7 +801,7 @@ module riscc_fast #(
         if (x_side_start) begin
 `ifdef RISCC_TRACE
             side_pc_q <= x_pc_q;
-            side_instr_q <= x_instr_q;
+            side_instr_q <= x_trace_instr_q;
 `endif
 `ifdef RISCC_FAST_DSP
             // DSP builds have only load and shift side states. Destination
@@ -650,6 +835,23 @@ module riscc_fast #(
 `endif
         end
 
+`ifdef RISCC_ECP5
+        if (accept_fetch) begin
+            x_raddr_a_q <= d_src_a;
+            x_raddr_b_q <= d_src_b;
+        end
+`elsif RISCC_FAST_SYNC_RF
+        if (accept_fetch) begin
+            x_raddr_a_q <= d_src_a;
+            x_raddr_b_q <= d_src_b[2:0];
+        end
+`elsif RISCC_FAST_AGILEX
+`ifdef RISCC_FAST_DSP
+        if (accept_fetch)
+            x_raddr_b_q <= d_src_b;
+`endif
+`endif
+
         // X completes directly while the previous synchronous fetch response
         // replaces it. The synchronous-RF build holds X for a repeated read
         // when that edge also writes one of its source addresses.
@@ -662,7 +864,13 @@ module riscc_fast #(
             x_valid_q <= (~take_irq & x_long_wait) | accept_fetch;
             if (accept_fetch) begin
                 x_pc_q <= fetch_pending_pc_q;
+`ifdef RISCC_ECP5
                 x_instr_q <= mem_rdata;
+`elsif RISCC_FAST_SYNC_RF
+                x_instr_q <= mem_rdata;
+`else
+                x_instr_q <= d_instr;
+`endif
             end
 `ifdef RISCC_FAST_SYNC_RF
             x_rf_wait_q <= incoming_rf_hazard | load_successor_hazard;
@@ -672,7 +880,13 @@ module riscc_fast #(
             if (accept_fetch) begin
                 x_valid_q <= 1'b1;
                 x_pc_q <= fetch_pending_pc_q;
+`ifdef RISCC_ECP5
                 x_instr_q <= mem_rdata;
+`elsif RISCC_FAST_SYNC_RF
+                x_instr_q <= mem_rdata;
+`else
+                x_instr_q <= d_instr;
+`endif
             end
 `ifdef RISCC_FAST_SYNC_RF
             x_rf_wait_q <= x_valid_q ? side_aux_q[5] : incoming_rf_hazard;
@@ -711,6 +925,13 @@ module riscc_fast #(
         if (take_irq)
             interrupt_enable_q <= 1'b0;
 
+`ifdef RISCC_TRACE
+        // Execute may normalize compact encodings internally; traces retain
+        // the architectural instruction word accepted from memory.
+        if (accept_fetch)
+            x_trace_instr_q <= mem_rdata;
+`endif
+
         if (rst) begin
             state_q <= ST_RUN;
             interrupt_enable_q <= 1'b0;
@@ -731,7 +952,7 @@ module riscc_fast #(
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 16;
     wire [15:0] commit_instr = take_irq ? irq_instr :
-        run_commit ? x_instr_q : side_instr_q;
+        run_commit ? x_trace_instr_q : side_instr_q;
     wire tr_commit_i = commit_valid;
     wire [14:0] tr_pc_i = trace_pc_live_q;
     wire [15:0] tr_ir_i = commit_instr;
@@ -833,5 +1054,15 @@ module riscc_fast_rf (
     end
 `endif
 endmodule
+
+`ifdef RISCC_FAST_LOAD_EXECUTE
+`undef RISCC_FAST_LOAD_EXECUTE
+`endif
+`ifdef RISCC_FAST_LOGIC_TO_A
+`undef RISCC_FAST_LOGIC_TO_A
+`endif
+`ifdef RISCC_FAST_CONTROL_NORMALIZE
+`undef RISCC_FAST_CONTROL_NORMALIZE
+`endif
 
 `default_nettype wire

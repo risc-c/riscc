@@ -20,9 +20,9 @@ boot_msg:
 ; Clobbers r0..r5.  Preserves r6/r7.
 tx_push:
     LDI16 r2, tx_tail
-    LDW   r3, [r2+0]       ; tail
+    LD   r3, [r2+0]       ; tail
     LDI16 r4, tx_head
-    LDW   r5, [r4+0]       ; head
+    LD   r5, [r4+0]       ; head
     MOV   r0, r3
     ADDI  r0, 1
     ANDI  r0, 63           ; next tail
@@ -31,7 +31,7 @@ tx_push:
     LDI16 r4, tx_q
     ADD   r4, r4, r3
     STB   r1, [r4]
-    STW   r0, [r2+0]
+    ST   r0, [r2+0]
 tx_push_done:
     RETS
 
@@ -54,9 +54,9 @@ tx_puts_done:
 ; Clobbers r0..r5.
 process_rx:
     LDI16 r2, rx_head
-    LDW   r3, [r2+0]       ; head
+    LD   r3, [r2+0]       ; head
     LDI16 r4, rx_tail
-    LDW   r5, [r4+0]       ; tail
+    LD   r5, [r4+0]       ; tail
     SUB   r0, r3, r5
     BEQZ  process_rx_done
     LDI16 r4, rx_q
@@ -64,43 +64,43 @@ process_rx:
     LDB   r1, [r0]
     ADDI  r3, 1
     ANDI  r3, 15
-    STW   r3, [r2+0]
+    ST   r3, [r2+0]
 
     CMPI  r1, '1'
     BNEZ  pr_not_1
     LDI   r1, 0
     LDI16 r2, pattern
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     JMP8  process_rx_done
 pr_not_1:
     CMPI  r1, '2'
     BNEZ  pr_not_2
     LDI   r1, 1
     LDI16 r2, pattern
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     JMP8  process_rx_done
 pr_not_2:
     CMPI  r1, '3'
     BNEZ  pr_not_3
     LDI   r1, 2
     LDI16 r2, pattern
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     JMP8  process_rx_done
 pr_not_3:
     CMPI  r1, '+'
     BNEZ  pr_not_plus
     LDI16 r2, speed
-    LDW   r1, [r2+0]
+    LD   r1, [r2+0]
     ADDI  r1, 1
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     JMP8  process_rx_done
 pr_not_plus:
     CMPI  r1, '-'
     BNEZ  process_rx_done
     LDI16 r2, speed
-    LDW   r1, [r2+0]
+    LD   r1, [r2+0]
     ADDI  r1, -1
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 process_rx_done:
     RETS
 
@@ -109,23 +109,23 @@ process_rx_done:
 draw_frame:
     MFS   r1, S7           ; this routine calls helpers, so preserve caller link
     LDI16 r2, draw_link
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI16 r1, frame
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     LDI16 r3, speed
-    LDW   r3, [r3+0]
+    LD   r3, [r3+0]
     ADDI  r3, 1
     ADD   r2, r2, r3
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 
     LDI16 r1, frame
-    LDW   r1, [r1+0]
+    LD   r1, [r1+0]
     LDI16 r2, pattern
-    LDW   r2, [r2+0]
+    LD   r2, [r2+0]
     ADD   r1, r1, r2
     LDI16 r3, 0xFFE8      ; LED register
-    STW   r1, [r3+0]
+    ST   r1, [r3+0]
 
     LDI   r1, 'F'         ; frame entered
     CALL16 tx_push
@@ -141,67 +141,67 @@ draw_y_loop:
     MOV   r5, r6          ; zy0 = (y - 60) * view_step
     ADDI  r5, -60
     LDI16 r1, view_step
-    LDW   r1, [r1+0]
+    LD   r1, [r1+0]
     MUL   r5, r5, r1
     LDI16 r1, zy0_var
-    STW   r5, [r1+0]
+    ST   r5, [r1+0]
 
     LDI   r4, 0           ; packed x word: 0..39
 draw_x_loop:
     LDI16 r1, xblk
-    STW   r4, [r1+0]
+    ST   r4, [r1+0]
     LDI16 r1, yblk
-    STW   r6, [r1+0]
+    ST   r6, [r1+0]
     LDI16 r1, fb_row
-    STW   r7, [r1+0]
+    ST   r7, [r1+0]
 
     SLLI  r5, r4, 2       ; first pixel in this packed word
     LDI16 r1, xpix
-    STW   r5, [r1+0]
+    ST   r5, [r1+0]
 
     CALL16 julia_pixel     ; lane 0
     LDI16 r2, pack_word
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI16 r2, xpix         ; lane 1
-    LDW   r5, [r2+0]
+    LD   r5, [r2+0]
     ADDI  r5, 1
-    STW   r5, [r2+0]
+    ST   r5, [r2+0]
     CALL16 julia_pixel
     SLLI  r1, r1, 4
     LDI16 r2, pack_word
-    LDW   r3, [r2+0]
+    LD   r3, [r2+0]
     OR    r3, r3, r1
-    STW   r3, [r2+0]
+    ST   r3, [r2+0]
 
     LDI16 r2, xpix         ; lane 2
-    LDW   r5, [r2+0]
+    LD   r5, [r2+0]
     ADDI  r5, 1
-    STW   r5, [r2+0]
+    ST   r5, [r2+0]
     CALL16 julia_pixel
     SLLI  r1, r1, 8
     LDI16 r2, pack_word
-    LDW   r3, [r2+0]
+    LD   r3, [r2+0]
     OR    r3, r3, r1
-    STW   r3, [r2+0]
+    ST   r3, [r2+0]
 
     LDI16 r2, xpix         ; lane 3
-    LDW   r5, [r2+0]
+    LD   r5, [r2+0]
     ADDI  r5, 1
-    STW   r5, [r2+0]
+    ST   r5, [r2+0]
     CALL16 julia_pixel
     SLLI  r1, r1, 8
     SLLI  r1, r1, 4
     LDI16 r2, pack_word
-    LDW   r3, [r2+0]
+    LD   r3, [r2+0]
     OR    r1, r3, r1
 
     LDI16 r2, xblk
-    LDW   r4, [r2+0]
+    LD   r4, [r2+0]
     LDI16 r2, yblk
-    LDW   r6, [r2+0]
+    LD   r6, [r2+0]
     LDI16 r2, fb_row
-    LDW   r7, [r2+0]
+    LD   r7, [r2+0]
 
     CMPI  r4, 0
     BNEZ  draw_not_left_edge
@@ -214,7 +214,7 @@ draw_not_left_edge:
 draw_store_word:
     SHL1  r2, r4
     ADD   r2, r2, r7
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     ADDI  r4, 1
     CMPI  r4, 40
@@ -223,14 +223,14 @@ draw_store_word:
     JMP   r1
 draw_x_done:
     LDI16 r1, yblk
-    STW   r6, [r1+0]
+    ST   r6, [r1+0]
     LDI16 r1, fb_row
-    STW   r7, [r1+0]
+    ST   r7, [r1+0]
     CALL16 draw_ticker
     LDI16 r1, yblk
-    LDW   r6, [r1+0]
+    LD   r6, [r1+0]
     LDI16 r1, fb_row
-    LDW   r7, [r1+0]
+    LD   r7, [r1+0]
 
     LDI16 r2, 80          ; next framebuffer row
     ADD   r7, r7, r2
@@ -246,7 +246,7 @@ draw_done:
     CALL16 tx_push
     CALL16 update_julia_param
     LDI16 r2, draw_link
-    LDW   r1, [r2+0]
+    LD   r1, [r2+0]
     MTS   S7, r1
     RETS
 
@@ -257,7 +257,7 @@ draw_border:
     LDI16 r7, 0x8000
     LDI   r6, 0
 border_top_loop:
-    STW   r1, [r7+0]
+    ST   r1, [r7+0]
     ADDI  r7, 2
     ADDI  r6, 1
     CMPI  r6, 40
@@ -268,7 +268,7 @@ border_top_done:
     LDI16 r7, 0xA530
     LDI   r6, 0
 border_bottom_loop:
-    STW   r1, [r7+0]
+    ST   r1, [r7+0]
     ADDI  r7, 2
     ADDI  r6, 1
     CMPI  r6, 40
@@ -281,15 +281,15 @@ border_bottom_done:
     LDI   r3, 0x000F
     LDI16 r4, 0xF000
 border_side_loop:
-    LDW   r2, [r7+0]
+    LD   r2, [r7+0]
     OR    r2, r2, r3
-    STW   r2, [r7+0]
+    ST   r2, [r7+0]
 
     LDI   r5, 78
     ADD   r5, r5, r7
-    LDW   r2, [r5+0]
+    LD   r2, [r5+0]
     OR    r2, r2, r4
-    STW   r2, [r5+0]
+    ST   r2, [r5+0]
 
     LDI   r5, 80
     ADD   r7, r7, r5
@@ -321,7 +321,7 @@ fmul_a_pos:
 fmul_b_pos:
     XOR   r3, r3, r4
     LDI16 r0, fmul_sign
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
 
     MOV   r4, r1          ; al
     ANDI  r4, 255
@@ -345,7 +345,7 @@ fmul_b_pos:
     ADD   r1, r1, r2
 
     LDI16 r0, fmul_sign
-    LDW   r2, [r0+0]
+    LD   r2, [r0+0]
     OR    r0, r2, r2
     BEQZ  fmul_done
     LDI   r0, 0
@@ -358,12 +358,12 @@ fmul_done:
 draw_ticker:
     MFS   r1, S7
     LDI16 r2, ticker_link
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI   r7, 1
 ticker_row_loop:
     LDI16 r1, ticker_row
-    STW   r7, [r1+0]
+    ST   r7, [r1+0]
 
     MOV   r1, r7
     LDI   r2, 80
@@ -371,10 +371,10 @@ ticker_row_loop:
     LDI16 r2, 0x8000
     ADD   r1, r1, r2
     LDI16 r2, ticker_fb_addr
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI16 r1, ticker_scroll
-    LDW   r3, [r1+0]
+    LD   r3, [r1+0]
     LDI   r4, 0
 ticker_init_pos:
     LDI   r5, 6
@@ -385,37 +385,37 @@ ticker_init_pos:
     JMP8  ticker_init_pos
 ticker_init_done:
     LDI16 r1, ticker_col
-    STW   r3, [r1+0]
+    ST   r3, [r1+0]
     LDI16 r1, ticker_char
-    STW   r4, [r1+0]
+    ST   r4, [r1+0]
 
     LDI   r6, 0
 ticker_word_loop:
     LDI   r1, 0
     LDI16 r2, ticker_word
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI   r1, 0
     LDI16 r2, ticker_lane
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     CALL16 ticker_emit_pixel
     LDI   r1, 1
     LDI16 r2, ticker_lane
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     CALL16 ticker_emit_pixel
     LDI   r1, 2
     LDI16 r2, ticker_lane
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     CALL16 ticker_emit_pixel
     LDI   r1, 3
     LDI16 r2, ticker_lane
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     CALL16 ticker_emit_pixel
 
     LDI16 r1, ticker_word
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     LDI16 r1, ticker_fb_addr
-    LDW   r3, [r1+0]
+    LD   r3, [r1+0]
     CMPI  r6, 0
     BNEZ  ticker_not_left_edge
     ORI   r2, 0x0F        ; preserve left border pixel
@@ -425,9 +425,9 @@ ticker_not_left_edge:
     LDI16 r4, 0xF000      ; preserve right border pixel
     OR    r2, r2, r4
 ticker_store_word:
-    STW   r2, [r3+0]
+    ST   r2, [r3+0]
     ADDI  r3, 2
-    STW   r3, [r1+0]
+    ST   r3, [r1+0]
 
     ADDI  r6, 1
     CMPI  r6, 40
@@ -442,29 +442,29 @@ ticker_row_done:
     JMP   r1
 ticker_done_rows:
     LDI16 r1, ticker_scroll
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     ADDI  r2, 1
     LDI   r3, 168
     SUB   r0, r2, r3
     BNEZ  ticker_scroll_store
     LDI   r2, 0
 ticker_scroll_store:
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 
     LDI16 r2, ticker_link
-    LDW   r1, [r2+0]
+    LD   r1, [r2+0]
     MTS   S7, r1
     RETS
 
 ticker_emit_pixel:
     LDI16 r1, ticker_col
-    LDW   r3, [r1+0]
+    LD   r3, [r1+0]
     CMPI  r3, 5
     BEQZ  ticker_pixel_advance
 
     ; The font is 5x7 with two black guard rows above and a blank spacer below.
     LDI16 r1, ticker_row
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     CMPI  r2, 0
     BEQZ  ticker_pixel_advance
     CMPI  r2, 1
@@ -475,7 +475,7 @@ ticker_emit_pixel:
     BEQZ  ticker_pixel_advance
 
     LDI16 r1, ticker_char
-    LDW   r4, [r1+0]
+    LD   r4, [r1+0]
     SLLI  r5, r4, 3
     SUB   r5, r5, r4
     ADD   r5, r5, r2
@@ -489,132 +489,132 @@ ticker_emit_pixel:
     BEQZ  ticker_pixel_advance
 
     LDI16 r1, ticker_lane
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     SHL1  r2, r2
     LDI16 r1, ticker_nibble_masks
-    LDWX  r5, [r1+r2]
+    LDX  r5, [r1+r2]
     LDI16 r1, ticker_word
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     OR    r2, r2, r5
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 
 ticker_pixel_advance:
     LDI16 r1, ticker_col
-    LDW   r3, [r1+0]
+    LD   r3, [r1+0]
     ADDI  r3, 1
     CMPI  r3, 6
     BNEZ  ticker_col_store
     LDI   r3, 0
     LDI16 r2, ticker_char
-    LDW   r4, [r2+0]
+    LD   r4, [r2+0]
     ADDI  r4, 1
     CMPI  r4, 28
     BNEZ  ticker_char_store
     LDI   r4, 0
 ticker_char_store:
-    STW   r4, [r2+0]
+    ST   r4, [r2+0]
 ticker_col_store:
-    STW   r3, [r1+0]
+    ST   r3, [r1+0]
     RETS
 
 ; Compute one Julia sample for xpix/zy0_var.  r1 returns one 4-bit color.
 julia_pixel:
     MFS   r1, S7
     LDI16 r2, fractal_link
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 
     LDI16 r6, xpix
-    LDW   r6, [r6+0]
+    LD   r6, [r6+0]
     ADDI  r6, -80         ; zx0 = (x - 80) * view_step
     LDI16 r7, view_step
-    LDW   r7, [r7+0]
+    LD   r7, [r7+0]
     MUL   r7, r6, r7
     LDI16 r6, zx_var
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
 
     LDI16 r1, zy0_var
-    LDW   r1, [r1+0]
+    LD   r1, [r1+0]
     LDI16 r2, zy_var
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
     LDI   r1, 0
     LDI16 r2, iter_var
-    STW   r1, [r2+0]
+    ST   r1, [r2+0]
 julia_iter:
     LDI16 r0, zx_var
-    LDW   r1, [r0+0]
+    LD   r1, [r0+0]
     MOV   r2, r1
     CALL16 fmul_q10
     LDI16 r0, zx2_var
-    STW   r1, [r0+0]
+    ST   r1, [r0+0]
 
     LDI16 r0, zy_var
-    LDW   r1, [r0+0]
+    LD   r1, [r0+0]
     MOV   r2, r1
     CALL16 fmul_q10
     LDI16 r0, zy2_var
-    STW   r1, [r0+0]
+    ST   r1, [r0+0]
 
     LDI16 r0, zx2_var
-    LDW   r4, [r0+0]
+    LD   r4, [r0+0]
     LDI16 r0, zy2_var
-    LDW   r5, [r0+0]
+    LD   r5, [r0+0]
     ADD   r0, r4, r5
     LDI16 r6, 4095
     SLTU  r0, r6, r0      ; escape when zx2 + zy2 >= 4096 (radius 2)
     BNEZ  julia_done
     LDI16 r0, iter_var
-    LDW   r3, [r0+0]
+    LD   r3, [r0+0]
     CMPI  r3, 31
     BEQZ  julia_done
 
     LDI16 r0, zx_var
-    LDW   r1, [r0+0]
+    LD   r1, [r0+0]
     LDI16 r0, zy_var
-    LDW   r2, [r0+0]
+    LD   r2, [r0+0]
     CALL16 fmul_q10
     SHL1  r7, r1          ; new zy = 2*zx*zy + julia_cy
     LDI16 r6, julia_cy
-    LDW   r6, [r6+0]
+    LD   r6, [r6+0]
     ADD   r7, r7, r6
     LDI16 r0, new_zy_var
-    STW   r7, [r0+0]
+    ST   r7, [r0+0]
 
     LDI16 r0, zx2_var
-    LDW   r4, [r0+0]
+    LD   r4, [r0+0]
     LDI16 r0, zy2_var
-    LDW   r5, [r0+0]
+    LD   r5, [r0+0]
     SUB   r1, r4, r5      ; new zx = zx2 - zy2 + julia_cx
     LDI16 r6, julia_cx
-    LDW   r6, [r6+0]
+    LD   r6, [r6+0]
     ADD   r1, r1, r6
     LDI16 r0, zx_var
-    STW   r1, [r0+0]
+    ST   r1, [r0+0]
     LDI16 r0, new_zy_var
-    LDW   r2, [r0+0]
+    LD   r2, [r0+0]
     LDI16 r0, zy_var
-    STW   r2, [r0+0]
+    ST   r2, [r0+0]
 
     LDI16 r0, iter_var
-    LDW   r3, [r0+0]
+    LD   r3, [r0+0]
     ADDI  r3, 1
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
     JMP8  julia_iter
 julia_done:
     LDI16 r0, iter_var
-    LDW   r3, [r0+0]
+    LD   r3, [r0+0]
     CMPI  r3, 31
     BNEZ  julia_color
     LDI   r3, 0           ; inside the set: black
     JMP8  julia_pixel_done
 julia_color:
     LDI16 r6, pattern
-    LDW   r6, [r6+0]
+    LD   r6, [r6+0]
     ADD   r3, r3, r6
     ANDI  r3, 15
 julia_pixel_done:
     MOV   r1, r3
     LDI16 r2, fractal_link
-    LDW   r0, [r2+0]
+    LD   r0, [r2+0]
     MTS   S7, r0
     RETS
 
@@ -622,17 +622,17 @@ julia_pixel_done:
 ; c = 0.7885*exp(i*a) animation path.  No zoom: all precision stays in pixels.
 update_julia_param:
     LDI16 r1, julia_target
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     SLLI  r2, r2, 2       ; two 16-bit words per path point
     LDI16 r3, julia_path
     ADD   r3, r3, r2
-    LDW   r4, [r3+0]      ; target cx
-    LDW   r5, [r3+2]      ; target cy
+    LD   r4, [r3+0]      ; target cx
+    LD   r5, [r3+2]      ; target cy
 
     LDI   r7, 1           ; still-at-target flag
 
     LDI16 r1, julia_cx
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     SUB   r0, r4, r2
     BEQZ  update_julia_x_done
     LDI   r7, 0
@@ -648,11 +648,11 @@ update_julia_x_dec:
     BGEZ  update_julia_x_store
     MOV   r2, r4
 update_julia_x_store:
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 update_julia_x_done:
 
     LDI16 r1, julia_cy
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     SUB   r0, r5, r2
     BEQZ  update_julia_y_done
     LDI   r7, 0
@@ -668,19 +668,19 @@ update_julia_y_dec:
     BGEZ  update_julia_y_store
     MOV   r2, r5
 update_julia_y_store:
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 update_julia_y_done:
 
     OR    r0, r7, r7
     BEQZ  update_julia_done
     LDI16 r1, julia_target
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     ADDI  r2, 1
     CMPI  r2, 16
     BNEZ  update_julia_target_store
     LDI   r2, 0
 update_julia_target_store:
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
 update_julia_done:
     RETS
 
@@ -694,16 +694,16 @@ isr_irq:
 
     ; RX ready: read the hardware byte and enqueue it if space exists.
     LDI16 r1, 0xFFF2
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     MOV   r0, r2
     ANDI  r0, 2
     BEQZ  isr_rx_done
     LDI16 r1, 0xFFF0
-    LDW   r1, [r1+0]
+    LD   r1, [r1+0]
     LDI16 r2, rx_tail
-    LDW   r3, [r2+0]
+    LD   r3, [r2+0]
     LDI16 r4, rx_head
-    LDW   r5, [r4+0]
+    LD   r5, [r4+0]
     MOV   r0, r3
     ADDI  r0, 1
     ANDI  r0, 15
@@ -712,37 +712,37 @@ isr_irq:
     LDI16 r4, rx_q
     ADD   r4, r4, r3
     STB   r1, [r4]
-    STW   r0, [r2+0]
+    ST   r0, [r2+0]
 isr_rx_done:
 
     ; TX ready: drain one software queue byte, or disable TX-ready IRQ.
     LDI16 r1, 0xFFF2
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     MOV   r0, r2
     ANDI  r0, 1
     BEQZ  isr_done
     LDI16 r1, tx_head
-    LDW   r2, [r1+0]
+    LD   r2, [r1+0]
     LDI16 r3, tx_tail
-    LDW   r4, [r3+0]
+    LD   r4, [r3+0]
     SUB   r0, r2, r4
     BEQZ  isr_tx_empty
     LDI16 r5, tx_q
     ADD   r0, r5, r2
     LDB   r4, [r0]
     LDI16 r5, 0xFFF0
-    STW   r4, [r5+0]
+    ST   r4, [r5+0]
     ADDI  r2, 1
     ANDI  r2, 63
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
     LDI16 r5, 0xFFF2
     LDI   r4, 3
-    STW   r4, [r5+0]
+    ST   r4, [r5+0]
     JMP8  isr_done
 isr_tx_empty:
     LDI16 r5, 0xFFF2
     LDI   r4, 1
-    STW   r4, [r5+0]
+    ST   r4, [r5+0]
 
 isr_done:
     MFS   r5, S6
@@ -769,10 +769,10 @@ boot_queue_done:
     ; Enable the UART source in the shared two-source interrupt controller.
     LDI16 r1, 0xFFE0
     LDI   r2, 1
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
     LDI16 r1, 0xFFF2
     LDI   r2, 3
-    STW   r2, [r1+0]
+    ST   r2, [r1+0]
     STI
 
 main_loop:

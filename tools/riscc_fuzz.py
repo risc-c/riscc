@@ -122,9 +122,9 @@ class Gen:
         lines = ["    LDI16 r7, 0x%04X" % WIN]
         k = self.rng.random()
         if k < 0.35:
-            lines.append("    STW   %s, [r7+%d]" % (self.reg(), off))
+            lines.append("    ST   %s, [r7+%d]" % (self.reg(), off))
         elif k < 0.70:
-            lines.append("    LDW   %s, [r7+%d]" % (self.reg(), off))
+            lines.append("    LD   %s, [r7+%d]" % (self.reg(), off))
         elif k < 0.85:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)
@@ -194,7 +194,7 @@ class Gen:
     def op_irq(self):
         return ["    STI",
                 "    LDI16 r7, 0x%04X" % TEST_IRQ,
-                "    STW   r7, [r7+0]"]
+                "    ST   r7, [r7+0]"]
 
     def simple_op(self, exclude=None):
         while True:
@@ -221,7 +221,7 @@ class Gen:
         lines.append("    LDI16 r7, 0x%04X" % WIN)
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
-            lines.append("    STW   r1, [r7+%d]" % (w * 2))
+            lines.append("    ST   r1, [r7+%d]" % (w * 2))
         lines += self.op_program_load()
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
@@ -263,7 +263,7 @@ class Gen:
             "fail:",
             "    LDI16 r7, 0x0BAD",
             "    LDI16 r6, 0x%04X" % RESULT,
-            "    STW   r7, [r6+0]",
+            "    ST   r7, [r6+0]",
             "    HALT",
         ]
         if self.sys:
@@ -274,7 +274,7 @@ class Gen:
                 "    ADDI  r1, 1",
                 "    MTS   S1, r1",
                 "    LDI16 r1, 0x%04X" % TEST_IRQ,
-                "    LDW   r1, [r1+0]",
+                "    LD   r1, [r1+0]",
                 "    MFS   r1, S2",
                 "    ERET",
                 "brk_h:",                       # count in S3, resume
@@ -303,7 +303,7 @@ class Gen:
             tail.append("    MTS   S4, r7")
             tail += ["    LDI16 r7, 0x600D",
                      "    LDI16 r0, 0x%04X" % RESULT,
-                     "    STW   r7, [r0+0]",
+                     "    ST   r7, [r0+0]",
                      "    HALT"]
         else:
             code = FAILBASE
@@ -320,11 +320,11 @@ class Gen:
             for w in expect["probes"]:
                 code += 1
                 tail += ["    LDI16 r7, 0x%04X" % (WIN + 2 * w),
-                         "    LDW   r6, [r7+0]"] + \
+                         "    LD   r6, [r7+0]"] + \
                     self.check_reg("r6", expect["mem"][w], code)
             tail += ["    LDI16 r7, 0x600D",
                      "    LDI16 r6, 0x%04X" % RESULT,
-                     "    STW   r7, [r6+0]",
+                     "    ST   r7, [r6+0]",
                      "    HALT"]
         return "\n".join(head + body + tail) + "\n"
 
@@ -335,7 +335,7 @@ class Gen:
                 "    BEQZ  ok_%x" % code,
                 "    LDI16 r7, 0x%04X" % code,
                 "    LDI16 r6, 0x%04X" % RESULT,
-                "    STW   r7, [r6+0]",
+                "    ST   r7, [r6+0]",
                 "    HALT",
                 "ok_%x:" % code]
 
@@ -376,9 +376,9 @@ class NanoGen:
         lines = ["    LDI16 r7, 0x%04X" % WIN]
         k = self.rng.random()
         if k < 0.35:
-            lines.append("    STW   %s, [r7+%d]" % (self.reg(), off))
+            lines.append("    ST   %s, [r7+%d]" % (self.reg(), off))
         elif k < 0.70:
-            lines.append("    LDW   %s, [r7+%d]" % (self.reg(), off))
+            lines.append("    LD   %s, [r7+%d]" % (self.reg(), off))
         elif k < 0.85:
             boff = self.rng.randrange(0, WIN_WORDS * 2)
             lines.append("    LDI   r0, %d" % boff)
@@ -445,7 +445,7 @@ class NanoGen:
         lines = ["    LDI16 r7, 0x%04X" % WIN]
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
-            lines.append("    STW   r1, [r7+%d]" % (w * 2))
+            lines.append("    ST   r1, [r7+%d]" % (w * 2))
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
             if k < 0.48:
@@ -463,7 +463,7 @@ class NanoGen:
     def save_regs(self):
         lines = ["    LDI16 r0, 0x%04X" % NANO_SCRATCH]
         for r in range(1, 8):
-            lines.append("    STW   r%d, [r0+%d]" % (r, r * 2))
+            lines.append("    ST   r%d, [r0+%d]" % (r, r * 2))
         return lines
 
     def check_word(self, load_lines, want, code):
@@ -473,7 +473,7 @@ class NanoGen:
             "    BEQZ  nok_%x" % code,
             "    LDI16 r7, 0x%04X" % code,
             "    LDI16 r6, 0x%04X" % RESULT,
-            "    STW   r7, [r6+0]",
+            "    ST   r7, [r6+0]",
             "    HALT",
             "nok_%x:" % code,
         ]
@@ -490,7 +490,7 @@ class NanoGen:
             "fail:",
             "    LDI16 r7, 0x0BAD",
             "    LDI16 r6, 0x%04X" % RESULT,
-            "    STW   r7, [r6+0]",
+            "    ST   r7, [r6+0]",
             "    HALT",
         ]
         self.rng = random.Random(self.seed)
@@ -505,7 +505,7 @@ class NanoGen:
         if expect is None:
             tail += ["    LDI16 r7, 0x600D",
                      "    LDI16 r6, 0x%04X" % RESULT,
-                     "    STW   r7, [r6+0]",
+                     "    ST   r7, [r6+0]",
                      "    HALT"]
         else:
             code = FAILBASE
@@ -513,17 +513,17 @@ class NanoGen:
                 code += 1
                 tail += self.check_word([
                     "    LDI16 r5, 0x%04X" % NANO_SCRATCH,
-                    "    LDW   r2, [r5+%d]" % (r * 2),
+                    "    LD   r2, [r5+%d]" % (r * 2),
                 ], expect["r"][r], code)
             for w in expect["probes"]:
                 code += 1
                 tail += self.check_word([
                     "    LDI16 r5, 0x%04X" % (WIN + 2 * w),
-                    "    LDW   r2, [r5+0]",
+                    "    LD   r2, [r5+0]",
                 ], expect["mem"][w], code)
             tail += ["    LDI16 r7, 0x600D",
                      "    LDI16 r6, 0x%04X" % RESULT,
-                     "    STW   r7, [r6+0]",
+                     "    ST   r7, [r6+0]",
                      "    HALT"]
         return "\n".join(head + body + tail) + "\n"
 

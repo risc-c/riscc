@@ -22,8 +22,8 @@ __riscc_umul24x24:
          * the incoming r7; the supplied IRQ wrapper never consumes the
          * interrupted stack.
          */
-        STW     r5, [r7 - 2]
-        STW     r6, [r7 - 4]
+        ST     r5, [r7 - 2]
+        ST     r6, [r7 - 4]
 
 #ifdef __RISCC_MULHU__
         /*
@@ -61,8 +61,8 @@ __riscc_umul24x24:
         MOV     r3, r1
         MOV     r1, r5
 
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
         RETS
 #else
 
@@ -191,8 +191,8 @@ __riscc_umul24x24:
         MFS     r1, s3
         MFS     r2, s4
 
-        LDW     r6, [r7 - 4]
-        LDW     r5, [r7 - 2]
+        LD     r6, [r7 - 4]
+        LD     r5, [r7 - 2]
         RETS
 #endif
         .size __riscc_umul24x24, . - __riscc_umul24x24

@@ -47,9 +47,18 @@ module riscc_tiny16 #(
 
     reg [15:0] instruction_q;
     reg        register_format_q;
+`ifdef RISCC_TINY16_CONTROL_BBB_NORMALIZE
+    wire fetch_packed_control = (&mem_rdata[15:14]) &
+                                (&mem_rdata[7:3]) & ~(|mem_rdata[2:0]);
+    wire [15:0] fetch_instruction = fetch_packed_control ?
+        {mem_rdata[15:3], mem_rdata[12], mem_rdata[12], 1'b0} :
+        mem_rdata;
+`ifdef RISCC_TRACE
+    reg [15:0] trace_instruction_q;
+`endif
+`endif
     reg [14:0] pc_q;        // 15-bit word address
     reg [15:0] mdr_q;
-    reg        funnel_bit_q;
     // Byte-lane selection and the compare result have disjoint lifetimes.
     reg        interrupt_enable_q;
     reg        r0_zero_q;       // branch-condition shadows for r0
@@ -111,7 +120,7 @@ module riscc_tiny16 #(
                               !register_group[1] && !register_group[0];
     wire register_memory_group = register_class &&
                                  !register_group[1] && register_group[0];
-    // 01_000/010/110 are LDWX/LDB/LDBS; 01_011 is direct STB.
+    // 01_000/010/110 are LDX/LDB/LDBS; 01_011 is direct STB.
     // Profile-local loose decodes let reserved slots alias existing paths where
     // that avoids a wider exact decoder; defined encodings retain their ISA
     // behavior.
@@ -129,10 +138,12 @@ module riscc_tiny16 #(
     wire signed_byte_load = register_opcode[2];
     wire right_shift_slot = register_memory_group &&
                             register_opcode[2] && !register_opcode[1];
+    // FSL1/FSR1 share the 10_001 two-operand group. The low ooo bit selects
+    // direction; the other reserved suboperations may alias either path.
     wire funnel_op =
         register_class && register_group[1] && !register_group[0];
-    wire funnel_right_op = funnel_op && !register_opcode[0];
-    wire funnel_left_op = funnel_op && register_opcode[0];
+    wire funnel_right_op = funnel_op && rb[0];
+    wire funnel_left_op = funnel_op && !rb[0];
     wire jal_register_op = system_group && ~rb[2] && ~rb[1] && rb[0];
 
     // ------------------------------------------------------------------
@@ -165,15 +176,22 @@ module riscc_tiny16 #(
     wire shift_complete = shift_iteration && iteration_done;
     wire shift_has_more = shift_iteration && !iteration_done;
     wire multiply_complete = in_iterate && multiply_op && iteration_done;
-    // RET/RETI share bbb=000 and CLI/STI share bbb=110.  Defined control
-    // selectors are 000/111, so any ccc bit is the new IE value.
+    // RET/RETI and CLI/STI share bbb=000.  rd[1] selects a return versus a
+    // direct IE operation; rd[2] and rd[0] duplicate the selected IE value.
     wire system_group = register_class && (&register_group);
-    // Full packs best when RETI joins CLI/STI at the decode boundary.
+    // Full packs best when RETI joins the direct controls at Decode.
     wire control_ie_value = rd[2];
-    wire return_sets_ie = return_op && rd[2];
-    wire interrupt_enable_op = system_group && rb[2] && rb[1];
+`ifdef RISCC_TINY16_CONTROL_BBB_NORMALIZE
     wire return_op = system_group && register_opcode[1] &&
                      ~rb[1] && ~rb[0];
+    wire return_sets_ie = return_op && control_ie_value;
+    wire interrupt_enable_op = system_group && rb[2] && rb[1];
+`else
+    wire control_plane = system_group && ~rb[1] && ~rb[0];
+    wire return_op = control_plane && ~rd[1];
+    wire return_sets_ie = return_op && control_ie_value;
+    wire interrupt_enable_op = control_plane && rd[1];
+`endif
     wire mfs_op = system_group && ~rb[2] && rb[1] && ~rb[0];
     wire mts_op = system_group && ~rb[2] && rb[1] && rb[0];
 
@@ -195,8 +213,8 @@ module riscc_tiny16 #(
         immediate_memory | direct_byte_op |
         mfs_op | mts_op;
 
-    // Only genuine two-source instructions read rb. Direct typed memory
-    // operations use ra; store data is read later for the memory write.
+    // Only genuine two-source instructions read rb. Funnels stage ra, then
+    // reissue old rd; store data is read later for the memory write.
     wire indexed_load_op =
         register_memory_decode && !register_opcode[1];
     wire ordinary_rb_operand = register_alu_group | indexed_load_op;
@@ -233,9 +251,11 @@ module riscc_tiny16 #(
     // selector priority is rd, then rb; ra is the default.
     wire select_read_rd = immediate_alu_op |
                           (memory_address_ready && store_op) |
-                          (in_iteration_operand_load && immediate_shift_op);
+                          (in_iteration_operand_load && immediate_shift_op) |
+                          (register_group[1] &&
+                           (in_operand_load | in_execute));
     wire select_read_rb = start_operand_load &&
-        !program_load_op && !immediate_shift_op;
+        !program_load_op && !immediate_shift_op && !register_group[1];
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
     // Upper (system) bank: bbb[0]=0 group ops read S[aaa] (RET/RETI/MFS).
@@ -324,9 +344,18 @@ module riscc_tiny16 #(
                                  shift_right_iteration;
     wire arithmetic_right_shift =
         shift_iteration && !shift_left_immediate && register_opcode[0];
+`ifdef RISCC_ECP5
+    // In active right-shift states, group 10 selects the staged ra endpoint
+    // and group 01 leaves the optional arithmetic sign bit selected.
+    wire arithmetic_shift_input =
+        arithmetic_right_shift && rf_read_data[15];
+    wire shift_right_input = arithmetic_shift_input ^
+        (register_group[1] && (arithmetic_shift_input ^ mdr_q[0]));
+`else
     wire shift_right_input =
         (in_execute && funnel_right_op) ? mdr_q[0] :
         (arithmetic_right_shift && rf_read_data[15]);
+`endif
     wire [15:0] iterative_shift_result =
         {shift_right_input, rf_read_data[15:1]};
     wire [15:0] alu_b =
@@ -343,12 +372,26 @@ module riscc_tiny16 #(
     wire fill_high_byte = sign_extend_immediate && instruction_q[7];
     // The same XOR stage performs subtraction and high-byte sign extension;
     // alu_carry_in supplies the matching +1 for subtraction and PC updates.
+`ifdef RISCC_INFERRED_SYNC_RF
+    // The inferred-MLAB build packs the funnel endpoint into ALU-B bit zero
+    // more efficiently than adding it to the global carry-input control cone.
+    wire funnel_left_lsb = funnel_left_execute && mdr_q[15];
+    wire [15:0] adjusted_alu_b =
+        {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
+         alu_b[7:1] ^ {7{subtract_enable}},
+         alu_b[0] ^ subtract_enable ^ funnel_left_lsb};
+    wire alu_carry_in =
+        in_decode | subtract_enable | (in_link_writeback && long_form_op);
+`else
     wire [15:0] adjusted_alu_b =
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
+    // FSL1's Execute pass stores old rd + ra[15] in MDR. Writeback adds old
+    // rd once more, producing (old rd << 1) | ra[15] without a carry register.
     wire alu_carry_in =
         in_decode | subtract_enable | (in_link_writeback && long_form_op) |
-        (in_mdr_writeback && funnel_left_op && funnel_bit_q);
+        (funnel_left_execute && mdr_q[15]);
+`endif
     wire [16:0] alu_sum_ext = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                               {16'h0000, alu_carry_in};
     wire [15:0] alu_result = alu_sum_ext[15:0];
@@ -419,8 +462,17 @@ module riscc_tiny16 #(
 
             // Capture the next instruction after its synchronous read.
             if (in_instruction_capture) begin
+`ifdef RISCC_TINY16_CONTROL_BBB_NORMALIZE
+                instruction_q <=
+                    {fetch_instruction[15], fetch_instruction[0],
+                     fetch_instruction[13:0]};
+`ifdef RISCC_TRACE
+                trace_instruction_q <= mem_rdata;
+`endif
+`else
                 instruction_q <=
                     {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+`endif
                 register_format_q <= mem_rdata[14];
             end
 
@@ -456,10 +508,7 @@ module riscc_tiny16 #(
                 iteration_count_q <= iteration_count_q - 4'd1;
             end
 
-            // Save the funnel boundary bit and the less-than result.
-            if (funnel_left_execute) begin
-                funnel_bit_q <= mdr_q[15];
-            end
+            // Save the byte-lane selection and the less-than result.
             // Direct byte operations hold ra through Execute. Capture its low
             // bit separately so memory decode does not feed the MUL counter.
             if (memory_address_ready)
@@ -494,8 +543,12 @@ module riscc_tiny16 #(
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry;
     wire [14:0] tr_pc_i = pc_q;
+`ifdef RISCC_TINY16_CONTROL_BBB_NORMALIZE
+    wire [15:0] tr_instruction = trace_instruction_q;
+`else
     wire [15:0] tr_instruction =
         {instruction_q[15], register_format_q, instruction_q[13:0]};
+`endif
     wire [15:0] tr_ir_i = in_irq_entry ? mem_rdata : tr_instruction;
     wire        tr_ie_i = interrupt_enable_q;
     wire        tr_rf_we_i = rf_we;

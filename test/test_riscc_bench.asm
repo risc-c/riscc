@@ -27,7 +27,7 @@ reset_tramp:
 fail:                       ; near stub for the (unused) vectors
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 ; ---------------------------------------------------------------------
@@ -184,7 +184,7 @@ c_next:
     JMP8  k5                ; fall-through guard
 fail_w:
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 ; ---------------------------------------------------------------------
@@ -290,12 +290,12 @@ s_outer:
     LDI16 r1, sort_dat
     LDI   r2, 0             ; byte index
 s_inner:
-    LDW   r3, [r1+0]
-    LDW   r4, [r1+2]
+    LD   r3, [r1+0]
+    LD   r4, [r1+2]
     SLTU  r0, r4, r3        ; unsigned compare: swap if next < cur
     BEQZ  s_noswap
-    STW   r3, [r1+2]
-    STW   r4, [r1+0]
+    ST   r3, [r1+2]
+    ST   r4, [r1+0]
 s_noswap:
     ADDI  r1, 2
     ADDI  r2, 2
@@ -307,15 +307,15 @@ s_noswap:
     BNEZ  s_outer
     ; verify [0]=0x0001, [5]=0x4BEE, [11]=0xD00D
     LDI16 r1, sort_dat
-    LDW   r3, [r1+0]
+    LD   r3, [r1+0]
     LDI   r4, 1
     SUB   r0, r3, r4
     BNEZ  f7
-    LDW   r3, [r1+10]
+    LD   r3, [r1+10]
     LDI16 r4, 0x4BEE
     SUB   r0, r3, r4
     BNEZ  f7
-    LDW   r3, [r1+22]
+    LD   r3, [r1+22]
     LDI16 r4, 0xD00D
     SUB   r0, r3, r4
     BEQZ  k8
@@ -336,31 +336,31 @@ k8:
     LDI   r6, 0
     LDI16 r0, nano_outputs
     LDI   r3, 8
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
 fir_outer_n:
     LDI16 r5, fir_coeff
     LDI16 r0, nano_taps
     LDI   r3, 8
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
 fir_inner_n:
-    LDW   r1, [r4+0]
-    LDW   r2, [r5+0]
+    LD   r1, [r4+0]
+    LD   r2, [r5+0]
     LDI16 r3, __mul16 >> 1
     CALL  r7, r3
     ADD   r6, r6, r1
     ADDI  r4, 2
     ADDI  r5, 2
     LDI16 r0, nano_taps
-    LDW   r3, [r0+0]
+    LD   r3, [r0+0]
     ADDI  r3, -1
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
     MOV   r0, r3
     BNEZ  fir_inner_n
     ADDI  r4, -14
     LDI16 r0, nano_outputs
-    LDW   r3, [r0+0]
+    LD   r3, [r0+0]
     ADDI  r3, -1
-    STW   r3, [r0+0]
+    ST   r3, [r0+0]
     MOV   r0, r3
     BNEZ  fir_outer_n
 .else
@@ -371,8 +371,8 @@ fir_outer:
     LDI16 r2, fir_coeff
     LDI   r7, 8             ; tap count
 fir_inner:
-    LDW   r5, [r1+0]
-    LDW   r6, [r2+0]
+    LD   r5, [r1+0]
+    LD   r6, [r2+0]
     MUL   r5, r5, r6
     ADD   r4, r4, r5
     ADDI  r1, 2
@@ -395,13 +395,13 @@ fir_inner:
     BEQZ  done
     LDI16 r7, 0x0BA8
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 done:
     LDI16 r7, 0x600D
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 .ifdef RISCC_NANO

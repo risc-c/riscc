@@ -78,51 +78,51 @@ br_nz_ok:
     ; word and indexed memory
     LDI16 r6, 0x0200
     LDI16 r1, 0xA55A
-    STW   r1, [r6+0]
-    LDW   r2, [r6+0]
+    ST   r1, [r6+0]
+    LD   r2, [r6+0]
     SUB   r0, r2, r1
     BNEZ  fail
     ADDI  r6, 8
-    STW   r1, [r6-4]
-    LDW   r3, [r6-4]
+    ST   r1, [r6-4]
+    LD   r3, [r6-4]
     SUB   r0, r3, r1
     BNEZ  fail
     LDI   r4, 4
     ADD   r3, r6, r4
-    STW   r1, [r3+0]
-    LDWX  r5, [r6+r4]
+    ST   r1, [r3+0]
+    LDX  r5, [r6+r4]
     SUB   r0, r5, r1
     BNEZ  fail
 
     ; Compact word displacements are even signed bytes.
     LDI16 r3, 0x0300
     LDI16 r1, 0x1357
-    STW   r1, [r3+126]
-    LDW   r2, [r3+126]
+    ST   r1, [r3+126]
+    LD   r2, [r3+126]
     SUB   r0, r2, r1
     BNEZ  fail
     LDI16 r3, 0x0380
-    STW   r1, [r3-128]
-    LDW   r2, [r3-128]
+    ST   r1, [r3-128]
+    LD   r2, [r3-128]
     SUB   r0, r2, r1
     BNEZ  fail
 
     ; byte lanes; direct byte operations must not use encoded bbb=000 as r0
     LDI16 r5, 0x1234
-    STW   r5, [r6+0]
+    ST   r5, [r6+0]
     LDI16 r5, 0x5678
-    STW   r5, [r6+8]
+    ST   r5, [r6+8]
     LDI   r4, 1
     ADD   r1, r6, r4
     LDI   r5, 0x80
     LDI   r0, 7
     STB   r5, [r1]
     LDB   r2, [r1]
-    LDW   r4, [r6+0]
+    LD   r4, [r6+0]
     LDI16 r5, 0x8034
     SUB   r0, r4, r5
     BNEZ  fail
-    LDW   r4, [r6+8]
+    LD   r4, [r6+8]
     LDI16 r5, 0x5678
     SUB   r0, r4, r5
     BNEZ  fail
@@ -161,14 +161,14 @@ after_call:
 fail:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
 fail_loop:
     JMP8  fail_loop
 
 success:
     LDI16 r7, 0x600D
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
 done:
     JMP8  done
 
@@ -187,7 +187,7 @@ subr:
 fail:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFF6
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 ; The handlers demonstrate the S-bank save primitive: no free user register
@@ -201,12 +201,12 @@ isr_irq:
     MTS   S2, r1
     MTS   S3, r2
     LDI16 r2, 0xFFFA
-    LDW   r1, [r2+0]        ; read IRQ cause and acknowledge it
+    LD   r1, [r2+0]        ; read IRQ cause and acknowledge it
     LDI16 r2, 0x7F00
-    STW   r1, [r2+0]        ; log the cause in ordinary RAM
-    LDW   r1, [r2+2]        ; entry counter
+    ST   r1, [r2+0]        ; log the cause in ordinary RAM
+    LD   r1, [r2+2]        ; entry counter
     ADDI  r1, 1             ; the system half is exactly EPC + 3 saves
-    STW   r1, [r2+2]
+    ST   r1, [r2+2]
     MFS   r2, S3
     MFS   r1, S2
     MFS   r0, S1
@@ -217,7 +217,7 @@ isr_irq:
 fail:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 .endif
 
@@ -305,40 +305,40 @@ br_nz_ok:
     ; --- word and byte memory (ordinary high-RAM scratch page) ---
     LDI16 r6, 0x7E00
     LDI16 r1, 0xA55A
-    STW   r1, [r6+0]
-    LDW   r2, [r6+0]
+    ST   r1, [r6+0]
+    LD   r2, [r6+0]
     SUB   r0, r2, r1
     BNEZ  fail_late
     ADDI  r6, 8
-    STW   r1, [r6-4]
-    LDW   r3, [r6-4]
+    ST   r1, [r6-4]
+    LD   r3, [r6-4]
     SUB   r0, r3, r1
     BNEZ  fail_late
     LDI   r4, 4
     ADD   r3, r6, r4
-    STW   r1, [r3+0]
-    ; Both nonzero address registers are required: LDWX remains indexed.
-    LDWX  r5, [r6+r4]
+    ST   r1, [r3+0]
+    ; Both nonzero address registers are required: LDX remains indexed.
+    LDX  r5, [r6+r4]
     SUB   r0, r5, r1
     BNEZ  fail_late
 
     ; Compact word displacements are even signed bytes.
     LDI16 r3, 0x7000
     LDI16 r1, 0x1357
-    STW   r1, [r3+126]
-    LDW   r2, [r3+126]
+    ST   r1, [r3+126]
+    LD   r2, [r3+126]
     SUB   r0, r2, r1
     BNEZ  fail_late
     LDI16 r3, 0x7080
-    STW   r1, [r3-128]
-    LDW   r2, [r3-128]
+    ST   r1, [r3-128]
+    LD   r2, [r3-128]
     SUB   r0, r2, r1
     BNEZ  fail_late
 
     LDI16 r5, 0x1234
-    STW   r5, [r6+0]
+    ST   r5, [r6+0]
     LDI16 r5, 0x5678
-    STW   r5, [r6+8]
+    ST   r5, [r6+8]
     LDI   r4, 1             ; odd byte lane
     ADD   r1, r6, r4
     LDI   r5, 0x80
@@ -346,11 +346,11 @@ br_nz_ok:
     STB   r5, [r1]
     LDB   r2, [r1]
     LDBS  r3, [r1]
-    LDW   r4, [r6+0]
+    LD   r4, [r6+0]
     LDI16 r5, 0x8034
     SUB   r0, r4, r5
     BNEZ  fail_late
-    LDW   r4, [r6+8]
+    LD   r4, [r6+8]
     LDI16 r5, 0x5678
     SUB   r0, r4, r5
     BNEZ  fail_late
@@ -362,9 +362,9 @@ br_nz_ok:
     BNEZ  fail_late
 
     LDI16 r5, 0x1234
-    STW   r5, [r6+2]
+    ST   r5, [r6+2]
     LDI16 r5, 0x5678
-    STW   r5, [r6+8]
+    ST   r5, [r6+8]
     LDI   r4, 2             ; even byte lane
     ADD   r1, r6, r4
     LDI   r5, 0xFF
@@ -372,11 +372,11 @@ br_nz_ok:
     STB   r5, [r1]
     LDB   r2, [r1]
     LDBS  r3, [r1]
-    LDW   r4, [r6+2]
+    LD   r4, [r6+2]
     LDI16 r5, 0x12FF
     SUB   r0, r4, r5
     BNEZ  fail_late
-    LDW   r4, [r6+8]
+    LD   r4, [r6+8]
     LDI16 r5, 0x5678
     SUB   r0, r4, r5
     BNEZ  fail_late
@@ -391,7 +391,7 @@ br_nz_ok:
 fail_late:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 shifts_start:
 
@@ -478,26 +478,78 @@ c16_ok:
 
     LDI16 r5, 0x7F00
     LDI   r2, 0
-    STW   r2, [r5+0]        ; IRQ cause log = 0
-    STW   r2, [r5+2]        ; ISR entry counter = 0
+    ST   r2, [r5+0]        ; IRQ cause log = 0
+    ST   r2, [r5+2]        ; ISR entry counter = 0
 
-    STI
+    ; Direct IE controls must not use S0 as a return target. RET S0, unlike
+    ; RETI S0, must preserve the cleared IE state.
+    LDI16 r1, fail_late >> 1
+    MTS   S0, r1
+    CLI
+    LDI16 r1, ret_s0_masked >> 1
+    MTS   S0, r1
+    RET   S0
+    JMP8  fail_late
+ret_s0_masked:
     LDI16 r5, 0xFFFA
     LDI16 r1, 0xAA55
-    STW   r1, [r5+0]        ; magic store: testbench raises irq
-wait_irq:
+    ST   r1, [r5+0]        ; RET S0 left IE clear: IRQ stays pending
     LDI16 r5, 0x7F00
-    LDW   r1, [r5+2]
-    ADDI  r1, -1
+    LD   r1, [r5+2]
     MOV   r0, r1
-    BNEZ  wait_irq          ; until the ISR has run
-    CLI
-    LDI16 r5, 0x7F00
-    LDW   r1, [r5+0]        ; IRQ handler logged the asserted test cause = 1
+    BNEZ  fail_late         ; no ISR entry while IE is clear
+    LDI16 r5, 0xFFFA
+    LD   r1, [r5+0]        ; acknowledge the still-pending test IRQ
     ADDI  r1, -1
     MOV   r0, r1
     BNEZ  fail_late
-    LDW   r1, [r5+2]        ; r1 = 1 entry
+
+    ; RETI S0 takes the same S0 target but sets IE. The next raised IRQ must
+    ; therefore enter the handler without an intervening STI.
+    LDI16 r1, reti_s0_enabled >> 1
+    MTS   S0, r1
+    RETI  S0
+    JMP8  fail_late
+reti_s0_enabled:
+    LDI16 r5, 0xFFFA
+    LDI16 r1, 0xAA55
+    ST   r1, [r5+0]
+wait_reti_irq:
+    LDI16 r5, 0x7F00
+    LD   r1, [r5+2]
+    ADDI  r1, -1
+    MOV   r0, r1
+    BNEZ  wait_reti_irq     ; RETI enabled the first ISR entry
+
+    ; CLI must mask a newly pending IRQ; STI must then admit that same IRQ.
+    ; S0 remains poisoned until IRQ entry, proving neither direct control
+    ; accidentally redirects through it.
+    LDI16 r1, fail_late >> 1
+    MTS   S0, r1
+    CLI
+    LDI16 r5, 0xFFFA
+    LDI16 r1, 0xAA55
+    ST   r1, [r5+0]
+    LDI16 r5, 0x7F00
+    LD   r1, [r5+2]
+    ADDI  r1, -1
+    MOV   r0, r1
+    BNEZ  fail_late         ; CLI kept the entry count at one
+    STI                     ; pending IRQ is taken before the next instruction
+wait_sti_irq:
+    LDI16 r5, 0x7F00
+    LD   r1, [r5+2]
+    ADDI  r1, -2
+    MOV   r0, r1
+    BNEZ  wait_sti_irq      ; STI enabled the second ISR entry
+    CLI
+    LD   r1, [r5+0]        ; IRQ handler logged the asserted test cause = 1
+    ADDI  r1, -1
+    MOV   r0, r1
+    BEQZ  control_irq_log_ok
+    JMP16 fail_late
+control_irq_log_ok:
+    LD   r1, [r5+2]        ; r1 = 2 entries
     MFS   r2, S5            ; r2 = 0xBEEF (round trip survived the ISR)
     JMP8  feature_tests
 .endif
@@ -621,9 +673,9 @@ g16ok:
 .ifdef RISCC_SYS
     LDI16 r5, 0x7F00        ; restore the IRQ test's final RAM values
     LDI   r1, 1
-    STW   r1, [r5+0]
+    ST   r1, [r5+0]
     LDI   r1, 2
-    STW   r1, [r5+2]
+    ST   r1, [r5+2]
     LDI   r0, 0             ; restore base-suite final scratch registers
     LDI   r1, 2
     MFS   r2, S5
@@ -636,7 +688,7 @@ g16ok:
 feature_fail:
     LDI16 r7, 0x0BAD
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 
 subr:
@@ -646,7 +698,7 @@ subr:
 success:
     LDI16 r7, 0x600D
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT
 .endif
 

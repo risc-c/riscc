@@ -20,10 +20,10 @@
         .hidden __addsf3
         .type __addsf3,@function
 __addsf3:
-        STW     r5, [r7 - 12]
-        STW     r6, [r7 - 10]
-        STW     r2, [r7 - 8]           /* left sign */
-        STW     r4, [r7 - 6]           /* right sign */
+        ST     r5, [r7 - 12]
+        ST     r6, [r7 - 10]
+        ST     r2, [r7 - 8]           /* left sign */
+        ST     r4, [r7 - 6]           /* right sign */
 
         LI      r5, 0x7f80
         AND     r6, r2, r5
@@ -34,25 +34,25 @@ __addsf3:
         JMP8    .Learly_return
 
 .Lleft_normal:
-        STW     r6, [r7 - 4]
+        ST     r6, [r7 - 4]
         AND     r0, r4, r5
         BNEZ    .Lboth_normal
         /* exponent-zero right is zero; left is already the result */
 .Learly_return:
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RET     r6
 
 .Lboth_normal:
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
         ANDI    r2, 0x7f
         ORI     r2, 0x80
         ANDI    r4, 0x7f
         ORI     r4, 0x80
 
         /* Put the larger magnitude in r2:r1. */
-        LDW     r5, [r7 - 4]
-        LDW     r6, [r7 - 2]
+        LD     r5, [r7 - 4]
+        LD     r6, [r7 - 2]
         SLTU    r0, r5, r6
         BNEZ    .Lswap
         SUB     r0, r5, r6
@@ -74,15 +74,15 @@ __addsf3:
         MOV     r0, r5
         MOV     r5, r6
         MOV     r6, r0
-        LDW     r0, [r7 - 8]
-        LDW     r6, [r7 - 6]
-        STW     r6, [r7 - 8]
-        STW     r0, [r7 - 6]
-        LDW     r5, [r7 - 2]           /* swapped larger exponent */
-        LDW     r6, [r7 - 4]           /* swapped smaller exponent */
+        LD     r0, [r7 - 8]
+        LD     r6, [r7 - 6]
+        ST     r6, [r7 - 8]
+        ST     r0, [r7 - 6]
+        LD     r5, [r7 - 2]           /* swapped larger exponent */
+        LD     r6, [r7 - 4]           /* swapped smaller exponent */
 
 .Lordered:
-        STW     r5, [r7 - 4]           /* result exponent field */
+        ST     r5, [r7 - 4]           /* result exponent field */
 
         /* Add three guard/round/sticky bits. */
         .rept 3
@@ -98,7 +98,7 @@ __addsf3:
         SRLI    r5, r5, 1
         .endr
         LDI     r0, 0
-        STW     r0, [r7 - 2]           /* discarded-bit sticky */
+        ST     r0, [r7 - 2]           /* discarded-bit sticky */
         LDI     r6, 27
         SLTU    r0, r5, r6
         BNEZ    .Lalign_test
@@ -115,7 +115,7 @@ __addsf3:
         ANDI    r0, 1
         BEQZ    .Lsticky_done
         LDI     r0, 1
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
 .Lsticky_done:
         MOV     r0, r4
         ANDI    r0, 1
@@ -127,13 +127,13 @@ __addsf3:
         ADDI    r5, -1
         MOV     r0, r5
         BNEZ    .Lalign
-        LDW     r0, [r7 - 2]
+        LD     r0, [r7 - 2]
         BEQZ    .Laligned
         ORI     r3, 1
 
 .Laligned:
-        LDW     r5, [r7 - 8]
-        LDW     r6, [r7 - 6]
+        LD     r5, [r7 - 8]
+        LD     r6, [r7 - 6]
         XOR     r0, r5, r6
         BLTZ    .Lsubtract
 
@@ -149,7 +149,7 @@ __addsf3:
         /* Addition overflow: shift right once with sticky. */
         MOV     r0, r1
         ANDI    r0, 1
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
         MOV     r0, r2
         ANDI    r0, 1
         SRLI    r1, r1, 1
@@ -158,14 +158,14 @@ __addsf3:
         OR      r1, r1, r0
 .Ladd_shift_no_carry:
         SRLI    r2, r2, 1
-        LDW     r0, [r7 - 2]
+        LD     r0, [r7 - 2]
         BEQZ    .Ladd_shift_sticky_done
         ORI     r1, 1
 .Ladd_shift_sticky_done:
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         LDI     r0, 0x80
         ADD     r5, r5, r0
-        STW     r5, [r7 - 4]
+        ST     r5, [r7 - 4]
         JMP8    .Lround
 
 .Lsubtract:
@@ -184,11 +184,11 @@ __addsf3:
 .Lnormalize:
         AND     r0, r2, r6
         BNEZ    .Lround
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         ADDI    r5, -128
         MOV     r0, r5
         BEQZ    .Lunderflow
-        STW     r5, [r7 - 4]
+        ST     r5, [r7 - 4]
         NANO_FSL1 r2, r2, r1
         ADD     r1, r1, r1
         JMP8    .Lnormalize
@@ -196,7 +196,7 @@ __addsf3:
 .Lunderflow:
         LDI     r1, 0
         LDI     r2, 0
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         BGEZ    .Lreturn
         LUI     r2, 0x80
         JMP8    .Lreturn
@@ -229,10 +229,10 @@ __addsf3:
         BEQZ    .Lpack
         LDI     r1, 0
         LUI     r2, 4
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         LDI     r0, 0x80
         ADD     r5, r5, r0
-        STW     r5, [r7 - 4]
+        ST     r5, [r7 - 4]
 
 .Lpack:
         LUI     r6, 0x80
@@ -249,15 +249,15 @@ __addsf3:
         MOV     r0, r5
         BNEZ    .Lpack_shift
         ANDI    r2, 0x7f
-        LDW     r5, [r7 - 4]
+        LD     r5, [r7 - 4]
         OR      r2, r2, r5
-        LDW     r5, [r7 - 8]
+        LD     r5, [r7 - 8]
         LUI     r0, 0x80
         AND     r5, r5, r0
         OR      r2, r2, r5
 
 .Lreturn:
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RET     r6
         .size __addsf3, . - __addsf3

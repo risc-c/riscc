@@ -50,5 +50,5 @@ fail:
 
 finish:
     LDI16 r6, 0xFFFE
-    STW   r7, [r6+0]
+    ST   r7, [r6+0]
     HALT

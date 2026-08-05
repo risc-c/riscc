@@ -48,7 +48,7 @@
         SLTU    r0, r3, r5
 
 .Lmul_shift\@:
-        STW     r0, [r7 - 4]
+        ST     r0, [r7 - 4]
 
         MOV     r0, r2
         ANDI    r0, 1
@@ -64,7 +64,7 @@
         OR      r2, r2, r6
 .Lmul_shift_middle_done\@:
 
-        LDW     r0, [r7 - 4]
+        LD     r0, [r7 - 4]
         SRLI    r3, r3, 1
         BEQZ    .Lmul_shift_high_done\@
         OR      r3, r3, r6
@@ -77,11 +77,11 @@
         .hidden __mulsf3
         .type __mulsf3,@function
 __mulsf3:
-        STW     r5, [r7 - 12]
-        STW     r6, [r7 - 10]
+        ST     r5, [r7 - 12]
+        ST     r6, [r7 - 10]
 
         XOR     r0, r2, r4
-        STW     r0, [r7 - 8]
+        ST     r0, [r7 - 8]
 
         /* Exponent-zero operands, including subnormals, flush to zero. */
         LI      r5, 0x7f80
@@ -91,12 +91,12 @@ __mulsf3:
 .Lzero:
         LDI     r1, 0
         LDI     r2, 0
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         BGEZ    .Lzero_return
         LUI     r2, 0x80
 .Lzero_return:
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RET     r6
 
 .Lcheck_right:
@@ -112,7 +112,7 @@ __mulsf3:
         ADD     r6, r6, r5
         LUI     r5, 0x40
         SUB     r6, r6, r5
-        STW     r6, [r7 - 6]
+        ST     r6, [r7 - 6]
 
         /* Restore implicit leading ones. */
         ANDI    r2, 0x7f
@@ -143,15 +143,15 @@ __mulsf3:
         LDI     r3, 0
         LUI     r6, 0x80
         LDI     r0, 12
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
 
 .Lmultiply:
         .rept 2
         NANO_MUL_ROUND
         .endr
-        LDW     r0, [r7 - 2]
+        LD     r0, [r7 - 2]
         ADDI    r0, -1
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
         BNEZ    .Lmultiply
 
         /*
@@ -165,18 +165,18 @@ __mulsf3:
         ANDI    r4, 0x7f
         LDI     r5, 7
         LDI     r0, 0x40
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
         JMP8    .Lnormalize
 
 .Lproduct_bit47:
         MOV     r4, r2
         ANDI    r4, 0xff
-        LDW     r5, [r7 - 6]
+        LD     r5, [r7 - 6]
         LDI     r0, 0x80
         ADD     r5, r5, r0
-        STW     r5, [r7 - 6]
+        ST     r5, [r7 - 6]
         LDI     r5, 8
-        STW     r0, [r7 - 2]
+        ST     r0, [r7 - 2]
 
 .Lnormalize:
         MOV     r0, r3
@@ -191,7 +191,7 @@ __mulsf3:
         BNEZ    .Lnormalize
 
         /* Round to nearest, ties to even. */
-        LDW     r6, [r7 - 2]
+        LD     r6, [r7 - 2]
         AND     r0, r4, r6
         BEQZ    .Lpack
         ADDI    r6, -1
@@ -211,16 +211,16 @@ __mulsf3:
 
 .Lpack:
         MOV     r1, r2
-        LDW     r5, [r7 - 6]
+        LD     r5, [r7 - 6]
         ADD     r2, r5, r3
-        LDW     r0, [r7 - 8]
+        LD     r0, [r7 - 8]
         BGEZ    .Lreturn
         LUI     r0, 0x80
         OR      r2, r2, r0
         JMP8    .Lreturn
 
 .Lreturn:
-        LDW     r6, [r7 - 10]
-        LDW     r5, [r7 - 12]
+        LD     r6, [r7 - 10]
+        LD     r5, [r7 - 12]
         RET     r6
         .size __mulsf3, . - __mulsf3
