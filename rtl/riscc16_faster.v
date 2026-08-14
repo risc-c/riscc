@@ -1,4 +1,4 @@
-// riscc_faster.v : three-stage Agilex-oriented full-profile RISC-C core.
+// riscc16_faster.v : three-stage Agilex-oriented RC16 full-profile core.
 //
 // The pipeline is IF, Decode/RF, Execute.  Decode drives two replicated
 // synchronous MLAB register files; their registered read outputs are the
@@ -13,7 +13,7 @@
 
 `default_nettype none
 
-module riscc_faster #(
+module riscc16_faster #(
     parameter [15:0] RESET_PC = 16'h0000
 ) (
     input  wire        clk,
@@ -82,27 +82,24 @@ module riscc_faster #(
     wire d_shift_right = d_reg_mem & d_f5[2] & ~d_f5[1];
     wire d_shift_left = d_reg_mem & (&d_f5[2:0]);
     wire d_shift = d_shift_right | d_shift_left;
-    // LDX uses ra+rb. Direct typed loads select ra on both RF ports; byte
-    // loads suppress B in Execute, while canonical LDPH uses the duplicate to
-    // form 2*ra before the normal [15:1] program-address extraction.
+    // LDX uses ra+rb. Direct typed accesses use ra.
     wire d_native_load = d_reg_mem & ~d_f5[2] &
                          ~d_f5[1] & ~d_f5[0];
     wire d_direct_load = d_reg_mem & d_f5[1] & ~d_f5[0];
-    wire d_program_load = d_direct_load & ~d_f5[2] &
-                          ~d_bbb[2] & d_bbb[1] & d_bbb[0];
-`ifdef RISCC_FASTER_SOFT_MUL
-    wire d_indexed_memory = d_native_load | d_program_load;
-`else
-    wire d_indexed_memory = d_reg_mem & ~d_f5[2] & ~d_f5[0] &
-        (~d_f5[1] | (~d_bbb[2] & d_bbb[1] & d_bbb[0]));
-`endif
+    wire d_indexed_memory = d_native_load;
     wire d_reg_memory = d_native_load | d_direct_load | d_reg_store;
     wire d_memory = d_imm_memory | d_reg_memory;
     wire d_store = d_imm_store | d_reg_store;
     wire d_load = d_memory & ~d_store;
     wire d_jal = d_system & ~d_bbb[2] & ~d_bbb[1] & d_bbb[0];
     wire d_control_plane = d_system & ~d_bbb[1] & ~d_bbb[0];
-    wire d_long_form = ~d_class[1] & ~d_class[0];
+`ifdef RISCC_FASTER_SOFT_MUL
+    // JALL is the only defined RC16 quadrant-00 instruction. In fabric,
+    // reserved encodings can alias it instead of carrying a wide comparator.
+    wire d_long_form = ~|d_class;
+`else
+    wire d_long_form = (d_instr_q & 16'hc7ff) == 16'h0034;
+`endif
     wire d_jal16 = d_long_form;
     wire d_link_jump = d_jal | d_jal16;
     // RET/RETI and CLI/STI share bbb=000. ddd[1] selects a return versus a
@@ -118,8 +115,9 @@ module riscc_faster #(
 `endif
     wire d_ie_write = d_control_plane &
                       (d_ddd[1] | d_control_ie_value);
-    wire d_load_byte = d_reg_store |
-                       (d_direct_load & ~d_program_load);
+    // Defined byte and halfword selectors differ in bbb[1]. The remaining
+    // selectors are reserved and need not enter the width-control cone.
+    wire d_load_byte = (d_direct_load | d_reg_store) & ~d_bbb[1];
     wire d_signed_byte = d_load_byte & d_f5[2];
     wire d_cmpi = d_imm_alu & (d_aaa == 3'b011);
 
@@ -242,7 +240,6 @@ module riscc_faster #(
     wire x_return = x_return_q;
     wire x_jal = x_jal_q;
     wire x_jal16 = x_jal16_q;
-    wire x_link_jump = x_jal | x_jal16;
     wire x_move = x_move_q;
     wire x_ie_write = x_ie_write_q;
 
@@ -255,8 +252,19 @@ module riscc_faster #(
     wire take_irq = run_x & irq & interrupt_enable_q;
     wire normal_x = run_x & ~take_irq;
 
+    // The DSP build has an independent registered multiply result and maps a
+    // compact halfword control-flow adder well.  The iterative build shares
+    // more of its result path, where carrying byte PCs directly is smaller.
+`ifdef RISCC_FASTER_SOFT_MUL
+    localparam HALFWORD_CONTROL_ALU = 1'b0;
+`else
+    localparam HALFWORD_CONTROL_ALU = 1'b1;
+`endif
     wire [15:0] x_imm_z = {8'h00, x_instr_q[7:0]};
-    wire [15:0] x_imm_s = {{8{x_instr_q[7]}}, x_instr_q[7:0]};
+    wire x_imm_sign = x_branch ? x_instr_q[0] : x_instr_q[7];
+    wire [15:0] x_imm_s = HALFWORD_CONTROL_ALU ?
+        {{8{x_instr_q[7]}}, x_instr_q[7:0]} :
+        {{8{x_imm_sign}}, x_instr_q[7:0]};
     wire [15:0] x_imm_u = {x_instr_q[7:0], 8'h00};
     wire [15:0] side_long_value = mem_rdata;
 
@@ -312,7 +320,7 @@ module riscc_faster #(
     wire [15:0] x_mul_result = rf_a * rf_b;
 `endif
 
-    // Shared add/subtract and result path, kept close to riscc_fast's compact
+    // Shared add/subtract and result path, kept close to riscc16_fast's compact
     // factoring.  RF selection is now in the preceding pipeline stage.
 `ifdef RISCC_FASTER_SOFT_MUL
     wire x_imm_arithmetic = x_imm_arithmetic_q;
@@ -321,10 +329,13 @@ module riscc_faster #(
     wire x_imm_arithmetic = x_imm_alu & ~x_aaa[2] & x_aaa[1];
     wire x_reg_arithmetic = x_reg_alu_group & ~x_f3[2];
 `endif
-    wire alu_a_is_pc = normal_x & (x_branch | x_link_jump);
+    // Links are formed directly from x_pc_plus1/2 below. Only branches need
+    // the shared ALU's PC input.
+    wire alu_a_is_pc = normal_x & x_branch;
     wire alu_a_is_rf = normal_x &
         (x_imm_arithmetic | x_reg_arithmetic | x_memory);
-    wire [15:0] alu_a = alu_a_is_pc ? {1'b0, x_pc_q} :
+    wire [15:0] alu_a = alu_a_is_pc ?
+        (HALFWORD_CONTROL_ALU ? {1'b0, x_pc_q} : {x_pc_q, 1'b0}) :
                             alu_a_is_rf ? rf_a : 16'h0000;
 
     wire [15:0] immediate_result = x_aaa[0] ? x_imm_u : x_imm_z;
@@ -352,7 +363,7 @@ module riscc_faster #(
 `else
         (x_shift | x_funnel) ? x_shift_step :
 `endif
-        x_jal16 ? 16'h0001 : 16'h0000;
+        16'h0000;
 
 `ifdef RISCC_FASTER_SOFT_MUL
     // Keep the fabric build's address/arithmetic operand off the general
@@ -369,9 +380,12 @@ module riscc_faster #(
     wire alu_subtract = normal_x &
         ((x_imm_arithmetic & x_aaa[0]) |
          (x_reg_arithmetic & (|x_f3[1:0])));
-    wire alu_carry_in = alu_subtract |
-        (normal_x & (x_branch | x_link_jump));
-    wire [15:0] adjusted_alu_b = alu_b ^ {16{alu_subtract}};
+    wire control_step = normal_x & x_branch;
+    wire alu_carry_in = alu_subtract | control_step;
+    wire pc_step = control_step & ~HALFWORD_CONTROL_ALU;
+    wire [15:0] stepped_alu_b =
+        {alu_b[15:1], alu_b[0] | pc_step};
+    wire [15:0] adjusted_alu_b = stepped_alu_b ^ {16{alu_subtract}};
     wire [16:0] alu_sum = {1'b0, alu_a} +
                           {1'b0, adjusted_alu_b} +
                           {{16{1'b0}}, alu_carry_in};
@@ -385,7 +399,7 @@ module riscc_faster #(
     wire [15:0] execute_result = x_compare ?
         {15'h0000, x_f3[0] ? unsigned_less : signed_less} :
 `ifdef RISCC_FASTER_SOFT_MUL
-        (x_run_imm_s_q | x_run_rf_b_q | x_link_jump) ?
+        (x_run_imm_s_q | x_run_rf_b_q) ?
             alu_result : run_result;
 `else
         alu_result;
@@ -426,9 +440,10 @@ module riscc_faster #(
     wire run_redirect = run_commit &
         ((x_branch & x_branch_taken) | x_jal | x_return);
     wire x_redirect = run_redirect | long_commit;
-    wire [14:0] long_redirect_pc = side_long_value[14:0];
+    wire [14:0] long_redirect_pc = side_long_value[15:1];
     wire [14:0] x_redirect_pc = long_commit ? long_redirect_pc :
-        x_branch ? alu_result[14:0] : rf_a[14:0];
+        x_branch ? (HALFWORD_CONTROL_ALU ?
+                    alu_result[14:0] : alu_result[15:1]) : rf_a[15:1];
     wire frontend_flush = take_irq | x_redirect;
     wire [14:0] frontend_redirect_pc = take_irq ? 15'd2 :
                                               x_redirect_pc;
@@ -447,9 +462,12 @@ module riscc_faster #(
     wire [15:0] load_value = x_load_byte ?
         {{8{x_signed_byte & load_byte[7]}}, load_byte} : mem_rdata;
 
+    // Branch targets use the ALU but never write the RF.  Suppressing that
+    // dead value keeps the rotated immediate out of the synchronous-RF
+    // write/bypass cone.
     wire [15:0] run_write_data = x_jal ?
-        {1'b0, x_pc_plus1} :
-        execute_result;
+        {x_pc_plus1, 1'b0} :
+        (~HALFWORD_CONTROL_ALU & x_branch) ? 16'h0000 : execute_result;
 `ifdef RISCC_FASTER_SOFT_MUL
     wire [15:0] mul_write_data = mul_step;
 `else
@@ -462,13 +480,13 @@ module riscc_faster #(
 `else
         in_mul ? mul_write_data :
 `endif
-        in_long ? {1'b0, x_pc_plus2} :
+        in_long ? {x_pc_plus2, 1'b0} :
         run_write_data;
     wire rf_we = take_irq | (commit_valid & x_we_q);
     wire [3:0] rf_waddr = take_irq ? 4'h8 : x_dst_q;
-    wire [15:0] rf_wdata = take_irq ? {1'b0, x_pc_q} : commit_data;
+    wire [15:0] rf_wdata = take_irq ? {x_pc_q, 1'b0} : commit_data;
 
-    riscc_faster_rf regs (
+    riscc16_faster_rf regs (
         .clk(clk),
         .read_en(d_issue),
         .raddr_a(d_src_a), .rdata_a(rf_a),
@@ -502,7 +520,13 @@ module riscc_faster #(
         // this edge; its registered outputs and these controls stay aligned.
         if (d_issue) begin
             x_pc_q <= d_pc_q;
+`ifdef RISCC_FASTER_SOFT_MUL
             x_instr_q <= d_instr_q[13:0];
+`else
+            x_instr_q <= d_branch ?
+                {d_instr_q[13:8], d_instr_q[0], d_instr_q[7:1]} :
+                d_instr_q[13:0];
+`endif
             x_dst_q <= d_dst;
             x_we_q <= d_we;
 `ifndef RISCC_FASTER_SOFT_MUL
@@ -633,7 +657,7 @@ endmodule
 // read ports. A decoded successor can read on its producer's write edge. The
 // explicit bypass keeps the MLABs in no-read-during-write mode; inferring the
 // RAM's native new-data mode adds a much slower pass-through path on Agilex.
-module riscc_faster_rf (
+module riscc16_faster_rf (
     input  wire        clk,
     input  wire        read_en,
     input  wire [3:0]  raddr_a,

@@ -19,9 +19,6 @@
         .hidden __riscc_pack_sf
         .type __riscc_pack_sf,@function
 __riscc_pack_sf:
-        MTS     s3, r5
-        MTS     s4, r6
-
         /* Exponents at zero or below become gradual underflow. */
         MOV     r0, r4
         BLTZ    .Lunderflow
@@ -129,7 +126,13 @@ __riscc_pack_sf:
         OR      r2, r2, r3
 
 .Lreturn:
-        MFS     r6, s4
-        MFS     r5, s3
+        LD      r0, [r7 + 8]
+        MTS     s6, r0
+        LD      r0, [r7 + 6]
+        MTS     s5, r0
+        LD      r6, [r7 + 4]
+        LD      r5, [r7 + 2]
+        LD      r4, [r7 + 0]
+        ADDI    r7, 48
         RETS
         .size __riscc_pack_sf, . - __riscc_pack_sf

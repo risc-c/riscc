@@ -2,7 +2,7 @@
 """RISC-C instruction-set simulator (golden model).
 
 Executes a little-endian binary image with the same architectural
-semantics as the tiny RTL cores, including the compact reserved I/O page at
+semantics as the rc16 RTL cores, including the compact reserved I/O page at
 the top of the address space (UART 0xFFF0..0xFFF2, test IRQ 0xFFFA,
 result word 0xFFFE) and the IRQ-at-instruction-boundary rule, so
 self-checking programs behave identically here and under
@@ -10,10 +10,10 @@ riscc_test.cpp.
 
 Profile model mirrors the three RTL builds:
     --min           SLT/LDBS, count-one and funnel shifts, no sys profile
-    sys (default)   min + IRQ/ERET + CALL16/JMP16 + variable shifts
+    sys (default)   min + IRQ/RETI + JALL/JMPL + variable shifts
     --full          sys + MUL
     --mdu           paired MULHU and DIVU (requires --full)
-    --nano          nano ABI: no S-bank/sys profile/CMPI/JAL16, JALR links to rd
+    --nano          nano ABI: no S-bank/sys profile/CMPI/JALL, JALR links to rd
 In min, SRLI/SRAI shift by exactly 1, FSL1/FSR1 are defined, and SLLI/MUL
 are undefined.
 
@@ -271,7 +271,7 @@ class Sim:
         pc_before = self.pc
         ir = self.mem[self.pc & 0x7FFF]
         if self.sys_tier and self.ie and (self.irq_line or self.uart_irq()):
-            self.s[0] = self.pc & 0x7FFF
+            self.s[0] = (self.pc << 1) & 0xFFFF
             self.ie = 0
             self.pc = 2
             self.irq_taken += 1
@@ -286,16 +286,14 @@ class Sim:
         f5 = (ir >> 3) & 0x1F
         bbb = ir & 7
         imm8 = ir & 0xFF
-        if opc == 0:
+        if (ir & 0xC7FF) == 0x0034:
             if not self.sys_tier:
                 raise Undefined("long instruction outside sys profile")
-            if aaa != 7 or imm8 != 0:
-                raise Undefined("long instruction encoding reserved")
             extension = self.mem[pc_next & 0x7FFF]
             pc_next = (pc_next + 1) & 0x7FFF
-            if ddd != 0:                                # JAL16 Sd, target
-                self.s[ddd] = (self.pc + 2) & 0xFFFF
-            pc_next = extension & 0x7FFF
+            if ddd != 0:                                # JALL Sd, target
+                self.s[ddd] = ((self.pc + 2) << 1) & 0xFFFF
+            pc_next = (extension >> 1) & 0x7FFF
         elif opc == 1:
             addr = (self.r[aaa] + sx8(imm8 & 0xFE)) & 0xFFFF
             if ir & 1:
@@ -320,7 +318,7 @@ class Sim:
             elif aaa == 6:
                 self.r[ddd] ^= imm8
             else:                                       # branch group
-                rel = sx8(imm8)
+                rel = sx8(((imm8 >> 1) | ((imm8 & 1) << 7)))
                 if ddd < 4:
                     t = [self.r[0] == 0, self.r[0] != 0,
                          bool(self.r[0] & 0x8000), not (self.r[0] & 0x8000)][ddd]
@@ -362,13 +360,9 @@ class Sim:
             elif f5 == 0x08:                            # LDX rd, [ra+rb]
                 addr = (self.r[aaa] + self.r[bbb]) & 0xFFFF
                 self.r[ddd] = self.load_word(addr)
-            elif f5 == 0x0A:                            # LDB / LDPH rd, [ra]
+            elif f5 == 0x0A:                            # LDB rd, [ra]
                 if bbb == 0:
                     self.r[ddd] = self.ldb(self.r[aaa], False)
-                elif bbb == 3:
-                    if self.nano:
-                        raise Undefined("LDPH in nano")
-                    self.r[ddd] = self.mem[self.r[aaa] & 0x7FFF]
                 else:
                     raise Undefined("direct load sub-op reserved")
             elif f5 == 0x0E:                            # LDBS rd, [ra]
@@ -422,19 +416,19 @@ class Sim:
                 if self.nano:
                     if bbb != 1:
                         raise Undefined("non-JALR sys op in nano")
-                    target = self.r[aaa] & 0x7FFF
+                    target = (self.r[aaa] >> 1) & 0x7FFF
                     if ddd != 0:
-                        self.r[ddd] = pc_next & 0xFFFF
+                        self.r[ddd] = (pc_next << 1) & 0xFFFF
                     pc_next = target
                     self.pc = pc_next
                     self.emit_trace(pc_before, ir)
                     return
                 if bbb == 0:                            # control subgroup
                     if ddd == 0:
-                        pc_next = self.s[aaa] & 0x7FFF
+                        pc_next = (self.s[aaa] >> 1) & 0x7FFF
                     elif ddd == 5 and self.sys_tier:
                         self.ie = 1
-                        pc_next = self.s[aaa] & 0x7FFF
+                        pc_next = (self.s[aaa] >> 1) & 0x7FFF
                     elif ddd in (2, 7) and self.sys_tier:
                         if aaa != 0:
                             raise Undefined("CLI/STI aaa field reserved")
@@ -442,9 +436,9 @@ class Sim:
                     else:
                         raise Undefined("control selector reserved")
                 elif bbb == 1:                          # JALR Sd, ra
-                    target = self.r[aaa] & 0x7FFF
+                    target = (self.r[aaa] >> 1) & 0x7FFF
                     if ddd != 0:
-                        self.s[ddd] = pc_next & 0xFFFF
+                        self.s[ddd] = (pc_next << 1) & 0xFFFF
                     pc_next = target
                 elif bbb == 2:                          # MFS rd, Sa
                     self.r[ddd] = self.s[aaa]
@@ -514,7 +508,7 @@ def main():
     if args.min and args.full:
         ap.error("--min and --full are mutually exclusive")
     if args.nano and (args.min or args.full):
-        ap.error("--nano cannot be combined with a tiny profile")
+        ap.error("--nano cannot be combined with an RC16 profile")
     if args.mdu and not args.full:
         ap.error("--mdu requires --full")
 

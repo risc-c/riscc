@@ -8,8 +8,11 @@
  *
  * ABI:
  *   left   = r2:r1
- *   right  = r4:r3
+ *   right  = r0:r3
  *   result = r2:r1
+ *
+ * The entry adapts the right high word into r4 for the compact core while
+ * preserving Nano's callee-saved r4.
  *
  * Nano has no funnel instructions.  The multiply therefore keeps its 49-bit
  * accumulator in registers and implements cross-word shifts with short
@@ -24,6 +27,11 @@
         BGEZ    .Lfsl_done\@
         ORI     \d, 1
 .Lfsl_done\@:
+        .endm
+
+        .macro NANO_RETURN
+        LD      r4, [r7 - 14]
+        RET     r6
         .endm
 
         /*
@@ -77,6 +85,9 @@
         .hidden __mulsf3
         .type __mulsf3,@function
 __mulsf3:
+        ST     r4, [r7 - 14]
+        LD     r3, [r7 + 0]             /* second operand */
+        LD     r4, [r7 + 2]
         ST     r5, [r7 - 12]
         ST     r6, [r7 - 10]
 
@@ -97,7 +108,7 @@ __mulsf3:
 .Lzero_return:
         LD     r6, [r7 - 10]
         LD     r5, [r7 - 12]
-        RET     r6
+        NANO_RETURN
 
 .Lcheck_right:
         AND     r6, r4, r5
@@ -222,5 +233,5 @@ __mulsf3:
 .Lreturn:
         LD     r6, [r7 - 10]
         LD     r5, [r7 - 12]
-        RET     r6
+        NANO_RETURN
         .size __mulsf3, . - __mulsf3

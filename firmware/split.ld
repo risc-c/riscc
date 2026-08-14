@@ -1,14 +1,13 @@
 ENTRY(_start)
 
 /*
- * Data VMAs carry an ELF-only 0x10000 tag.  RISC-C data relocations emit the
- * low 16 bits; the tag keeps equal logical code/data addresses distinct in
- * the linked ELF file and in its load segments.
+ * Code and data use separate physical memories but share byte VMAs. Link
+ * this script with lld's --no-check-sections option.
  */
 MEMORY
 {
   CODE (rx)  : ORIGIN = 0x00000, LENGTH = 0x10000
-  DATA (rw)  : ORIGIN = 0x10000, LENGTH = 0x08000
+  DATA (rw)  : ORIGIN = 0x00000, LENGTH = 0x08000
 }
 
 SECTIONS
@@ -28,7 +27,7 @@ SECTIONS
 
   __code_end = .;
   ASSERT(__code_end <= ORIGIN(CODE) + LENGTH(CODE),
-         "RISC-C program image exceeds the 15-bit word address space")
+         "RISC-C program image exceeds the 16-bit byte address space")
 
   .rodata ORIGIN(DATA) :
   {
@@ -77,7 +76,6 @@ SECTIONS
     __zero_end = .;
   } > DATA
 
-  __data_space_tag = ORIGIN(DATA);
   __data_image_end = __tdata_end;
   __heap_start = __bss_end;
   __stack_top = ORIGIN(DATA) + LENGTH(DATA);

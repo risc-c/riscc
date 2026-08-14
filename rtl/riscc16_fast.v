@@ -1,4 +1,4 @@
-// riscc_fast.v : compact full-profile pipelined RISC-C core.
+// riscc16_fast.v : compact full-profile RC16 pipelined core.
 //
 // Fetch and execute overlap. ECP5 uses an asynchronous two-read LUTRAM RF;
 // iCE40 uses two synchronous EBR copies and stalls on a preceding-result RAW.
@@ -12,22 +12,37 @@
 // iCE40 and ECP5 DSP builds route logic through ALU-A; their soft builds use
 // the shared result path. Agilex soft uses both splits, while DSP uses neither.
 `ifdef RISCC_ECP5
+`ifndef RISCC_FAST_DSP
+`define RISCC_FAST_PREDECODE_IMM_SIGN
+`endif
 `ifdef RISCC_FAST_DSP
 `define RISCC_FAST_LOGIC_TO_A
 `endif
 `elsif RISCC_FAST_SYNC_RF
+`ifndef RISCC_FAST_DSP
+`define RISCC_FAST_PREDECODE_IMM_SIGN
+`endif
 `ifdef RISCC_FAST_DSP
 `define RISCC_FAST_LOGIC_TO_A
 `endif
 `elsif RISCC_FAST_AGILEX
-`ifndef RISCC_FAST_DSP
+`ifdef RISCC_FAST_DSP
+`define RISCC_FAST_HALFWORD_CONTROL
+`else
 `define RISCC_FAST_CONTROL_NORMALIZE
 `define RISCC_FAST_LOGIC_TO_A
 `define RISCC_FAST_LOAD_EXECUTE
+`define RISCC_FAST_SUPPRESS_BRANCH_WRITE
 `endif
 `endif
 
-module riscc_fast #(
+// Fabric implementations benefit from treating reserved RC16 encodings as
+// datapath aliases. DSP packing is better with the precise decodes below.
+`ifndef RISCC_FAST_DSP
+`define RISCC_FAST_RELAX_RESERVED_DECODE
+`endif
+
+module riscc16_fast #(
     parameter [15:0] RESET_PC = 16'h0000
 ) (
     input  wire        clk,
@@ -73,6 +88,9 @@ module riscc_fast #(
     reg        x_valid_q;
     reg [14:0] x_pc_q;
     reg [15:0] x_instr_q;
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+    reg        x_imm_sign_q;
+`endif
 `ifdef RISCC_ECP5
     // ECP5 LUTRAM consumes both source addresses registered with X.
     reg [3:0]  x_raddr_a_q;
@@ -150,14 +168,9 @@ module riscc_fast #(
     wire x_reg_alu = x_reg_alu_group & ~x_multiply;
     wire x_shift_right = x_reg_mem & x_f5[2] & ~x_f5[1];
     wire x_shift = x_shift_right | x_shift_left;
-    // LDX uses ra+rb. Direct typed loads use ra; their B-port copy is
-    // suppressed for byte operations or reused to double LDPH's halfword
-    // program pointer before the normal [15:1] address extraction.
-    wire x_indexed_memory = x_reg_mem & ~x_f5[0] &
-                            (~x_f5[2] | x_f5[1]);
+    // LDX uses ra+rb. Direct typed accesses use ra.
+    wire x_indexed_memory = x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0];
     wire x_direct_load = x_reg_mem & x_f5[1] & ~x_f5[0];
-    wire x_program_type = ~x_bbb[2] & x_bbb[1] & x_bbb[0];
-    wire x_program_load = x_direct_load & ~x_f5[2] & x_program_type;
 `ifndef RISCC_FAST_SYNC_RF
     // The asynchronous-RF mapper prefers the complete register-memory truth
     // set factored once: LDX, direct typed loads, and STB.
@@ -166,24 +179,20 @@ module riscc_fast #(
          (x_f5[1] & ~x_f5[0]));
 `endif
 `ifdef RISCC_FAST_SYNC_RF
-    wire x_memory = x_imm_memory | x_indexed_memory | x_reg_store;
+    wire x_memory =
+        x_imm_memory | x_indexed_memory | x_direct_load | x_reg_store;
 `else
     wire x_memory = x_imm_memory | x_reg_memory;
 `endif
     wire x_store = x_imm_store | x_reg_store;
-    // LDPH shares f5=01_010 with LDB. Fixed bbb=011 selects program memory
-    // and halfword width; it is not a register selector.
-`ifdef RISCC_FAST_SYNC_RF
-    wire x_load_byte = x_reg_store |
-                       (x_direct_load & ~x_bbb[1]);
+`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
+    // In fabric, the smallest implementation lets reserved width selectors
+    // alias the sole defined RC16 byte path.
+    wire x_load_byte = x_direct_load | x_reg_store;
 `else
-    wire x_load_byte = x_reg_memory & x_f5[1] & ~x_bbb[1];
+    wire x_load_byte = (x_direct_load | x_reg_store) & ~(|x_bbb);
 `endif
-`ifdef RISCC_FAST_DSP
-    wire x_signed_byte = x_f5[2];
-`else
-    wire x_signed_byte = x_indexed_memory & x_f5[2];
-`endif
+    wire x_signed_byte = x_load_byte & x_f5[2];
     // RET/RETI and CLI/STI share bbb=000.  ddd[1] selects a return versus a
     // direct IE operation; ddd[2] and ddd[0] duplicate the selected IE value.
     // The copies are interchangeable architecturally, allowing each FPGA
@@ -220,7 +229,13 @@ module riscc_fast #(
 `endif
     wire x_jal = x_system & ~x_bbb[2] & ~x_bbb[1] & x_bbb[0];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
-    wire x_long_form = ~x_class[1] & ~x_class[0];
+`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
+    // JALL is the only defined RC16 quadrant-00 instruction. In fabric,
+    // reserved encodings can alias it instead of carrying a wide comparator.
+    wire x_long_form = ~|x_class;
+`else
+    wire x_long_form = (x_instr_q & 16'hc7ff) == 16'h0034;
+`endif
     wire x_jal16 = x_long_form;
     wire x_link_jump = x_jal | x_jal16;
 
@@ -300,6 +315,13 @@ module riscc_fast #(
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+    wire d_imm_sign = d_branch ? mem_rdata[0] : mem_rdata[7];
+`endif
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+    wire [15:0] d_execute_instr = d_branch ?
+        {mem_rdata[15:8], mem_rdata[0], mem_rdata[7:1]} : d_instr;
+`endif
     wire d_direct_load = d_register & ~d_f5[4] & d_f5[3] &
                          d_f5[1] & ~d_f5[0];
     wire d_uses_a = (~d_class[1] & d_class[0]) | d_register |
@@ -349,7 +371,18 @@ module riscc_fast #(
 `endif
 
     wire [15:0] x_imm_z = {8'h00, x_instr_q[7:0]};
-    wire [15:0] x_imm_s = {{8{x_instr_q[7]}}, x_instr_q[7:0]};
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+    // The rotated branch field was normalized when X was loaded.
+    wire [15:0] x_imm_s =
+        {{8{x_instr_q[7]}}, x_instr_q[7:0]};
+`else
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+    wire x_imm_sign = x_imm_sign_q;
+`else
+    wire x_imm_sign = x_branch ? x_instr_q[0] : x_instr_q[7];
+`endif
+    wire [15:0] x_imm_s = {{8{x_imm_sign}}, x_instr_q[7:0]};
+`endif
     wire [15:0] x_imm_u = {x_instr_q[7:0], 8'h00};
 
     wire [1:0] x_logic_op = x_imm_alu ? x_aaa[1:0] : x_f5[1:0];
@@ -373,11 +406,6 @@ module riscc_fast #(
     wire [15:0] long_value = mem_rdata;
 
     wire x_shift_step_left =
-`ifdef RISCC_FAST_DSP
-`ifndef RISCC_FAST_CONTROL_NORMALIZE
-        x_program_load |
-`endif
-`endif
 `ifdef RISCC_ECP5
         x_shift_left | (x_funnel & ~x_bbb[0]);
 `else
@@ -439,6 +467,8 @@ module riscc_fast #(
     wire normal_x = run_x & ~take_irq;
     wire x_imm_arithmetic = x_imm_alu & ~x_aaa[2] & x_aaa[1];
     wire x_reg_arithmetic = x_reg_alu_group & ~x_f5[2];
+    wire run_logic = (x_imm_alu & x_aaa[2]) |
+                     (x_reg_alu & x_f5[2]);
     wire alu_a_is_pc = take_irq |
         (normal_x & (x_branch | x_link_jump));
     wire alu_a_is_rf =
@@ -451,16 +481,25 @@ module riscc_fast #(
 `endif
          x_imm_arithmetic | x_reg_arithmetic |
 `ifdef RISCC_FAST_DSP
-         (x_memory & ~x_program_load)));
+         x_memory));
 `else
          x_memory));
 `endif
 `ifdef RISCC_FAST_LOGIC_TO_A
     wire [15:0] alu_a = (normal_x && run_logic) ? x_logic_result :
+`ifdef RISCC_FAST_HALFWORD_CONTROL
         alu_a_is_pc ? {1'b0, x_pc_q} :
+`else
+        alu_a_is_pc ? {x_pc_q, 1'b0} :
+`endif
         alu_a_is_rf ? rf_a : 16'h0000;
 `else
-    wire [15:0] alu_a = alu_a_is_pc ? {1'b0, x_pc_q} :
+    wire [15:0] alu_a =
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+        alu_a_is_pc ? {1'b0, x_pc_q} :
+`else
+        alu_a_is_pc ? {x_pc_q, 1'b0} :
+`endif
         alu_a_is_rf ? rf_a : 16'h0000;
 `endif
 `ifndef RISCC_FAST_DSP
@@ -474,8 +513,6 @@ module riscc_fast #(
     wire [15:0] immediate_result = x_aaa[0] ? x_imm_u : x_imm_z;
     wire run_imm_s = x_branch | x_imm_memory |
                      (x_imm_alu & ~x_aaa[2] & x_aaa[1]);
-    wire run_logic = (x_imm_alu & x_aaa[2]) |
-                     (x_reg_alu & x_f5[2]);
 `ifdef RISCC_FAST_AGILEX
     wire run_rf_b = x_reg_arithmetic | x_indexed_memory;
     wire [15:0] run_rf_b_value = rf_b & {16{~x_load_byte}};
@@ -492,20 +529,14 @@ module riscc_fast #(
                     (x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0]);
 `endif
     wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
-    wire x_bit_result =
-`ifdef RISCC_FAST_DSP
-`ifndef RISCC_FAST_CONTROL_NORMALIZE
-        x_program_load |
-`endif
-`endif
-        x_shift | x_funnel;
+    wire x_bit_result = x_shift | x_funnel;
     wire [15:0] run_result =
 `ifndef RISCC_FAST_LOGIC_TO_A
         run_logic ? x_logic_result :
 `endif
         run_imm_s ? x_imm_s :
 `ifndef RISCC_FAST_DSP
-        (x_move | x_program_load) ? rf_a :
+        x_move ? rf_a :
 `endif
         run_rf_b ?
 `ifdef RISCC_FAST_AGILEX
@@ -518,7 +549,12 @@ module riscc_fast #(
         x_move ? rf_a :
 `endif
         x_bit_result ? x_shift_step :
+`ifdef RISCC_FAST_HALFWORD_CONTROL
         x_jal16 ? 16'h0001 : 16'h0000;
+`else
+        x_jal16 ? 16'h0003 :
+        16'h0000;
+`endif
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
 `ifndef RISCC_FAST_LOAD_EXECUTE
@@ -541,7 +577,14 @@ module riscc_fast #(
     wire alu_carry_in = alu_subtract |
         (normal_x & (x_branch | x_link_jump));
 
+`ifdef RISCC_FAST_HALFWORD_CONTROL
     wire [15:0] adjusted_alu_b = alu_b ^ {16{alu_subtract}};
+`else
+    wire pc_step = normal_x & (x_branch | x_link_jump);
+    wire [15:0] stepped_alu_b =
+        {alu_b[15:1], alu_b[0] | pc_step};
+    wire [15:0] adjusted_alu_b = stepped_alu_b ^ {16{alu_subtract}};
+`endif
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_result = alu_a + adjusted_alu_b +
                              {15'h0000, alu_carry_in};
@@ -583,8 +626,12 @@ module riscc_fast #(
     wire x_redirect = run_x &
         ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
 `endif
-    wire [14:0] x_redirect_pc = x_jal16 ? long_value[14:0] :
-        x_branch ? alu_result[14:0] : rf_a[14:0];
+    wire [14:0] x_redirect_pc = x_jal16 ? long_value[15:1] :
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+        x_branch ? alu_result[14:0] : rf_a[15:1];
+`else
+        x_branch ? alu_result[15:1] : rf_a[15:1];
+`endif
 
     // ------------------------------------------------------------------
     // Commit, hazards, and RF writeback
@@ -651,7 +698,17 @@ module riscc_fast #(
             (x_ddd & {3{~(take_irq | x_cmpi)}})
     };
 `endif
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+    wire [15:0] rf_wdata = (take_irq | x_link_jump) ?
+        {alu_result[14:0], 1'b0} : execute_result;
+`elsif RISCC_FAST_SUPPRESS_BRANCH_WRITE
+    // A taken or untaken branch never writes a register.  Do not carry its
+    // rotated-immediate adder result into the RF write-data cone.
+    wire [15:0] rf_wdata = (normal_x & x_branch) ?
+        16'h0000 : execute_result;
+`else
     wire [15:0] rf_wdata = execute_result;
+`endif
 `ifdef RISCC_FAST_SYNC_RF
     // A simultaneous EBR read/write may return the old word. Hold the
     // incoming instruction for one repeated read instead of forwarding.
@@ -688,7 +745,7 @@ module riscc_fast #(
         endcase
     end
 
-    riscc_fast_rf regs (
+    riscc16_fast_rf regs (
         .clk(clk),
         .raddr_a(rf_raddr_a), .rdata_a(rf_a),
         .raddr_b(rf_raddr_b), .rdata_b(rf_b),
@@ -729,16 +786,7 @@ module riscc_fast #(
          (frontend_side_finish & ~x_valid_q));
     wire fetch_hold = rf_wait_cycle |
         (in_shift & (~shift_finish | x_valid_q));
-`ifdef RISCC_FAST_AGILEX
-`ifdef RISCC_FAST_DSP
-    assign mem_addr = (normal_x & x_program_load) ? rf_a[14:0] :
-        run_data_port ? alu_result[15:1] : fetch_pc_q;
-`else
     assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
-`endif
-`else
-    assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
-`endif
     assign mem_we = run_data_port & x_store;
     wire store_byte = x_load_byte;
     wire [15:0] store_value = rf_b;
@@ -864,10 +912,15 @@ module riscc_fast #(
             x_valid_q <= (~take_irq & x_long_wait) | accept_fetch;
             if (accept_fetch) begin
                 x_pc_q <= fetch_pending_pc_q;
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+                x_imm_sign_q <= d_imm_sign;
+`endif
 `ifdef RISCC_ECP5
                 x_instr_q <= mem_rdata;
 `elsif RISCC_FAST_SYNC_RF
                 x_instr_q <= mem_rdata;
+`elsif RISCC_FAST_HALFWORD_CONTROL
+                x_instr_q <= d_execute_instr;
 `else
                 x_instr_q <= d_instr;
 `endif
@@ -880,10 +933,15 @@ module riscc_fast #(
             if (accept_fetch) begin
                 x_valid_q <= 1'b1;
                 x_pc_q <= fetch_pending_pc_q;
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+                x_imm_sign_q <= d_imm_sign;
+`endif
 `ifdef RISCC_ECP5
                 x_instr_q <= mem_rdata;
 `elsif RISCC_FAST_SYNC_RF
                 x_instr_q <= mem_rdata;
+`elsif RISCC_FAST_HALFWORD_CONTROL
+                x_instr_q <= d_execute_instr;
 `else
                 x_instr_q <= d_instr;
 `endif
@@ -969,7 +1027,7 @@ endmodule
 
 // ECP5 uses two distributed-RAM replicas for asynchronous reads. iCE40 uses
 // two synchronous EBR replicas, one read port each, with broadcast writes.
-module riscc_fast_rf (
+module riscc16_fast_rf (
     input  wire        clk,
     input  wire [3:0]  raddr_a,
     output wire [15:0] rdata_a,
@@ -1063,6 +1121,18 @@ endmodule
 `endif
 `ifdef RISCC_FAST_CONTROL_NORMALIZE
 `undef RISCC_FAST_CONTROL_NORMALIZE
+`endif
+`ifdef RISCC_FAST_SUPPRESS_BRANCH_WRITE
+`undef RISCC_FAST_SUPPRESS_BRANCH_WRITE
+`endif
+`ifdef RISCC_FAST_HALFWORD_CONTROL
+`undef RISCC_FAST_HALFWORD_CONTROL
+`endif
+`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
+`undef RISCC_FAST_PREDECODE_IMM_SIGN
+`endif
+`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
+`undef RISCC_FAST_RELAX_RESERVED_DECODE
 `endif
 
 `default_nettype wire

@@ -5,16 +5,81 @@
  * The other profiles use a branchless shift/add loop: turning the multiplier
  * bit into an all-zero/all-one mask avoids an unpredictable branch per bit.
  *
- * __mulsi3 keeps the two 32-bit values in r1:r2 and r3:r4.  On Full, the two
+ * __mulsi3 receives its first 32-bit value in r1:r2 and its second on the
+ * stack.  The entry code loads that operand into r3:r4 for the shared
+ * implementation. On Full, the two
  * cross products only need their low halves; a byte-decomposed product
  * supplies the otherwise unavailable unsigned high half of r1*r3.  MDU
  * obtains that low/high pair directly with MULHU.
  */
 
 #ifdef __RISCC_NANO__
-#define MUL_RETURN RET r6
+#define MUL_RETURN NANO_RETURN
+#define MUL_ARG0 8
+#define MUL_ARG2 10
+#define MUL_ARG4 12
+#define MUL_ARG6 14
 #else
-#define MUL_RETURN RETS
+#define MUL_RETURN ABI_RETURN
+#define MUL_ARG0 40
+#define MUL_ARG2 42
+#define MUL_ARG4 44
+#define MUL_ARG6 46
+#endif
+
+#ifdef __RISCC_NANO__
+        .macro NANO_SAVE
+        ST      r4, [r7 - 26]
+        .endm
+
+        .macro NANO_RETURN
+        LD      r4, [r7 - 26]
+        RET     r6
+        .endm
+
+        .macro NANO_RETURN64
+        LD      r0, [r7 - 24]
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        NANO_RETURN
+        .endm
+#endif
+
+#ifndef __RISCC_NANO__
+        .macro ABI_SAVE
+        /* Reserve the local scratch area for a nested ABI frame. */
+        ADDI    r7, -32
+        ST      r4, [r7 + 0]
+        ST      r5, [r7 + 2]
+        ST      r6, [r7 + 4]
+        MFS     r0, s5
+        ST      r0, [r7 + 6]
+        MFS     r0, s6
+        ST      r0, [r7 + 8]
+        .endm
+
+        .macro ABI_RETURN
+        LD      r4, [r7 + 0]
+        LD      r5, [r7 + 2]
+        LD      r6, [r7 + 4]
+        LD      r0, [r7 + 6]
+        MTS     s5, r0
+        LD      r0, [r7 + 8]
+        MTS     s6, r0
+        ADDI    r7, 32
+        RETS
+        .endm
+
+        .macro ABI_RETURN64
+        MFS     r0, s3
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        ABI_RETURN
+        .endm
 #endif
 
         .macro FUNCTION name
@@ -24,6 +89,11 @@
         .hidden \name
         .type \name,@function
 \name:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
         .endm
 
 /*
@@ -35,6 +105,20 @@
  */
 
         FUNCTION __muldi3
+        /* i64 results use an sret pointer in r1; both inputs are on stack. */
+#ifdef __RISCC_NANO__
+        ST     r1, [r7 - 24]
+        LD     r1, [r7 + 0]
+        LD     r2, [r7 + 2]
+        LD     r3, [r7 + 4]
+        LD     r4, [r7 + 6]
+#else
+        MTS    s3, r1
+        LD     r1, [r7 + 32]
+        LD     r2, [r7 + 34]
+        LD     r3, [r7 + 36]
+        LD     r4, [r7 + 38]
+#endif
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
 
@@ -44,16 +128,16 @@
         ST     r0, [r7 - 10]
         ST     r0, [r7 - 12]
 
-        LD     r5, [r7 + 0]
+        LD     r5, [r7 + MUL_ARG0]
         ST     r5, [r7 - 14]           /* multiplier, low to high */
         OR      r0, r0, r5
-        LD     r5, [r7 + 2]
+        LD     r5, [r7 + MUL_ARG2]
         ST     r5, [r7 - 16]
         OR      r0, r0, r5
-        LD     r5, [r7 + 4]
+        LD     r5, [r7 + MUL_ARG4]
         ST     r5, [r7 - 18]
         OR      r0, r0, r5
-        LD     r5, [r7 + 6]
+        LD     r5, [r7 + MUL_ARG6]
         ST     r5, [r7 - 20]
         OR      r0, r0, r5
         BEQZ    .Lmuldi_done
@@ -189,7 +273,11 @@
         LD     r4, [r7 - 12]
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        MUL_RETURN
+#ifdef __RISCC_NANO__
+        NANO_RETURN64
+#else
+        ABI_RETURN64
+#endif
         .size __muldi3, . - __muldi3
 
         FUNCTION __mulhi3
@@ -216,6 +304,13 @@
 
 #ifdef __RISCC_FULL__
         FUNCTION __mulsi3
+#ifdef __RISCC_NANO__
+        LD      r3, [r7 + 0]
+        LD      r4, [r7 + 2]
+#else
+        LD      r3, [r7 + 32]
+        LD      r4, [r7 + 34]
+#endif
 #ifdef __RISCC_MULHU__
         /*
          * (a1:a0) * (b1:b0) modulo 2^32 is:
@@ -292,6 +387,13 @@
         .size __mulsi3, . - __mulsi3
 #else
         FUNCTION __mulsi3
+#ifdef __RISCC_NANO__
+        LD      r3, [r7 + 0]
+        LD      r4, [r7 + 2]
+#else
+        LD      r3, [r7 + 32]
+        LD      r4, [r7 + 34]
+#endif
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]

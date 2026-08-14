@@ -1,6 +1,7 @@
 ; One-bit compact funnel shifts shared by Min, Sys, and Full.
 
 .text
+.globl start
 start:
     ; Distinct rd/ra: old rd is shifted and ra supplies the endpoint bit.
     LDI16 r5, 0x2468

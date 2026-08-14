@@ -8,9 +8,64 @@
  */
 
 #ifdef __RISCC_NANO__
-#define WIDE_RETURN RET r6
+#define WIDE_RETURN NANO_RETURN
+
+        .macro NANO_SAVE
+        ST      r4, [r7 - 6]
+        .endm
+
+        .macro NANO_RETURN
+        LD      r4, [r7 - 6]
+        RET     r6
+        .endm
+
+        .macro NANO_RETURN64
+        LD      r0, [r7 - 8]
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        NANO_RETURN
+        .endm
 #else
 #define WIDE_RETURN RETS
+
+        /*
+         * Wide results use an sret pointer in r1; the four input limbs and
+         * shift count are stack arguments.  The loops use r1:r4 internally.
+         */
+        .macro WIDE_DI_SAVE
+        ADDI    r7, -12
+        ST      r4, [r7 + 0]
+        ST      r5, [r7 + 2]
+        ST      r6, [r7 + 4]
+        MFS     r0, s5
+        ST      r0, [r7 + 6]
+        MFS     r0, s6
+        ST      r0, [r7 + 8]
+        MTS     s3, r1
+        LD      r1, [r7 + 12]
+        LD      r2, [r7 + 14]
+        LD      r3, [r7 + 16]
+        LD      r4, [r7 + 18]
+        .endm
+
+        .macro WIDE_DI_RETURN
+        MFS     r0, s3
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        LD      r4, [r7 + 0]
+        LD      r5, [r7 + 2]
+        LD      r6, [r7 + 4]
+        LD      r0, [r7 + 6]
+        MTS     s5, r0
+        LD      r0, [r7 + 8]
+        MTS     s6, r0
+        ADDI    r7, 12
+        RETS
+        .endm
 #endif
 
         .macro FUNCTION name
@@ -20,6 +75,9 @@
         .hidden \name
         .type \name,@function
 \name:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#endif
         .endm
 
         FUNCTION __ashlsi3
@@ -98,11 +156,16 @@
         FUNCTION __ashldi3
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
-        LD     r0, [r7 + 0]
+        ST     r1, [r7 - 8]
+        LD     r1, [r7 + 0]
+        LD     r2, [r7 + 2]
+        LD     r3, [r7 + 4]
+        LD     r4, [r7 + 6]
+        LD     r0, [r7 + 8]
         ST     r0, [r7 - 4]
 #else
-        MTS     s3, r5
-        LD     r5, [r7 + 0]
+        WIDE_DI_SAVE
+        LD      r5, [r7 + 20]
         MOV     r0, r5
 #endif
         BEQZ    .Lshldi_done
@@ -141,20 +204,27 @@
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
 #else
-        MFS     r5, s3
+        WIDE_DI_RETURN
 #endif
-        WIDE_RETURN
+#ifdef __RISCC_NANO__
+        NANO_RETURN64
+#endif
         .size __ashldi3, . - __ashldi3
 
         FUNCTION __lshrdi3
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
-        LD     r0, [r7 + 0]
+        ST     r1, [r7 - 8]
+        LD     r1, [r7 + 0]
+        LD     r2, [r7 + 2]
+        LD     r3, [r7 + 4]
+        LD     r4, [r7 + 6]
+        LD     r0, [r7 + 8]
         ST     r0, [r7 - 4]
         LUI     r5, 128
 #else
-        MTS     s3, r5
-        LD     r5, [r7 + 0]
+        WIDE_DI_SAVE
+        LD      r5, [r7 + 20]
         MOV     r0, r5
 #endif
         BEQZ    .Llshrdi_done
@@ -195,20 +265,27 @@
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
 #else
-        MFS     r5, s3
+        WIDE_DI_RETURN
 #endif
-        WIDE_RETURN
+#ifdef __RISCC_NANO__
+        NANO_RETURN64
+#endif
         .size __lshrdi3, . - __lshrdi3
 
         FUNCTION __ashrdi3
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
-        LD     r0, [r7 + 0]
+        ST     r1, [r7 - 8]
+        LD     r1, [r7 + 0]
+        LD     r2, [r7 + 2]
+        LD     r3, [r7 + 4]
+        LD     r4, [r7 + 6]
+        LD     r0, [r7 + 8]
         ST     r0, [r7 - 4]
         LUI     r5, 128
 #else
-        MTS     s3, r5
-        LD     r5, [r7 + 0]
+        WIDE_DI_SAVE
+        LD      r5, [r7 + 20]
         MOV     r0, r5
 #endif
         BEQZ    .Lashrdi_done
@@ -249,7 +326,9 @@
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
 #else
-        MFS     r5, s3
+        WIDE_DI_RETURN
 #endif
-        WIDE_RETURN
+#ifdef __RISCC_NANO__
+        NANO_RETURN64
+#endif
         .size __ashrdi3, . - __ashrdi3

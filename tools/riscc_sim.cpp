@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -71,7 +72,7 @@ struct CycleTable
     }
 };
 
-constexpr CycleTable TINY16_CYCLES =
+constexpr CycleTable RC16_CYCLES =
 {
     3,  // immediate ALU, branch, S-reg move, IE control, count-1 shift
     4,  // register ALU
@@ -81,7 +82,7 @@ constexpr CycleTable TINY16_CYCLES =
     4,  // FSR1 follows the normal two-source execute path
     6,  // LD rd, [ra+simm8]
     5,  // ST rd, [ra+simm8]
-    7,  // LDX/LDPH
+    7,  // LDX
     6,  // direct-register LDB/LDBS
     5,  // direct-register STB
     4,  // RET/RETI
@@ -111,7 +112,7 @@ CycleTable cycle_table_for_fast(bool dsp)
         2,              // register-indirect store consumes one fetch slot
         3,              // return redirect/refill
         3,              // register jump/call redirect/refill
-        3,              // prefetched JAL16 target redirect/refill
+        3,              // prefetched JALL target redirect/refill
         dsp ? 1u : 17u, // direct DSP result or X plus 15 side-state MUL steps
         3,              // approximate IRQ redirect/refill
         0,              // first bit in EX; remaining bits overlap held fetch
@@ -128,10 +129,10 @@ CycleTable cycle_table_for_faster()
     return cycle_table_for_fast(true);
 }
 
-CycleTable cycle_table_for_tiny_width(int width)
+CycleTable cycle_table_for_rc16_width(int width)
 {
     if (width == 16)
-        return TINY16_CYCLES;
+        return RC16_CYCLES;
 
     int pass = 0;
     if (width == 1 || width == 2 || width == 4 || width == 8)
@@ -198,6 +199,11 @@ int32_t sign_extend_16(uint16_t v)
     return (v & 0x8000) ? static_cast<int32_t>(v) - 0x10000 : static_cast<int32_t>(v);
 }
 
+int32_t sign_extend_7(uint8_t v)
+{
+    return (v & 0x40) ? static_cast<int32_t>(v) - 128 : static_cast<int32_t>(v);
+}
+
 uint64_t parse_u64(const std::string &s)
 {
     char *end = nullptr;
@@ -228,6 +234,7 @@ struct Opts
 {
     std::string image;
     bool min = false;
+    bool rc32 = false;
     bool full = false;
     bool mdu = false;
     bool nano = false;
@@ -337,10 +344,10 @@ struct Sim
     Sim(const std::vector<uint8_t> &image, const Opts &opts)
         : opts(opts), cycle(opts.fast ? cycle_table_for_fast(opts.fast_dsp) :
             opts.faster ? cycle_table_for_faster() :
-            cycle_table_for_tiny_width(opts.width))
+            cycle_table_for_rc16_width(opts.width))
     {
         // Some direct-store schedules trade one extra serial pass for less
-        // logic. Tiny16 Sys similarly stages STB for one extra cycle.
+        // logic. RC16 Sys similarly stages STB for one extra cycle.
         if (!opts.fast && !opts.faster && !opts.nano)
         {
             if ((!opts.min && !opts.full && opts.width == 1) ||
@@ -555,7 +562,7 @@ struct Sim
         uint16_t ir = mem[pc & 0x7fff];
         if (opts.has_sys() && ie && (irq_line || peripheral_irq()))
         {
-            s[0] = pc & 0x7fff;
+            s[0] = static_cast<uint16_t>(pc << 1);
             ie = false;
             pc = 2;
             advance_cycles(cycle.irq_entry);
@@ -572,17 +579,15 @@ struct Sim
         uint16_t func = (ir >> 3) & 0x1f;
         uint16_t rb = ir & 7;
         uint8_t imm8 = static_cast<uint8_t>(ir);
-        if (opcode == 0)
+        if ((ir & 0xc7ff) == 0x0034)
         {
             if (!opts.has_sys())
                 throw std::runtime_error("long instruction outside sys profile");
-            if (ra != 7 || imm8 != 0)
-                throw std::runtime_error("long instruction encoding reserved");
             uint16_t extension = mem[pc_next & 0x7fff];
             pc_next = static_cast<uint16_t>((pc_next + 1) & 0x7fff);
             if (rd != 0)
-                s[rd] = static_cast<uint16_t>(pc + 2);
-            pc_next = extension & 0x7fff;
+                s[rd] = static_cast<uint16_t>((pc + 2) << 1);
+            pc_next = static_cast<uint16_t>((extension >> 1) & 0x7fff);
             instr_cycles = cycle.jump16;
         }
         else if (opcode == 1)
@@ -641,7 +646,9 @@ struct Sim
             }
             else
             {
-                int16_t rel = sign_extend_8(imm8);
+                uint8_t rel8 = static_cast<uint8_t>((imm8 >> 1) |
+                                                     ((imm8 & 1) << 7));
+                int16_t rel = sign_extend_8(rel8);
                 bool taken = false;
                 if (rd < 4)
                 {
@@ -743,13 +750,6 @@ struct Sim
                     r[rd] = load_byte(r[ra], false);
                     instr_cycles = cycle.direct_load;
                 }
-                else if (rb == 3)
-                {
-                    if (opts.nano)
-                        throw std::runtime_error("LDPH in nano");
-                    r[rd] = mem[r[ra] & 0x7fff];
-                    instr_cycles = cycle.index_load;
-                }
                 else
                 {
                     throw std::runtime_error("direct load sub-op reserved");
@@ -844,9 +844,9 @@ struct Sim
                 {
                     if (rb != 1)
                         throw std::runtime_error("non-JALR sys op in nano");
-                    uint16_t target = r[ra] & 0x7fff;
+                    uint16_t target = static_cast<uint16_t>((r[ra] >> 1) & 0x7fff);
                     if (rd != 0)
-                        r[rd] = pc_next;
+                        r[rd] = static_cast<uint16_t>(pc_next << 1);
                     pc_next = target;
                     pc = pc_next;
                     advance_cycles(cycle.reg_jump);
@@ -857,13 +857,13 @@ struct Sim
                 {
                     if (rd == 0)
                     {// RET Sa
-                        pc_next = s[ra] & 0x7fff;
+                        pc_next = static_cast<uint16_t>((s[ra] >> 1) & 0x7fff);
                         instr_cycles = cycle.ret;
                     }
                     else if (rd == 5 && opts.has_sys())
                     {// RETI Sa
                         ie = true;
-                        pc_next = s[ra] & 0x7fff;
+                        pc_next = static_cast<uint16_t>((s[ra] >> 1) & 0x7fff);
                         instr_cycles = cycle.ret;
                     }
                     else if ((rd == 2 || rd == 7) && opts.has_sys())
@@ -880,9 +880,9 @@ struct Sim
                 }
                 else if (rb == 1)
                 {
-                    uint16_t target = r[ra] & 0x7fff;
+                    uint16_t target = static_cast<uint16_t>((r[ra] >> 1) & 0x7fff);
                     if (rd != 0)
-                        s[rd] = pc_next;
+                        s[rd] = static_cast<uint16_t>(pc_next << 1);
                     pc_next = target;
                     instr_cycles = cycle.reg_jump;
                 }
@@ -917,6 +917,283 @@ struct Sim
         emit_trace(pc_before, ir);
     }
 };
+
+// RC32 Min has a 32-bit architectural address space and 32-bit scalar
+// registers. Keep it separate from the cycle-tuned RC16 simulator above: the
+// RC32 RTL currently implements only Min, and a sparse halfword map makes its
+// full address space usable without allocating four GiB of host memory.
+struct RC32Sim
+{
+    Opts opts;
+    std::map<uint32_t, uint16_t> mem;
+    std::map<uint32_t, bool> mem_written;
+    std::array<uint32_t, 8> r{};
+    std::array<uint32_t, 8> s{};
+    uint32_t pc = 0;
+    bool done = false;
+    bool halted = false;
+    uint64_t insns = 0;
+    uint64_t cycles = 3;
+    uint64_t trace_steps = 0;
+
+    RC32Sim(const std::vector<uint8_t> &image, const Opts &opts) : opts(opts)
+    {
+        for (size_t i = 0; i < image.size(); i += 2)
+        {
+            uint16_t hi = (i + 1 < image.size()) ? image[i + 1] : 0;
+            mem[static_cast<uint32_t>(i >> 1)] =
+                static_cast<uint16_t>(image[i] | (hi << 8));
+        }
+    }
+
+    uint16_t load_half(uint32_t baddr) const
+    {
+        if (baddr & 1)
+            throw std::runtime_error("unaligned RC32 halfword load");
+        auto it = mem.find(baddr >> 1);
+        return it == mem.end() ? 0 : it->second;
+    }
+
+    void store_half(uint32_t baddr, uint16_t value)
+    {
+        if (baddr & 1)
+            throw std::runtime_error("unaligned RC32 halfword store");
+        const uint32_t waddr = baddr >> 1;
+        mem[waddr] = value;
+        mem_written[waddr] = true;
+        if (waddr == RESULT_W)
+            done = true;
+    }
+
+    uint32_t load_word(uint32_t baddr) const
+    {
+        if (baddr & 3)
+            throw std::runtime_error("unaligned RC32 word load");
+        return static_cast<uint32_t>(load_half(baddr)) |
+               (static_cast<uint32_t>(load_half(baddr + 2)) << 16);
+    }
+
+    void store_word(uint32_t baddr, uint32_t value)
+    {
+        if (baddr & 3)
+            throw std::runtime_error("unaligned RC32 word store");
+        store_half(baddr, static_cast<uint16_t>(value));
+        store_half(baddr + 2, static_cast<uint16_t>(value >> 16));
+    }
+
+    uint32_t load_byte(uint32_t baddr, bool is_signed) const
+    {
+        const uint16_t half = load_half(baddr & ~uint32_t(1));
+        uint32_t value = (baddr & 1) ? (half >> 8) : (half & 0xff);
+        if (is_signed && (value & 0x80))
+            value |= 0xffffff00u;
+        return value;
+    }
+
+    void store_byte(uint32_t baddr, uint32_t value)
+    {
+        const uint32_t half_addr = baddr & ~uint32_t(1);
+        const uint16_t old = load_half(half_addr);
+        const uint16_t merged = (baddr & 1) ?
+            static_cast<uint16_t>((old & 0x00ff) | ((value & 0xff) << 8)) :
+            static_cast<uint16_t>((old & 0xff00) | (value & 0xff));
+        store_half(half_addr, merged);
+    }
+
+    void emit_trace(uint32_t pc_before, uint16_t ir)
+    {
+        if (!opts.trace)
+            return;
+        std::fprintf(stderr, "TRACE step=%llu pc=%08X ir=%04X ie=0 r=",
+            static_cast<unsigned long long>(trace_steps), pc_before, ir);
+        for (int i = 0; i < 8; ++i)
+        {
+            if (i)
+                std::fputc(',', stderr);
+            std::fprintf(stderr, "%08X", r[i]);
+        }
+        std::fprintf(stderr, " s=");
+        for (int i = 0; i < 8; ++i)
+        {
+            if (i)
+                std::fputc(',', stderr);
+            std::fprintf(stderr, "%08X", s[i]);
+        }
+        std::fputc('\n', stderr);
+        ++trace_steps;
+    }
+
+    void step()
+    {
+        const uint32_t pc_before = pc;
+        const uint16_t ir = load_half(pc);
+        const uint32_t pc_next_default = pc + 2;
+        uint32_t pc_next = pc_next_default;
+        const unsigned opcode = ir >> 14;
+        const unsigned rd = (ir >> 11) & 7;
+        const unsigned ra = (ir >> 8) & 7;
+        const unsigned func = (ir >> 3) & 0x1f;
+        const unsigned rb = ir & 7;
+        const uint8_t imm8 = static_cast<uint8_t>(ir);
+
+        ++insns;
+        ++cycles;
+        if (opcode == 0)
+        {
+            throw std::runtime_error("long instruction outside RC32 Min profile");
+        }
+        if (opcode == 1)
+        {
+            const uint8_t words = static_cast<uint8_t>(((ir >> 2) & 0x3f) |
+                                                        ((ir & 2) << 5));
+            const uint32_t addr = r[ra] + static_cast<uint32_t>(sign_extend_7(words) * 4);
+            if (ir & 1)
+                store_word(addr, r[rd]);
+            else
+                r[rd] = load_word(addr);
+        }
+        else if (opcode == 2)
+        {
+            if (ra == 0)
+                r[rd] = imm8;
+            else if (ra == 1)
+            {
+                const uint8_t rotated = static_cast<uint8_t>((imm8 >> 1) |
+                                                               ((imm8 & 1) << 7));
+                const int32_t rel = sign_extend_8(rotated);
+                r[rd] = load_word(pc_next_default + static_cast<uint32_t>(rel * 2));
+            }
+            else if (ra == 2)
+                r[rd] += static_cast<uint32_t>(sign_extend_8(imm8));
+            else if (ra == 3)
+                r[0] = r[rd] - static_cast<uint32_t>(sign_extend_8(imm8));
+            else if (ra == 4)
+                r[rd] &= imm8;
+            else if (ra == 5)
+                r[rd] |= imm8;
+            else if (ra == 6)
+                r[rd] ^= imm8;
+            else
+            {
+                const uint8_t rotated = static_cast<uint8_t>((imm8 >> 1) |
+                                                               ((imm8 & 1) << 7));
+                const int32_t rel = sign_extend_8(rotated);
+                bool taken = false;
+                if (rd == 0)
+                    taken = r[0] == 0;
+                else if (rd == 1)
+                    taken = r[0] != 0;
+                else if (rd == 2)
+                    taken = static_cast<int32_t>(r[0]) < 0;
+                else if (rd == 3)
+                    taken = static_cast<int32_t>(r[0]) >= 0;
+                else if (rd == 4)
+                    taken = true;
+                else
+                    throw std::runtime_error("RC32 branch condition reserved");
+                if (taken)
+                    pc_next = pc_next_default + static_cast<uint32_t>(rel * 2);
+                if (rd == 4 && rel == -1)
+                    halted = true;
+            }
+        }
+        else
+        {
+            if (func < 0x08)
+            {
+                const uint32_t a = r[ra];
+                const uint32_t b = r[rb];
+                switch (func)
+                {
+                case 0: r[rd] = a + b; break;
+                case 1: r[rd] = a - b; break;
+                case 2: r[rd] = static_cast<int32_t>(a) < static_cast<int32_t>(b); break;
+                case 3: r[rd] = a < b; break;
+                case 4: r[rd] = a & b; break;
+                case 5: r[rd] = a | b; break;
+                case 6: r[rd] = a ^ b; break;
+                default: throw std::runtime_error("MUL outside RC32 Min profile");
+                }
+            }
+            else if (func == 0x08)
+            {
+                r[rd] = load_word(r[ra] + r[rb]);
+            }
+            else if (func == 0x0a || func == 0x0e)
+            {
+                if (rb == 0)
+                    r[rd] = load_byte(r[ra], func == 0x0e);
+                else if (rb == 2)
+                {
+                    const uint16_t value = load_half(r[ra]);
+                    r[rd] = (func == 0x0e && (value & 0x8000)) ?
+                        (0xffff0000u | value) : value;
+                }
+                else
+                    throw std::runtime_error("RC32 direct-load selector reserved");
+            }
+            else if (func == 0x0b)
+            {
+                if (rb == 0)
+                    store_byte(r[ra], r[rd]);
+                else if (rb == 2)
+                    store_half(r[ra], static_cast<uint16_t>(r[rd]));
+                else
+                    throw std::runtime_error("RC32 direct-store selector reserved");
+            }
+            else if (func == 0x0c || func == 0x0d)
+            {
+                if (rb != 0)
+                    throw std::runtime_error("wide shift outside RC32 Min profile");
+                r[rd] = func == 0x0c ? r[ra] >> 1 :
+                    static_cast<uint32_t>(static_cast<int32_t>(r[ra]) >> 1);
+            }
+            else if (func == 0x11)
+            {
+                if (rb == 0)
+                    r[rd] = (r[rd] << 1) | (r[ra] >> 31);
+                else if (rb == 1)
+                    r[rd] = (r[rd] >> 1) | ((r[ra] & 1) << 31);
+                else
+                    throw std::runtime_error("RC32 funnel selector reserved");
+            }
+            else if (func == 0x1f)
+            {
+                if (rb == 0)
+                {
+                    if (rd != 0)
+                        throw std::runtime_error("RC32 system control selector reserved");
+                    pc_next = s[ra];
+                }
+                else if (rb == 1)
+                {
+                    if (rd != 0)
+                        s[rd] = pc_next_default;
+                    pc_next = r[ra];
+                }
+                else if (rb == 2)
+                    r[rd] = s[ra];
+                else if (rb == 3)
+                    s[rd] = r[ra];
+                else
+                    throw std::runtime_error("RC32 system sub-op reserved");
+            }
+            else
+            {
+                throw std::runtime_error("RC32 register-format reserved");
+            }
+        }
+        pc = pc_next;
+        emit_trace(pc_before, ir);
+    }
+};
+
+std::string run_rc32_sim(RC32Sim &sim, uint64_t max_insns)
+{
+    while ((max_insns == 0 || sim.insns < max_insns) && !sim.done && !sim.halted)
+        sim.step();
+    return sim.done ? "DONE" : sim.halted ? "HALT" : "TIMEOUT";
+}
 
 void render_framebuffer_rgb(const Sim &sim, const FramebufferLayout &layout,
         std::vector<uint8_t> &pixels)
@@ -1094,6 +1371,7 @@ void print_usage(const char *prog)
         << "RISC-C simulator " << RISCC_VERSION << "\n"
         << "usage: " << prog << " image.bin [options]\n"
         << "  --min --full [--mdu]\n"
+        << "  --rc32                     RC32 Min architectural model\n"
         << "  --nano\n"
         << "  --fast [--fast-dsp]       approximate Fast pipelined timing (full ISA)\n"
         << "  --faster                  Faster DSP timing model (full ISA)\n"
@@ -1130,6 +1408,11 @@ Opts parse_args(int argc, char **argv)
         {
             opts.min = true;
         }
+        else if (opt == "--rc32")
+        {
+            opts.rc32 = true;
+            opts.min = true;
+        }
         else if (opt == "--full")
         {
             opts.full = true;
@@ -1158,7 +1441,7 @@ Opts parse_args(int argc, char **argv)
         else if (opt == "--width")
         {
             opts.width = static_cast<int>(parse_u64(need_arg(argc, argv, i, opt)));
-            (void)cycle_table_for_tiny_width(opts.width);
+            (void)cycle_table_for_rc16_width(opts.width);
         }
         else if (opt == "--max-insns")
         {
@@ -1225,8 +1508,10 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("missing image");
     if (opts.min && opts.full)
         throw std::runtime_error("--min and --full are mutually exclusive");
+    if (opts.rc32 && (opts.nano || opts.full || opts.mdu || opts.fast || opts.faster))
+        throw std::runtime_error("--rc32 currently supports only the Min profile");
     if (opts.nano && (opts.min || opts.full))
-        throw std::runtime_error("--nano cannot be combined with a tiny profile");
+        throw std::runtime_error("--nano cannot be combined with an RC16 profile");
     if (opts.mdu && !opts.full)
         throw std::runtime_error("--mdu requires --full");
     if ((opts.fast || opts.faster) && (opts.nano || opts.min))
@@ -1244,6 +1529,55 @@ int main(int argc, char **argv)
     {
         Opts opts = parse_args(argc, argv);
         std::vector<uint8_t> image = read_file(opts.image);
+
+        if (opts.rc32)
+        {
+            if (opts.fb_window || !opts.fb_dump_png.empty() || opts.uart)
+                throw std::runtime_error("framebuffer and UART models are not available in RC32 Min mode");
+
+            RC32Sim sim(image, opts);
+            const std::string outcome = run_rc32_sim(sim, opts.max_insns);
+            const uint16_t result = sim.load_half(static_cast<uint32_t>(RESULT_W) << 1);
+            const bool normal_halt = outcome == "HALT" && result == 0;
+            const bool pass = result == 0x600d || normal_halt;
+            const double ipc = sim.cycles ? static_cast<double>(sim.insns) /
+                static_cast<double>(sim.cycles) : 0.0;
+            std::fprintf(stderr, "%s after %llu insns, %llu cycles, IPC=%.3f, result=0x%04X: %s\n",
+                outcome.c_str(), static_cast<unsigned long long>(sim.insns),
+                static_cast<unsigned long long>(sim.cycles), ipc, result,
+                pass ? "PASS" : "FAIL");
+
+            if (opts.state)
+            {
+                std::fprintf(stderr, "STATE outcome=%s insns=%llu cycles=%llu ipc=%.6f timing=modeled result=0x%04X\n",
+                    outcome.c_str(), static_cast<unsigned long long>(sim.insns),
+                    static_cast<unsigned long long>(sim.cycles), ipc, result);
+                std::fprintf(stderr, "R");
+                for (uint32_t value : sim.r)
+                    std::fprintf(stderr, " 0x%08X", value);
+                std::fprintf(stderr, "\nS");
+                for (uint32_t value : sim.s)
+                    std::fprintf(stderr, " 0x%08X", value);
+                std::fputc('\n', stderr);
+            }
+            if (opts.dump_written)
+            {
+                for (const auto &[address, written] : sim.mem_written)
+                    if (written)
+                        std::fprintf(stderr, "MEM 0x%04X 0x%04X\n",
+                            address, sim.load_half(address << 1));
+            }
+            if (opts.have_dump)
+            {
+                for (uint32_t i = 0; i < opts.dump_len; ++i)
+                {
+                    const uint32_t address = opts.dump_base + i;
+                    std::fprintf(stderr, "  [0x%04X] = 0x%04X\n", address,
+                        sim.load_half(address << 1));
+                }
+            }
+            return pass ? 0 : 1;
+        }
 
         Sim sim(image, opts);
         const FramebufferLayout fb_layout = framebuffer_layout(opts);

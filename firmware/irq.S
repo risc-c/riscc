@@ -10,7 +10,9 @@
 //   S2 - 12 .. S2 - 4    interrupted r0 .. r4
 //   S2 - 2               interrupted S7
 //
-// r5, r6, and the handler stack pointer are ordinary C callee-saved state.
+// r4, r5, r6, and the handler stack pointer are ordinary C callee-saved
+// state.  r4 is nevertheless saved above because the wrapper must restore an
+// interrupted context, not merely obey a synchronous C call boundary.
 // S0 holds EPC, S1 is the deliberate interrupt scratch register, and S2 keeps
 // the current thread/context anchor.  S3..S7 are software-managed registers
 // and are restored unconditionally after the C handler.
@@ -77,7 +79,7 @@ __riscc_irq_entry:
         LDI16   r0, __riscc_irq_handler_ptr
         LD     r0, [r0+0]
         BNEZ    .Lhandler_set
-        JAL16   S0, __default_irq
+        JMPL    __default_irq
 .Lhandler_set:
         LDI16   r7, __riscc_irq_stack_top
         JALR    S7, r0

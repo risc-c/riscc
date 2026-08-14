@@ -1,8 +1,9 @@
-; Self-checking tests for the optional Tiny16 Full MDU instructions.
+; Self-checking tests for the optional RC16 Full MDU instructions.
 ; Assemble with RISCC_MULHU for the paired multiply core and with the full
 ; MDU feature set for the paired multiply/divide core.
 
 .text
+.globl start
 start:
 .ifdef RISCC_MULHU
     ; Paired unsigned product and rb == rh overlap.

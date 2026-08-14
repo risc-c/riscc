@@ -2,26 +2,25 @@
 
 Author: Arto Vuori <avuori@iki.fi>
 
-RISC-C is an open processor architecture for compact systems. Its mainline
-instruction set architecture (ISA) has 16- and 32-bit data-word configurations.
-The project provides a family of synthesizable Verilog cores that scale from
-bit-serial processors for very small systems to pipelined cores for higher
+RISC-C is an open processor architecture and FPGA soft-core family for compact
+systems. Its mainline instruction set architecture (ISA) has 16- and 32-bit
+configurations, with synthesizable Verilog implementations ranging from
+bit-serial cores for the smallest FPGAs to pipelined cores for higher
 throughput.
 
-RISC-C is genuinely tiny: its smallest Nano implementation uses only 93 iCE40
-LUT4s. That size does not come from reducing the programming model to an
-accumulator, stack machine, or narrowly specialized instruction subset. Nano
-retains a conventional register-based architecture with a complete,
-general-purpose RISC-style instruction set for compiled C and C++. The ISA maps
-naturally to LLVM, and the family scales beyond minimal controllers to
-system-capable and pipelined cores with interrupts, basic operating-system
-support, hardware multiplication, and optional division.
+RISC-C Nano is the world's smallest practical C/C++-programmable FPGA soft
+CPU, using 94 iCE40 LUT4s. It retains a conventional register-based
+architecture with a compact general-purpose RISC-style instruction set for
+compiled C and C++. The ISA maps naturally to LLVM, and the family scales
+beyond minimal controllers to system-capable and pipelined cores with
+interrupts, basic operating-system support, hardware multiplication, and
+optional division.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
-instruction set simulator (ISS), a firmware runtime, register
-transfer level (RTL) cores, self-checking tests, field programmable gate array
-(FPGA) flows, and board demonstrations.
+instruction set simulator (ISS), a compact freestanding C library and firmware
+runtime, register transfer level (RTL) cores, self-checking tests, field
+programmable gate array (FPGA) flows, and board demonstrations.
 
 RISC-C is free and open source under the [ISC License](LICENSE), with no
 restrictions on its use. All project tools can be built and the demonstrations
@@ -88,11 +87,11 @@ as the starting point for another freestanding C application. The generated
 Executable and Linkable Format (ELF) file, binary image, and assembly listing
 are placed in `build/hello`.
 
-Run the same binary on the Verilated Tiny16 Full RTL implementation with:
+Run the same binary on the Verilated RC16 Full RTL implementation with:
 
 ```sh
-make -j16 build/tb/tiny16-full/tb
-build/tb/tiny16-full/tb build/hello/hello.bin --max-cycles 1000000 \
+make -j16 build/tb/rc16-16-full/tb
+build/tb/rc16-16-full/tb build/hello/hello.bin --max-cycles 1000000 \
   --uart-expect-line 'Hello, RISC-C!'
 ```
 
@@ -172,7 +171,7 @@ make -j16 test-compiler
 
 | Command | Purpose |
 |---|---|
-| `make -j16 test-all` | Deterministic Verilator RTL regression for every core family. |
+| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min at every serial width, all Fast target variants, and Faster DSP/soft. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
 | `make -j16 all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports. It does not include the compiler suite. |

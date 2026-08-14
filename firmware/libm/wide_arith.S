@@ -53,9 +53,14 @@
 
         FUNCTION __riscc_math_subtract
 #ifdef __RISCC_NANO__
+        ST     r4, [r7 - 6]
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
 #else
+        ADDI    r7, -4
+        ST      r4, [r7 + 0]
+        MFS     r0, s5
+        ST      r0, [r7 + 2]
         MTS     s4, r5
         MTS     s5, r6
 #endif
@@ -80,9 +85,14 @@
 #ifdef __RISCC_NANO__
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
+        LD     r4, [r7 - 6]
 #else
         MFS     r6, s5
         MFS     r5, s4
+        LD      r0, [r7 + 2]
+        MTS     s5, r0
+        LD      r4, [r7 + 0]
+        ADDI    r7, 4
 #endif
         MATH_RETURN
         .size __riscc_math_subtract, . - __riscc_math_subtract

@@ -18,7 +18,7 @@ typedef void (*riscc_irq_handler_t)(void);
 /* Install the global C IRQ handler before enabling interrupts. */
 void riscc_irq_set_handler(riscc_irq_handler_t handler);
 
-/* These tiny control helpers are also usable with a custom ASM vector. */
+/* These compact control helpers are also usable with a custom ASM vector. */
 void riscc_irq_enable(void);
 void riscc_irq_disable(void);
 

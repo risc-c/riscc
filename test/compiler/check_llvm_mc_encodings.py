@@ -3,7 +3,8 @@
 
 The test enumerates every operand bit-pattern accepted by each canonical
 instruction format, including every signed short-branch displacement and all
-15-bit JAL16 targets.  It also exhausts LI and the direct-call pseudos because
+aligned 16-bit JALL byte targets. It also exhausts LI and the direct-call
+pseudos because
 they are emitted by the compiler, then samples the spelling-only aliases.
 
 LLVM MC is run once over the generated assembly.  Its raw .text bytes are
@@ -174,7 +175,7 @@ def main() -> int:
                     for rb in range(8):
                         operands = [f"r{rd}", f"[r{ra} + r{rb}]"]
                         emit(f"ldx {', '.join(operands)}", "LDX", operands)
-            for op in ("LDB", "LDBS", "LDPH"):
+            for op in ("LDB", "LDBS"):
                 for rd in range(8):
                     for ra in range(8):
                         operands = [f"r{rd}", f"[r{ra}]"]
@@ -212,17 +213,17 @@ def main() -> int:
                 operands = [f"s{sa}"]
                 emit(f"reti {operands[0]}", "RETI", operands)
 
-            # JAL16 has an eight-way S-register field and a 15-bit word target.
+            # JALL has an eight-way S-register field and an aligned 16-bit
+            # byte target.
             for sd in range(8):
-                for word_target in range(1 << 15):
-                    target = word_target * 2
+                for target in range(0, 1 << 16, 2):
                     operands = [f"s{sd}", str(target)]
-                    emit(f"jal16 {', '.join(operands)}", "JAL16", operands)
+                    emit(f"jall {', '.join(operands)}", "JAL16", operands)
             emit("cli", "CLI", [])
             emit("sti", "STI", [])
 
             # Compiler-emitted pseudos.  LI is exhaustive because its paired
-            # high/low emission has historically been a source of fixup bugs.
+            # Exercise the high/low fixup boundary.
             for rd in range(8):
                 for imm in range(1 << 16):
                     operands = [f"r{rd}", str(imm)]
@@ -230,10 +231,10 @@ def main() -> int:
             for ra in range(8):
                 operands = [f"r{ra}"]
                 emit(f"call {operands[0]}", "CALL", operands)
-            for op in ("CALL16", "JMP16"):
-                for word_target in range(1 << 15):
-                    operands = [str(word_target * 2)]
-                    emit(f"{op.lower()} {operands[0]}", op, operands)
+            for op, spelling in (("CALL16", "call16"), ("JMP16", "jmpl")):
+                for target in range(0, 1 << 16, 2):
+                    operands = [str(target)]
+                    emit(f"{spelling} {operands[0]}", op, operands)
             emit("rets", "RETS", [])
             for rd in range(8):
                 for ra in range(8):
@@ -245,7 +246,6 @@ def main() -> int:
             # Spelling-only aliases share encodings with the canonical forms
             # above; one boundary-oriented sample each is sufficient.
             aliases = (
-                ("ldp r7, [r6]", "LDP", ["r7", "[r6]"]),
                 ("ldi16 r7, 65535", "LI", ["r7", "65535"]),
                 ("ldi8 r7, 255", "LDI", ["r7", "255"]),
                 ("lui8 r0, 0", "LUI", ["r0", "0"]),
@@ -254,6 +254,8 @@ def main() -> int:
                 ("andi8 r3, 255", "ANDI", ["r3", "255"]),
                 ("ori8 r4, 0", "ORI", ["r4", "0"]),
                 ("xori8 r5, 165", "XORI", ["r5", "165"]),
+                ("jal16 s7, 65534", "JAL16", ["s7", "65534"]),
+                ("jmp16 65534", "JMP16", ["65534"]),
             )
             for spelling, op, operands in aliases:
                 emit(spelling, op, operands)

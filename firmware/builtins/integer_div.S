@@ -8,10 +8,118 @@
  */
 
 #ifdef __RISCC_NANO__
-#define DIV_RETURN RET r6
+#define DIV_RETURN NANO_RETURN
+#define DIV_ARG0 8
+#define DIV_ARG2 10
+#define DIV_ARG4 12
+#define DIV_ARG6 14
+#define DIV_ARG8 16
+#define DIV32_ARG0 0
+#define DIV32_ARG2 2
+#define DIV32_ARG4 4
 #else
-#define DIV_RETURN RETS
+#define DIV_RETURN ABI_RETURN
+#define DIV_ARG0 48
+#define DIV_ARG2 50
+#define DIV_ARG4 52
+#define DIV_ARG6 54
+#define DIV_ARG8 56
+#define DIV32_ARG0 40
+#define DIV32_ARG2 42
+#define DIV32_ARG4 44
 #endif
+
+#ifdef __RISCC_NANO__
+        .macro NANO_SAVE
+        ST      r4, [r7 - 22]
+        .endm
+
+        .macro NANO_RETURN
+        LD      r4, [r7 - 22]
+        RET     r6
+        .endm
+
+        .macro NANO_RETURN64
+        LD      r0, [r7 - 24]
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        NANO_RETURN
+        .endm
+
+        /* Signed 32-bit adapters call an unsigned helper. Keep their r4
+         * save outside the unsigned helper's fixed Nano scratch area. */
+        .macro NANO_SIGNED_SAVE
+        ST      r4, [r7 - 24]
+        NANO_SAVE
+        .endm
+
+        .macro NANO_SIGNED_RETURN
+        LD      r4, [r7 - 24]
+        RET     r6
+        .endm
+#endif
+
+#ifndef __RISCC_NANO__
+        .macro ABI_SAVE
+        /*
+         * The cores retain temporary values below r7 and signed adapters
+         * call these unsigned entries.  Reserve that scratch area as part
+         * of the ABI frame so a nested helper cannot overlap its caller.
+         */
+        ADDI    r7, -40
+        ST      r4, [r7 + 10]
+        ST      r5, [r7 + 12]
+        ST      r6, [r7 + 14]
+        MFS     r0, s5
+        ST      r0, [r7 + 16]
+        MFS     r0, s6
+        ST      r0, [r7 + 18]
+        .endm
+
+        .macro ABI_RETURN
+        LD      r4, [r7 + 10]
+        LD      r5, [r7 + 12]
+        LD      r6, [r7 + 14]
+        LD      r0, [r7 + 16]
+        MTS     s5, r0
+        LD      r0, [r7 + 18]
+        MTS     s6, r0
+        ADDI    r7, 40
+        RETS
+        .endm
+
+        .macro ABI_RETURN64
+        MFS     r0, s4
+        ST      r1, [r0 + 0]
+        ST      r2, [r0 + 2]
+        ST      r3, [r0 + 4]
+        ST      r4, [r0 + 6]
+        ABI_RETURN
+        .endm
+#endif
+
+        .macro LOAD_DIVISOR32
+        LD      r3, [r7 + DIV32_ARG0]
+        LD      r4, [r7 + DIV32_ARG2]
+        .endm
+
+        .macro LOAD_DIVIDEND64
+#ifdef __RISCC_NANO__
+        ST      r1, [r7 - 24]
+        LD      r1, [r7 + 0]
+        LD      r2, [r7 + 2]
+        LD      r3, [r7 + 4]
+        LD      r4, [r7 + 6]
+#else
+        MTS     s4, r1
+        LD      r1, [r7 + 40]
+        LD      r2, [r7 + 42]
+        LD      r3, [r7 + 44]
+        LD      r4, [r7 + 46]
+#endif
+        .endm
 
         .macro SAVE_R5
 #ifdef __RISCC_NANO__
@@ -36,6 +144,11 @@
         .hidden \name
         .type \name,@function
 \name:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
         .endm
 
         .macro SIGN_BIT source
@@ -228,6 +341,12 @@
         .hidden __udivsi3
         .type __udivsi3,@function
 __udivsi3:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVISOR32
         LDI     r0, 0                   /* return quotient */
         JMP8    .Ludivsi_entry
 
@@ -235,6 +354,12 @@ __udivsi3:
         .hidden __umodsi3
         .type __umodsi3,@function
 __umodsi3:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVISOR32
         LDI     r0, 1                   /* return remainder */
         JMP8    .Ludivsi_entry
 
@@ -243,10 +368,16 @@ __umodsi3:
         .type __udivmodsi4,@function
 __udivmodsi4:
 #ifdef __RISCC_NANO__
-        LD     r0, [r7 + 0]
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVISOR32
+#ifdef __RISCC_NANO__
+        LD     r0, [r7 + DIV32_ARG4]
         ST     r0, [r7 - 6]            /* remainder pointer */
 #else
-        LD     r0, [r7 + 0]
+        LD     r0, [r7 + DIV32_ARG4]
         ST     r0, [r7 - 2]            /* remainder pointer */
 #endif
         LDI     r0, 2                   /* quotient and stored remainder */
@@ -415,7 +546,7 @@ __udivmodsi4:
         MOV     r2, r4
 .Ludivsi_return:
         LD     r5, [r7 - 2]
-        RET     r6
+        NANO_RETURN
 #else
         MFS     r0, s5
         ADDI    r0, -1
@@ -432,7 +563,7 @@ __udivmodsi4:
 .Ludivsi_return:
         MFS     r6, s4
         MFS     r5, s3
-        RETS
+        ABI_RETURN
 #endif
         .size __udivsi3, . - __udivsi3
         .size __umodsi3, . - __umodsi3
@@ -455,14 +586,16 @@ __udivmodsi4:
         .endm
 
         .macro CALL_UNSIGNED name
+        ST      r3, [r7 + 0]
+        ST      r4, [r7 + 2]
 #ifdef __RISCC_NANO__
-        LI      r0, code(\name)
+        LI      r0, \name
         JALR    r6, r0
 #elif defined(__RISCC_MIN__)
-        LI      r0, code(\name)
+        LI      r0, \name
         JALR    s7, r0
 #else
-        JAL16   s7, \name
+        JALL    s7, \name
 #endif
         .endm
 
@@ -472,6 +605,12 @@ __udivmodsi4:
         .hidden __divsi3
         .type __divsi3,@function
 __divsi3:
+#ifdef __RISCC_NANO__
+        NANO_SIGNED_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVISOR32
         LDI     r0, 0                   /* signed quotient */
         JMP8    .Ldivsi_entry
 
@@ -479,6 +618,12 @@ __divsi3:
         .hidden __modsi3
         .type __modsi3,@function
 __modsi3:
+#ifdef __RISCC_NANO__
+        NANO_SIGNED_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVISOR32
         LDI     r0, 1                   /* signed remainder */
         JMP8    .Ldivsi_entry
 
@@ -486,6 +631,15 @@ __modsi3:
         .hidden __divmodsi4
         .type __divmodsi4,@function
 __divmodsi4:
+#ifdef __RISCC_NANO__
+        NANO_SIGNED_SAVE
+#else
+        ABI_SAVE
+        /* Pass the remainder pointer in the nested call's stack slot. */
+        LD      r0, [r7 + DIV32_ARG4]
+        ST      r0, [r7 + 4]
+#endif
+        LOAD_DIVISOR32
         LDI     r0, 2                   /* signed quotient and remainder */
 
 .Ldivsi_entry:
@@ -537,12 +691,12 @@ __divmodsi4:
         LD     r0, [r7 - 16]
         ANDI    r0, 2
         BEQZ    .Ldivsi_fix_quotient
-        LD     r0, [r7 + 0]
+        LD     r0, [r7 + DIV32_ARG4]
         BEQZ    .Ldivsi_fix_quotient
         LD     r3, [r0 + 0]
         LD     r4, [r0 + 2]
         NEGATE32 r3, r4, r5
-        LD     r0, [r7 + 0]
+        LD     r0, [r7 + DIV32_ARG4]
         ST     r3, [r0 + 0]
         ST     r4, [r0 + 2]
         JMP8    .Ldivsi_fix_quotient
@@ -564,11 +718,11 @@ __divmodsi4:
         LD     r5, [r7 - 18]
 #ifdef __RISCC_NANO__
         LD     r6, [r7 - 14]
-        RET     r6
+        NANO_SIGNED_RETURN
 #else
         LD     r0, [r7 - 14]
         MTS     s7, r0
-        RETS
+        ABI_RETURN
 #endif
         .size __divsi3, . - __divsi3
         .size __modsi3, . - __modsi3
@@ -577,8 +731,8 @@ __divmodsi4:
 /*
  * Shared unsigned 64-bit quotient/remainder core.
  *
- * The ABI passes the numerator in r1..r4 and the denominator in the first
- * four stack slots.  The restoring state lives below the unchanged incoming
+ * The mainline ABI passes the numerator in r1, r2, r3, r0 and the denominator
+ * in the first four stack slots.  The restoring state lives below the unchanged incoming
  * r7.  Mainline retains the loop count in its S-register cache; Nano uses one
  * additional fixed scratch slot and preserves its incoming link in r6.
  */
@@ -589,6 +743,12 @@ __divmodsi4:
         .hidden __udivdi3
         .type __udivdi3,@function
 __udivdi3:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVIDEND64
         LDI     r0, 0                   /* return quotient */
         JMP8    .Ludivdi_entry
 
@@ -596,6 +756,12 @@ __udivdi3:
         .hidden __umoddi3
         .type __umoddi3,@function
 __umoddi3:
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVIDEND64
         LDI     r0, 1                   /* return remainder */
         JMP8    .Ludivdi_entry
 
@@ -603,7 +769,13 @@ __umoddi3:
         .hidden __udivmoddi4
         .type __udivmoddi4,@function
 __udivmoddi4:
-        LD     r0, [r7 + 8]
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+#else
+        ABI_SAVE
+#endif
+        LOAD_DIVIDEND64
+        LD     r0, [r7 + DIV_ARG8]
         ST     r0, [r7 - 8]            /* remainder pointer */
         LDI     r0, 2                   /* quotient and stored remainder */
 
@@ -612,12 +784,12 @@ __udivmoddi4:
         ST     r6, [r7 - 4]
         ST     r0, [r7 - 6]            /* result selection */
 
-        LD     r0, [r7 + 0]
-        LD     r6, [r7 + 2]
+        LD     r0, [r7 + DIV_ARG0]
+        LD     r6, [r7 + DIV_ARG2]
         OR      r0, r0, r6
-        LD     r6, [r7 + 4]
+        LD     r6, [r7 + DIV_ARG4]
         OR      r0, r0, r6
-        LD     r6, [r7 + 6]
+        LD     r6, [r7 + DIV_ARG6]
         OR      r0, r0, r6
         BNEZ    .Ludivdi_nonzero
 
@@ -710,35 +882,35 @@ __udivmoddi4:
 
         /* Compare remainder with the denominator, high word first. */
         LD     r5, [r7 - 16]
-        LD     r6, [r7 + 6]
+        LD     r6, [r7 + DIV_ARG6]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
         LD     r5, [r7 - 14]
-        LD     r6, [r7 + 4]
+        LD     r6, [r7 + DIV_ARG4]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
         LD     r5, [r7 - 12]
-        LD     r6, [r7 + 2]
+        LD     r6, [r7 + DIV_ARG2]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
         SUB     r0, r5, r6
         BNEZ    .Ludivdi_subtract
 
         LD     r5, [r7 - 10]
-        LD     r6, [r7 + 0]
+        LD     r6, [r7 + DIV_ARG0]
         SLTU    r0, r5, r6
         BNEZ    .Ludivdi_keep
 
 .Ludivdi_subtract:
         /* Low word has no incoming borrow. */
         LD     r5, [r7 - 10]
-        LD     r0, [r7 + 0]
+        LD     r0, [r7 + DIV_ARG0]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
         ST     r5, [r7 - 10]
@@ -752,7 +924,7 @@ __udivmoddi4:
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
         ST     r0, [r7 - 20]
-        LD     r0, [r7 + 2]
+        LD     r0, [r7 + DIV_ARG2]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
         LD     r0, [r7 - 20]
@@ -764,7 +936,7 @@ __udivmoddi4:
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
         ST     r0, [r7 - 20]
-        LD     r0, [r7 + 4]
+        LD     r0, [r7 + DIV_ARG4]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
         LD     r0, [r7 - 20]
@@ -776,7 +948,7 @@ __udivmoddi4:
         SUB     r5, r5, r6
         SLTU    r0, r0, r5
         ST     r0, [r7 - 20]
-        LD     r0, [r7 + 6]
+        LD     r0, [r7 + DIV_ARG6]
         SLTU    r6, r5, r0
         SUB     r5, r5, r0
         LD     r0, [r7 - 20]
@@ -824,7 +996,11 @@ __udivmoddi4:
 .Ludivdi_return:
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        DIV_RETURN
+#ifdef __RISCC_NANO__
+        NANO_RETURN64
+#else
+        ABI_RETURN64
+#endif
         .size __udivdi3, . - __udivdi3
         .size __umoddi3, . - __umoddi3
         .size __udivmoddi4, . - __udivmoddi4

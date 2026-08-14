@@ -18,11 +18,23 @@
 
         .macro TAIL_PACK
 #ifdef __RISCC_MIN__
-        LI      r0, code(__riscc_pack_sf)
+        LI      r0, __riscc_pack_sf
         JALR    s0, r0
 #else
-        JAL16   s0, __riscc_pack_sf
+        JMPL    __riscc_pack_sf
 #endif
+        .endm
+
+        .macro ABI_RETURN
+        LD      r0, [r7 + 8]
+        MTS     s6, r0
+        LD      r0, [r7 + 6]
+        MTS     s5, r0
+        LD      r6, [r7 + 4]
+        LD      r5, [r7 + 2]
+        LD      r4, [r7 + 0]
+        ADDI    r7, 48
+        RETS
         .endm
 
         .macro DIV_ROUND
@@ -60,29 +72,29 @@
         .macro MDU_DIV_DIGIT
         MTS     s5, r4
         MTS     s6, r3
-        ST     r2, [r7 - 12]           /* preserve appended limb */
+        ST     r2, [r7 + 36]           /* preserve appended limb */
         DIVU    r4, r3, r6              /* r4:r3 -> estimate remainder:q */
-        ST     r3, [r7 - 14]
+        ST     r3, [r7 + 34]
 
 .Lmdu_div_check\@:
-        LD     r1, [r7 - 14]
+        LD     r1, [r7 + 34]
         MULHU   r0, r1, r5              /* r0:p.lo, r1:p.hi for q*vlo */
-        ST     r0, [r7 - 16]
-        ST     r1, [r7 - 18]
+        ST     r0, [r7 + 32]
+        ST     r1, [r7 + 30]
         SLTU    r0, r4, r1
         BNEZ    .Lmdu_div_correct\@
         SUB     r0, r1, r4
         BNEZ    .Lmdu_div_ready\@
-        LD     r3, [r7 - 12]
-        LD     r0, [r7 - 16]
+        LD     r3, [r7 + 36]
+        LD     r0, [r7 + 32]
         SLTU    r0, r3, r0
         BNEZ    .Lmdu_div_correct\@
         JMP8    .Lmdu_div_ready\@
 
 .Lmdu_div_correct\@:
-        LD     r1, [r7 - 14]
+        LD     r1, [r7 + 34]
         ADDI    r1, -1
-        ST     r1, [r7 - 14]
+        ST     r1, [r7 + 34]
         ADD     r4, r4, r6              /* estimate remainder += vhi */
         SLTU    r0, r4, r6
         BNEZ    .Lmdu_div_ready\@      /* carry: no further correction */
@@ -90,16 +102,16 @@
 
 .Lmdu_div_ready\@:
         /* q * (vhi:vlo), represented as three 16-bit product limbs. */
-        LD     r1, [r7 - 14]
+        LD     r1, [r7 + 34]
         MULHU   r0, r1, r6              /* p1 = q*vhi */
-        LD     r3, [r7 - 18]
+        LD     r3, [r7 + 30]
         ADD     r3, r3, r0              /* middle product limb */
         SLTU    r4, r3, r0              /* carry into top limb */
         ADD     r1, r1, r4              /* top product limb */
 
         /* (old remainder : appended limb) - q * divisor. */
-        LD     r4, [r7 - 12]
-        LD     r0, [r7 - 16]
+        LD     r4, [r7 + 36]
+        LD     r0, [r7 + 32]
         SLTU    r2, r4, r0
         SUB     r4, r4, r0              /* new remainder low */
         MFS     r0, s6
@@ -123,12 +135,23 @@
         .hidden __divsf3
         .type __divsf3,@function
 __divsf3:
-        ST     r5, [r7 - 10]
-        ST     r6, [r7 - 8]
+        ADDI    r7, -48
+        ST      r4, [r7 + 0]
+        LD      r3, [r7 + 48]           /* second operand */
+        LD      r4, [r7 + 50]
+        ST      r5, [r7 + 2]
+        ST      r6, [r7 + 4]
+        MFS     r0, s5
+        ST      r0, [r7 + 6]
+        MFS     r0, s6
+        ST      r0, [r7 + 8]
+
+        ST     r5, [r7 + 38]
+        ST     r6, [r7 + 40]
         XOR     r0, r2, r4
         LUI     r5, 0x80
         AND     r0, r0, r5
-        ST     r0, [r7 - 6]           /* result sign */
+        ST     r0, [r7 + 42]          /* result sign */
 
         MOV     r5, r2
         MOV     r6, r4
@@ -179,16 +202,14 @@ __divsf3:
 .Linfinity:
         LDI     r1, 0
         LI      r2, 0x7f80
-        LD     r0, [r7 - 6]
+        LD     r0, [r7 + 42]
         OR      r2, r2, r0
         JMP8    .Lspecial_return
 .Lzero:
         LDI     r1, 0
-        LD     r2, [r7 - 6]
+        LD     r2, [r7 + 42]
 .Lspecial_return:
-        LD     r6, [r7 - 8]
-        LD     r5, [r7 - 10]
-        RETS
+        ABI_RETURN
 
 .Lfinite:
         /* Restore significands, including implicit bits for normals. */
@@ -213,7 +234,7 @@ __divsf3:
         BNEZ    .Lnonzero_operands
         LDI     r1, 0
         LI      r2, 0x7f80
-        LD     r0, [r7 - 6]
+        LD     r0, [r7 + 42]
         OR      r2, r2, r0
         JMP8    .Lfinite_return
 .Lfinite_qnan:
@@ -222,11 +243,9 @@ __divsf3:
         JMP8    .Lfinite_return
 .Lfinite_zero:
         LDI     r1, 0
-        LD     r2, [r7 - 6]
+        LD     r2, [r7 + 42]
 .Lfinite_return:
-        LD     r6, [r7 - 8]
-        LD     r5, [r7 - 10]
-        RETS
+        ABI_RETURN
 
 .Lnonzero_operands:
         /* Effective exponents use one for subnormal encodings. */
@@ -267,7 +286,7 @@ __divsf3:
          * implementation does.  Dividing X<<34 by divisor<<8 leaves that
          * quotient unchanged and makes two 16-bit quotient digits available.
          */
-        ST     r5, [r7 - 4]
+        ST     r5, [r7 + 44]
         MOV     r5, r3
         SLLI    r5, r5, 8               /* divisor low limb */
         MTS     s4, r5
@@ -288,9 +307,9 @@ __divsf3:
 .Lmdu_numerator_less:
         FSL1    r2, r1
         ADD     r1, r1, r1
-        LD     r0, [r7 - 4]
+        LD     r0, [r7 + 44]
         ADDI    r0, -1
-        ST     r0, [r7 - 4]
+        ST     r0, [r7 + 44]
 .Lmdu_numerator_selected:
         /*
          * X << 34: start the 4-limb dividend with its upper two limbs.
@@ -299,7 +318,7 @@ __divsf3:
          * than splitting r1 >> 14 and ORing it into the high limb.
          */
         LDI     r0, 0
-        ST     r0, [r7 - 12]           /* next limb; final limb is zero */
+        ST     r0, [r7 + 36]           /* next limb; final limb is zero */
         MOV     r4, r2
         FSL1    r4, r1
         ADD     r3, r1, r1
@@ -308,27 +327,25 @@ __divsf3:
 
         /* The two digits share one local helper; both appended limbs are zero. */
         LDI     r2, 0
-        JAL16   s3, .Lmdu_div_digit
-        LD     r0, [r7 - 14]
-        ST     r0, [r7 - 20]
+        JALL    s3, .Lmdu_div_digit
+        LD     r0, [r7 + 34]
+        ST     r0, [r7 + 28]
 
         MFS     r5, s4
         LDI     r2, 0
-        JAL16   s3, .Lmdu_div_digit
+        JALL    s3, .Lmdu_div_digit
 
-        LD     r2, [r7 - 20]
-        LD     r1, [r7 - 14]
+        LD     r2, [r7 + 28]
+        LD     r1, [r7 + 34]
         OR      r0, r3, r4
         BEQZ    .Lmdu_exact
         ORI     r1, 1                   /* sticky */
 .Lmdu_exact:
-        LD     r3, [r7 - 6]
-        LD     r4, [r7 - 4]
-        LD     r6, [r7 - 8]
-        LD     r5, [r7 - 10]
+        LD     r3, [r7 + 42]
+        LD     r4, [r7 + 44]
         TAIL_PACK
 #else
-        ST     r5, [r7 - 4]
+        ST     r5, [r7 + 44]
         MOV     r5, r3                 /* divisor low */
         MOV     r6, r4                 /* divisor high */
 
@@ -347,9 +364,9 @@ __divsf3:
         MOV     r4, r2
         FSL1    r4, r1
         ADD     r3, r1, r1
-        LD     r0, [r7 - 4]
+        LD     r0, [r7 + 44]
         ADDI    r0, -1
-        ST     r0, [r7 - 4]
+        ST     r0, [r7 + 44]
 .Linitial_subtract:
         SLTU    r0, r3, r5
         SUB     r3, r3, r5
@@ -359,24 +376,22 @@ __divsf3:
         LDI     r1, 1
         LDI     r2, 0
         LDI     r0, 13
-        ST     r0, [r7 - 2]
+        ST     r0, [r7 + 46]
 .Ldivide:
         .rept 2
         DIV_ROUND
         .endr
-        LD     r0, [r7 - 2]
+        LD     r0, [r7 + 46]
         ADDI    r0, -1
-        ST     r0, [r7 - 2]
+        ST     r0, [r7 + 46]
         BNEZ    .Ldivide
 
         OR      r0, r3, r4
         BEQZ    .Lexact
         ORI     r1, 1
 .Lexact:
-        LD     r3, [r7 - 6]
-        LD     r4, [r7 - 4]
-        LD     r6, [r7 - 8]
-        LD     r5, [r7 - 10]
+        LD     r3, [r7 + 42]
+        LD     r4, [r7 + 44]
         TAIL_PACK                      /* tail call */
 #endif
 #ifdef __RISCC_MDU__

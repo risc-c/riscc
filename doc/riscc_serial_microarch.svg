@@ -61,7 +61,7 @@
   <rect class="compute" x="620" y="130" width="184" height="86"/>
   <text class="label" x="678" y="160">PC path</text>
   <text class="text" x="646" y="186">pc_q, pc_carry_q</text>
-  <text class="text" x="646" y="206">pc+1 / branch / link</text>
+  <text class="text" x="646" y="206">pc+2 / branch / link</text>
 
 
   <path class="arrow" d="M145,202 L145,250"/>

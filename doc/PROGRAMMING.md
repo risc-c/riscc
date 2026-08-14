@@ -9,29 +9,37 @@ Hardware implementation, board builds, and FPGA flows are in the
 
 ## 1. Software tools and the ISS
 
-Production builds use LLVM MC for compiler-generated objects and assembly
-sources. The in-tree Python assembler is a compact reference encoder for ISA
-work and small standalone assembly programs:
+Production builds use LLVM MC, LLD, and LLVM objcopy for both compiler output
+and handwritten assembly. The RTL self-checks, benchmarks, and assembly demo
+images use that same path. Assemble an object with the selected profile, link
+it with the platform linker script, then extract its flat image:
 
 ```sh
-python3 tools/riscc_asm.py --profile full program.asm -o program.bin
-python3 tools/riscc_asm.py --profile nano program.asm -o program.bin
+build/llvm-riscc/bin/llvm-mc -triple=riscc-none-elf -mcpu=full \
+  -filetype=obj program.asm -o program.o
+build/llvm-riscc/bin/ld.lld -T firmware/unified.ld -o program.elf program.o
+build/llvm-riscc/bin/llvm-objcopy -O binary program.elf program.bin
 ```
 
-It accepts `.ifdef NAME`, `.ifndef NAME`, `.else`, and `.endif`; pass
-`-D NAME` to define a symbol. Selecting `--profile min`, `sys`, `full`, or
-`nano` also defines the corresponding profile symbol. `make
-check-llvm-mc-encodings` cross-checks LLVM MC encodings against
-`riscc_asm.py`.
+LLVM MC accepts standard ELF sections and conditional assembly; use
+`--defsym=NAME=1` for source-level profile selection. The in-tree Python
+encoder remains only as the independent oracle for `make
+check-llvm-mc-encodings` and instruction fuzzing; normal image builds do not
+depend on it.
 
-`LI rd, imm16` and `LDI16 rd, imm16` are assembler pseudos for
-`LUI rd, hi8(imm16)` followed by `ORI rd, lo8(imm16)`.
+The assembler, linker, ISS, and firmware use the unified byte-addressed
+representation.
 
-Compact byte-memory operations are direct: `LDB rd, [ra]`, `LDBS rd, [ra]`,
-and `STB rs, [ra]` use only the bracketed register. `LDPH rd, [ra]` loads one
-16-bit halfword from the halfword-addressed program space and zero-extends it;
-`LDP` is its native-width alias in RC16. `LDPH`/`LDP` is available in all
-mainline profiles and is omitted by Nano.
+RC16 unified-address code retains `LUI`, so its `LI rd, imm16` and `LDI16 rd, imm16`
+pseudos remain `LUI rd, hi8(imm16)` followed by `ORI rd, lo8(imm16)`. RC32
+loads a full native-width constant with `LDPC` from a compiler-generated
+literal pool.
+
+Compact typed memory operations are direct: `LDB rd, [ra]`, `LDBS rd, [ra]`,
+and `STB rs, [ra]` use only the bracketed byte-address register; RC32 also has
+`LDH`, `LDHS`, and `STH`. Code and data use the same address representation,
+so no `LDP*` instruction exists. In RC32, `LDPC rd, rel8` directly loads one
+aligned native-width literal relative to `pc_next`.
 
 The normal interactive ISS is `tools/riscc_sim.cpp`, built as
 `build/tools/riscc_sim`. It executes the architectural ISA and provides the
@@ -47,12 +55,15 @@ build/tools/riscc_sim program.bin             # sys profile, /16 cycle model
 build/tools/riscc_sim program.bin --min
 build/tools/riscc_sim program.bin --full --width 4
 build/tools/riscc_sim program.bin --nano
+build/tools/riscc_sim rc32-program.bin --rc32
 build/tools/riscc_sim program.bin --faster
 ```
 
 `--min` and `--full` are mutually exclusive; no profile option selects `sys`.
 `--nano` is separate and cannot be combined with either mainline option.
-`--width 1|2|4|8|16` selects the Tiny instruction-cycle model, not a different
+`--rc32` selects the RC32 Min architectural model; it is incompatible with
+Nano, Full, MDU, Fast, and Faster timing modes.
+`--width 1|2|4|8|16` selects the RC16 instruction-cycle model, not a different
 ISA. It reproduces the common benchmark schedules but is not a cycle-accurate
 pipeline/state-machine simulator for every profile-specific sequence. For an
 approximate Fast timing model use `--fast` or `--fast-dsp`; `--faster` selects
@@ -86,7 +97,7 @@ The demo SoCs reserve their high MMIO aperture, but do not implement these
 testbench functions. Board firmware must not use `0xfffa..0xfffe` as RAM or
 expect test-result/IRQ behavior there.
 
-The current demo boards also share a tiny source-level interrupt controller:
+The current demo boards also share a compact source-level interrupt controller:
 `0xfff6` reads pending UART (bit 0) and timer (bit 1), and writes the same
 two-bit enable mask (reset to zero). `0xfff4` is a 16-bit one-shot
 1 kHz timer ticks: a non-zero write to `0xfff4` loads and arms it, terminal
@@ -132,12 +143,12 @@ make -C firmware/hello
 build/tools/riscc_sim build/hello/hello.bin --full --uart
 ```
 
-Run the resulting image on the Tiny16 Full RTL implementation with the
+Run the resulting image on the RC16 Full RTL implementation with the
 Verilator memory/UART harness:
 
 ```sh
-make -j16 build/tb/tiny16-full/tb
-build/tb/tiny16-full/tb build/hello/hello.bin --max-cycles 1000000 \
+make -j16 build/tb/rc16-16-full/tb
+build/tb/rc16-16-full/tb build/hello/hello.bin --max-cycles 1000000 \
   --uart-expect-line 'Hello, RISC-C!'
 ```
 
@@ -207,12 +218,20 @@ The C target is freestanding `riscc-none-elf`; `-mcpu=full` is the default.
 exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, `__RISCC_MIN__`, or
 `__RISCC_NANO__`. The backend replaces unavailable multiplication with
 `__mulhi3`, expands shifts to instructions legal for the selected profile, and
-uses register-target calls and jumps where a profile lacks `JAL16`. Nano has
-no S-register bank or TLS and receives a call link in allocatable `r6`; see the
-[C and object ABI](RISC-C-ABI.md#nano-register-variant).
+uses register-target calls and jumps where a profile lacks `JALL`. Nano has
+no S-register bank or TLS, receives a call link in allocatable `r6`, and uses
+the common `r1..r3` argument/result slots with `r4` and `r5`
+callee-saved; see the [C and object ABI](RISC-C-ABI.md#nano-register-variant).
 On the mainline profiles, one-bit LLVM funnel shifts and the corresponding
 limb patterns in 32-bit shifts select `FSL1`/`FSR1`; Nano expands the same
 operations using its base instruction set.
+
+`-mrc32` selects the RC32 C data model for the `min`, `sys`, and `full`
+profiles. It changes `int`, pointers, native stack slots, and the generated
+ELF configuration to 32 bits; Clang also defines `__RISCC_RC32__`. The current
+compiler and linker support RC32 objects, while the synthesizable RTL and C++
+ISS currently implement RC32 Min only. `-mrc32x` is deliberately rejected
+until the RC32X extension is implemented end to end.
 
 Optional ISA features do not create more CPU names. The multiply-divide
 extension is enabled for the Full preset with `-mmdu` (and disabled with
@@ -233,7 +252,7 @@ backed by `DIVU` and paired products; without `-mmdu`, it retains the compact
 The compiler supports C at `-O0`, `-O2`, and `-Os`, ordinary global and TLS
 objects, stack frames, aggregate calls and returns, function pointers,
 16-/32-/64-bit integer operations, and software `float`, `double`, and
-`long double`. It has no hosted environment; the supplied tiny libc provides
+`long double`. It has no hosted environment; the supplied compact libc provides
 standard type/utility headers, C90 narrow strings, ASCII/C-locale `<ctype.h>`,
 `<errno.h>`, integer `<stdlib.h>`, and the small stdio surface described
 below. Variadic functions keep named arguments on the ordinary ABI convention
@@ -394,7 +413,7 @@ hosted-C compatibility.
 
 | Header | Implemented surface |
 |---|---|
-| [`<stddef.h>`](../firmware/include/stddef.h), [`<stdint.h>`](../firmware/include/stdint.h), [`<stdbool.h>`](../firmware/include/stdbool.h), [`<limits.h>`](../firmware/include/limits.h), [`<stdarg.h>`](../firmware/include/stdarg.h) | Target types, limits, constants, `offsetof`, and the RISC-C variadic ABI |
+| [`<stddef.h>`](../firmware/include/stddef.h), [`<stdint.h>`](../firmware/include/stdint.h), [`<stdbool.h>`](../firmware/include/stdbool.h), [`<limits.h>`](../firmware/include/limits.h), `<stdarg.h>` (provided by Clang) | Target types, limits, constants, `offsetof`, and the RISC-C variadic ABI |
 | [`<assert.h>`](../firmware/include/assert.h) | `assert`; `NDEBUG` removes the check, failure calls `abort` |
 | [`<errno.h>`](../firmware/include/errno.h) | Global `errno`; `ENOMEM`, `EINVAL`, and `ERANGE` |
 | [`<string.h>`](../firmware/include/string.h) | Complete C90 narrow memory/string set, including `memcpy`, `memmove`, `strtok`, `strerror`, and the C-locale `strcoll`/`strxfrm` behavior |
@@ -448,7 +467,7 @@ immediately after the image and `__heap_end` at the RAM ceiling. The private
 `r7` stack pointer, so allocation may use all memory below the current stack
 frame. That check is only a point-in-time limit: a later deeper stack frame can
 still collide with and corrupt heap memory, exactly like any unchecked stack
-overflow. This is intentional for the tiny single-stack runtime. A future
+overflow. This is intentional for the compact single-stack runtime. A future
 scheduler can replace the private heap-limit provider with the lowest active
 stack bound and add allocator locking without changing the public allocation
 API.
@@ -517,7 +536,7 @@ program which does not use a peripheral from linking or enabling it.
 
 The service has one interrupt per nominal second and re-arms the one-shot from
 the handler, so handler latency introduces a small accumulating delay. It is a
-tiny uptime clock, not a precision timebase. A scheduler or precision-timer BSP
+compact uptime clock, not a precision timebase. A scheduler or precision-timer BSP
 can replace it without changing generic libc.
 
 `time()` owns `libirq`'s single global C handler and acknowledges the timer by
@@ -547,10 +566,12 @@ clears the zero-initialized range, calls `main`, then executes the `HALT`
 the initial `S2` TLS anchor from `__tls_start`.
 
 [`firmware/unified.ld`](../firmware/unified.ld) places vectors, code, constants,
-initialized data, TLS, and ordinary data in one 32 KiB RAM address space.
-[`firmware/split.ld`](../firmware/split.ld) keeps code and data logically
-separate: executable VMAs begin at zero and data VMAs use the ELF-only
-`0x10000` tag. That tag never reaches a RISC-C data pointer.
+initialized data, TLS, and ordinary data in one 32 KiB address space.
+[`firmware/split.ld`](../firmware/split.ld) uses separate code and data memory
+regions while giving both the same unified byte VMAs; code and data images may
+therefore overlap in the ELF address map without changing pointer values. Link
+it with lld's `--no-check-sections` option; the project make target supplies
+that option automatically.
 
 In both layouts, `.tdata` follows ordinary initialized data and supplies the
 initial TLS template; `.tbss` is followed by `.bss` in the range cleared by
@@ -558,7 +579,8 @@ startup. The linker exports `__tls_start`, `__tdata_end`, `__tbss_start`,
 `__tls_end`, `__bss_start`, `__bss_end`, `__zero_start`, `__zero_end`,
 `__heap_start`, `__heap_end`, and `__stack_top` for startup or platform code.
 
-For a split image, extract executable and initialized data sections separately:
+For physically split memories with unified VMAs, a platform may extract
+executable and initialized sections into separate images:
 
 ```sh
 llvm-objcopy -O binary --only-section=.vectors --only-section='.text*' app.elf app.code.bin
@@ -566,12 +588,12 @@ llvm-objcopy -O binary --only-section='.rodata*' --only-section='.data*' \
   --only-section='.tdata*' app.elf app.data.bin
 ```
 
-`.bss` and `.tbss` are absent from images. A split-memory platform must preload
-the data image or provide an equivalent data-initialization transport; the
-generic startup never reads instruction memory as data. Platform-specific
-code may use `LDPH` to read constants from program space, but automatic
-compiler constant-pool placement is not yet defined. Current board targets use
-the unified layout.
+`.bss` and `.tbss` are absent from images. A physically split platform must
+preload each image or provide an equivalent initialization transport while
+preserving the linked byte addresses. RC32 literal pools are ordinary readable
+memory and are loaded with `LDPC`; RC16 can address constants with the normal
+load instructions after materializing their byte address. Current board
+targets use the unified layout.
 
 ### 3.7 TLS runtime use
 
@@ -585,8 +607,10 @@ offsets are runtime-private; their layout is not a C ABI interface.
 RISC-C currently has no memory protection or privilege model. The register
 convention is therefore a cooperation contract among mutually trusted
 software. Interrupt and context-switch code preserves the TLS anchor in `S2`
-and any live compiler-managed state in `S3..S7`; a context switch
-saves/restores those registers with the other thread state.
+and all live compiler-managed state in `S3..S7`; a context switch
+saves/restores those registers with the other thread state. `S3..S4` are
+caller-saved and `S5..S6` are callee-saved for C calls, but an asynchronous
+context switch must preserve both groups.
 
 Nano has no S-register bank or TLS. Its startup therefore omits the `S2`
 initialization described above.
@@ -629,12 +653,14 @@ normal C handler before enabling interrupts; it must acknowledge each
 level-sensitive source it services.
 
 The supplied wrapper is non-nesting. Hardware arrives with `S0` containing
-EPC and interrupts masked; the wrapper returns with `RETI S0`. It saves only
-the interrupted caller-volatile GPRs (`r0..r4` and `r7`) and all
-compiler-managed `S3..S7`, not a full task context. It never assumes the
+EPC and interrupts masked; the wrapper returns with `RETI S0`. It saves the
+interrupted call-clobbered GPRs (`r0..r3` and `r7`) and all compiler-managed
+`S3..S7`, not a full task context. It conservatively saves `r4` as well even
+though it is C callee-saved. It never assumes the
 interrupted `r7` is a stack pointer: it saves that state in a 22-byte prefix
 immediately below `S2`, then runs the C handler on one 64-byte global
-downward-growing IRQ stack. `r5` and `r6` are ordinary callee-saved registers.
+downward-growing IRQ stack. `r4`, `r5`, and `r6` are ordinary callee-saved
+registers.
 Consequently, the hand-written runtime's leaf routines can use fixed negative
 offsets from their incoming `r7` for short-lived scratch without moving the
 stack pointer. Known internal caller/callee pairs reserve non-overlapping
@@ -652,7 +678,7 @@ each thread; custom vectors need not use the prefix or global stack.
 
 `make -j16 test-compiler` rebuilds the current firmware dependencies,
 exhaustively checks Full-profile LLVM MC encoding against the in-tree
-assembler, and runs the multi-file C smoke suite in the ISS, Tiny16/full RTL,
+assembler, and runs the multi-file C smoke suite in the ISS, RC16/full RTL,
 Fast RTL, Icepi Zero UART simulation, and Atum UART simulation. Nano-specific
 MC encodings and profile restrictions have focused LLVM `lit` coverage but are
 not yet part of that exhaustive oracle. `make compiler-smoke` uses the Icepi
@@ -693,7 +719,7 @@ LU, Cholesky, and QR decompositions, and linked-list, tree, and graph
 algorithms. These are intended for before/after code-size and cycle
 comparisons; the focused suites above remain the correctness baseline.
 
-`compiler-libc-iss` separately links each tiny-runtime probe through the
+`compiler-libc-iss` separately links each compact-runtime probe through the
 runtime archives at the same three optimization levels. It covers string and
 ctype boundaries,
 integer conversion and search utilities, UART stream and every formatter entry

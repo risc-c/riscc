@@ -30,7 +30,7 @@ set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_timer_
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_irq_ctrl.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_fb_hdmi.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_tfp410_init.v
-set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_faster.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc16_faster.v
 set_global_assignment -name SDC_FILE ../../../boards/atum_a3_nano/atum_a3_nano.sdc
 
 # CLOCK0_50 drives the Terasic HDMI PLL; CLOCK1_50 feeds the RISC-C system

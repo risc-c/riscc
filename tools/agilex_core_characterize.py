@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Characterize Tiny and Nano core-only Agilex 3 implementations.
+"""Characterize RC16 and Nano core-only Agilex 3 implementations.
 
 Every project uses the same registered timing harness and explicitly selects
 the shared MLAB register-file implementation.  Results are generated under
@@ -35,26 +35,26 @@ def project_specs(root: Path):
     top = root / "rtl/test/riscc_fmax_top.v"
     specs = []
     for profile, rtl, profile_macro in (
-        ("min", root / "rtl/riscc_tiny_min.v", "RISCC_FMAX_MIN"),
-        ("sys", root / "rtl/riscc_tiny_sys.v", None),
-        ("full", root / "rtl/riscc_tiny_full.v", None),
+        ("min", root / "rtl/riscc_min.v", "RISCC_FMAX_MIN"),
+        ("sys", root / "rtl/riscc_sys.v", None),
+        ("full", root / "rtl/riscc_full.v", None),
     ):
         for width in (1, 2, 4, 8):
-            macros = ["RISCC_FMAX_TINY", f"RISCC_FMAX_WIDTH={width}"]
+            macros = ["RISCC_FMAX_RC16", f"RISCC_FMAX_WIDTH={width}"]
             if profile == "full" and width == 4:
-                macros.append("RISCC_TINY_CONTROL_NORMALIZE")
+                macros.append("RISCC_RC16_CONTROL_NORMALIZE")
             if profile_macro:
                 macros.append(profile_macro)
             specs.append((f"{profile}{width}", profile, width, rtl, macros, top))
     specs.extend(
         (
-            ("min16", "min", 16, root / "rtl/riscc_tiny16_min.v",
-             ["RISCC_FMAX_TINY16_MIN"], top),
-            ("sys16", "sys", 16, root / "rtl/riscc_tiny16_sys.v",
-             ["RISCC_TINY16_CONTROL_BBB_NORMALIZE"], top),
-            ("full16", "full", 16, root / "rtl/riscc_tiny16_full.v",
-             ["RISCC_TINY16_CONTROL_BBB_NORMALIZE"], top),
-            ("nano", "nano", 1, root / "rtl/riscc_nano1.v",
+            ("min16", "min", 16, root / "rtl/riscc16_min.v",
+             ["RISCC_FMAX_RC16_MIN"], top),
+            ("sys16", "sys", 16, root / "rtl/riscc16_sys.v",
+             ["RISCC_RC16_CONTROL_BBB_NORMALIZE"], top),
+            ("full16", "full", 16, root / "rtl/riscc16_full.v",
+             ["RISCC_RC16_CONTROL_BBB_NORMALIZE"], top),
+            ("nano", "nano", 1, root / "rtl/riscc_nano.v",
              ["RISCC_FMAX_NANO"], top),
         )
     )

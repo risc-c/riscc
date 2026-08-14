@@ -3,15 +3,14 @@
 ;   --profile min    : min profile, replacing sys-only sections
 ;   --profile full   : full-profile MUL coverage
 ;   --profile nano   : Nano-compatible branch
-; LDPH and LDBS coverage is excluded from the Nano-compatible branch.
+; LDBS coverage is excluded from the Nano-compatible branch.
 ; Failure writes 0x0BAD to the result register (I/O page, byte 0xFFFE)
 ; and parks.  Success writes 0x600D there and parks.
 
 .ifdef RISCC_NANO
 ; Nano uses the same test source with its profile-specific instruction set.
-.vectors
-
 .text
+.globl start
 start:
     ; immediates and boolean ops
     LDI   r7, 0
@@ -140,16 +139,16 @@ br_nz_ok:
     LDI16 r4, 0xC000
     SUB   r0, r3, r4
     BNEZ  fail
-    SHL1  r5, r2
+    ADD   r5, r2, r2
     LDI16 r4, 0x8000
     SUB   r0, r5, r4
     BNEZ  fail
 
-    ; nano register call: CALL rd, ra links into rd; return with JMP rd
-    LDI16 r1, subr >> 1
-    CALL  r7, r1
+    ; Nano register call: JALR rd, ra links into rd.
+    LDI16 r1, subr
+    JALR  r7, r1
 after_call:
-    LDI16 r4, after_call >> 1
+    LDI16 r4, after_call
     SUB   r0, r7, r4
     BNEZ  fail
     LDI   r4, 0x42
@@ -174,15 +173,16 @@ done:
 
 subr:
     LDI   r3, 0x42
-    JMP   r7
+    JALR  r0, r7
 .else
-.vectors
 .ifdef RISCC_SYS
-    JMP16 start             ; words 0..1: reset vector slot
-    JMP16 isr_irq           ; words 2..3: IRQ vector slot
+.section .vectors, "ax", @progbits
+    JMPL  start             ; words 0..1: reset vector slot
+    JMPL  isr_irq           ; words 2..3: IRQ vector slot
 .endif
 
 .text
+.globl start
 .ifdef RISCC_SYS
 fail:
     LDI16 r7, 0x0BAD
@@ -210,7 +210,7 @@ isr_irq:
     MFS   r2, S3
     MFS   r1, S2
     MFS   r0, S1
-    ERET
+    RETI  S0
 .endif
 .ifndef RISCC_SYS
     JMP8  start
@@ -395,16 +395,14 @@ fail_late:
     HALT
 shifts_start:
 
-    ; LDPH uses the halfword-addressed program pointer in aaa and leaves pc
-    ; alone. Canonical bbb=011 is a fixed selector, not an r3 operand.
-    LDI16 r3, ldph_bbb_poison >> 1
-    LDI16 r4, ldph_even_probe >> 1
-    LDPH  r2, [r4]
+    LDI16 r3, data_guard
+    LDI16 r4, data_probe
+    LD    r2, [r4+0]
     LDI16 r5, 0x4C44
     SUB   r0, r2, r5
     BNEZ  fail_late
-    ADDI  r4, 1               ; adjacent odd program pointer
-    LDP   r2, [r4]            ; RC16 native-width alias of LDPH
+    ADDI  r4, 2               ; adjacent instruction halfword in byte space
+    LD    r2, [r4+0]
     LDI16 r5, 0x5048
     SUB   r0, r2, r5
     BNEZ  fail_late
@@ -419,13 +417,17 @@ shifts_start:
     LDI16 r4, 0xC000
     SUB   r0, r3, r4
     BNEZ  fail_late
-    SHL1  r5, r2            ; pseudo: ADD r5, r2, r2
+    ADD   r5, r2, r2
     LDI16 r4, 0x8000
     SUB   r0, r5, r4
     BNEZ  fail_late
 
     ; --- register call: link in S7, return via RETS ---
-    LDI16 r1, subr >> 1
+.ifdef RISCC_MIN
+    LDI16 r1, subr
+.else
+    LDI16 r1, subr
+.endif
     CALL  r1
 after_call:
     LDI   r4, 0x42
@@ -433,14 +435,14 @@ after_call:
     BNEZ  fail_late
 
 .ifndef RISCC_SYS
-    ; --- far call / jump fallback (mandatory core has no CALL16/JMP16) ---
+    ; --- far call / jump fallback (mandatory core has no JALL/JMPL) ---
     LDI   r3, 0
-    LDI16 r1, subr16 >> 1
+    LDI16 r1, subr16
     CALL  r1                ; far call = LDI16 + CALL ra; returns via RETS
     SUB   r0, r3, r4
     BNEZ  fail_late
-    LDI16 r1, far_ok >> 1
-    JMP   r1                ; far jump = LDI16 + JMP ra; S7 keeps the link
+    LDI16 r1, far_ok
+    JALR  S0, r1            ; far jump; S7 keeps the link
     JMP8  fail_late
 subr16:
     LDI   r3, 0x42
@@ -456,18 +458,18 @@ far_ok:
     BNEZ  fail_late
     JMP8  feature_tests
 .else
-    ; --- two-word direct call / jump (CALL16 / JMP16 / RETS) ---
+    ; --- two-word direct call / jump (CALL16 / JMPL / RETS) ---
     LDI   r3, 0
     CALL16 subr16           ; link {IE, pc+2} -> S7; subr16 returns via RETS
     SUB   r0, r3, r4
     BNEZ  fail_late
-    JMP16 c16_ok            ; no link: S7 keeps the last call's link
+    JMPL  c16_ok            ; no link: S7 keeps the last call's link
     JMP8  fail_late
 subr16:
     LDI   r3, 0x42
     RETS
 c16_ok:
-    ; --- system profile: S registers, IRQ, ERET ---
+    ; --- system profile: S registers, IRQ, RETI ---
     LDI16 r1, 0xBEEF
     MTS   S5, r1
     LDI   r1, 0
@@ -483,10 +485,10 @@ c16_ok:
 
     ; Direct IE controls must not use S0 as a return target. RET S0, unlike
     ; RETI S0, must preserve the cleared IE state.
-    LDI16 r1, fail_late >> 1
+    LDI16 r1, fail_late
     MTS   S0, r1
     CLI
-    LDI16 r1, ret_s0_masked >> 1
+    LDI16 r1, ret_s0_masked
     MTS   S0, r1
     RET   S0
     JMP8  fail_late
@@ -506,7 +508,7 @@ ret_s0_masked:
 
     ; RETI S0 takes the same S0 target but sets IE. The next raised IRQ must
     ; therefore enter the handler without an intervening STI.
-    LDI16 r1, reti_s0_enabled >> 1
+    LDI16 r1, reti_s0_enabled
     MTS   S0, r1
     RETI  S0
     JMP8  fail_late
@@ -524,7 +526,7 @@ wait_reti_irq:
     ; CLI must mask a newly pending IRQ; STI must then admit that same IRQ.
     ; S0 remains poisoned until IRQ entry, proving neither direct control
     ; accidentally redirects through it.
-    LDI16 r1, fail_late >> 1
+    LDI16 r1, fail_late
     MTS   S0, r1
     CLI
     LDI16 r5, 0xFFFA
@@ -547,7 +549,7 @@ wait_sti_irq:
     ADDI  r1, -1
     MOV   r0, r1
     BEQZ  control_irq_log_ok
-    JMP16 fail_late
+    JMPL  fail_late
 control_irq_log_ok:
     LD   r1, [r5+2]        ; r1 = 2 entries
     MFS   r2, S5            ; r2 = 0xBEEF (round trip survived the ISR)
@@ -633,21 +635,34 @@ feature_tests:
 .endif
 
     ; ---- JALR/RET generality (all profiles) ----
-    LDI16 r1, gen_sub >> 1  ; JALR S3: link lands in S3, callee RETs via S3
+.ifdef RISCC_MIN
+    LDI16 r1, gen_sub
+.else
+    LDI16 r1, gen_sub       ; JALR S3: link lands in S3, callee RETs via S3
+.endif
     LDI   r3, 0
     JALR  S3, r1
     CMPI  r3, 0x21          ; callee side effect proves the round trip
     BNEZ  feature_fail
     LDI16 r2, 0x1234        ; JALR S0 is a plain jump: S0 must be untouched
     MTS   S0, r2
-    LDI16 r1, gen_jmp >> 1
+.ifdef RISCC_MIN
+    LDI16 r1, gen_jmp
+.else
+    LDI16 r1, gen_jmp
+.endif
     JALR  S0, r1
 gen_back:
     MFS   r2, S0
     LDI16 r4, 0x1234
     SUB   r0, r2, r4
     BNEZ  feature_fail
-    LDI16 r2, gen_done >> 1 ; RET Sa: return through a manufactured address
+.ifdef RISCC_MIN
+    LDI16 r2, gen_done
+.else
+    LDI16 r2, gen_done
+.endif
+                              ; RET Sa: return through a manufactured address
     MTS   S4, r2
     RET   S4
     JMP8  feature_fail      ; must not fall through
@@ -658,12 +673,12 @@ gen_jmp:
     JMP8  gen_back
 gen_done:
 .ifdef RISCC_SYS
-    JAL16 S5, gen16         ; two-word form with a non-default link
+    JALL  S5, gen16         ; two-word form with a non-default link
 g16r:
     JMP8  g16ok             ; reached again via RET S5
 gen16:
-    MFS   r2, S5            ; link must be the word after the two-word JAL16
-    LDI16 r4, g16r >> 1
+    MFS   r2, S5            ; link is the byte address after the two-word JALL
+    LDI16 r4, g16r
     SUB   r0, r2, r4
     BNEZ  feature_fail
     RET   S5
@@ -702,9 +717,9 @@ success:
     HALT
 .endif
 
-.align 4
+.balign 4, 0
 .rodata
-ldph_even_probe:
-    .word 0x4C44, 0x5048
-ldph_bbb_poison:
-    .word 0xBAD3
+data_probe:
+    .short 0x4C44, 0x5048
+data_guard:
+    .short 0xBAD3

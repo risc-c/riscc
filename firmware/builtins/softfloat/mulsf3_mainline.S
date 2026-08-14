@@ -18,11 +18,23 @@
 
         .macro TAIL_PACK
 #ifdef __RISCC_MIN__
-        LI      r0, code(__riscc_pack_sf)
+        LI      r0, __riscc_pack_sf
         JALR    s0, r0
 #else
-        JAL16   s0, __riscc_pack_sf
+        JMPL    __riscc_pack_sf
 #endif
+        .endm
+
+        .macro ABI_RETURN
+        LD      r0, [r7 + 8]
+        MTS     s6, r0
+        LD      r0, [r7 + 6]
+        MTS     s5, r0
+        LD      r6, [r7 + 4]
+        LD      r5, [r7 + 2]
+        LD      r4, [r7 + 0]
+        ADDI    r7, 48
+        RETS
         .endm
 
         .macro MUL_ROUND
@@ -54,16 +66,27 @@
         .type __mulsf3,@function
 __mulsf3:
         /*
-         * Leave -4..-2 free for __riscc_umul24x24.  The Full profile calls
-         * that leaf without moving r7, so its private scratch must not
-         * overlap this routine's live words.
+         * Reserve this frame's low words for __riscc_umul24x24.  The Full
+         * profile calls that leaf without moving r7, so its private scratch
+         * must not overlap this routine's live words.
          */
-        ST     r5, [r7 - 14]
-        ST     r6, [r7 - 12]
+        ADDI    r7, -48
+        ST      r4, [r7 + 0]
+        LD      r3, [r7 + 48]           /* second operand */
+        LD      r4, [r7 + 50]
+        ST      r5, [r7 + 2]
+        ST      r6, [r7 + 4]
+        MFS     r0, s5
+        ST      r0, [r7 + 6]
+        MFS     r0, s6
+        ST      r0, [r7 + 8]
+
+        ST     r5, [r7 + 34]
+        ST     r6, [r7 + 36]
         XOR     r0, r2, r4
         LUI     r5, 0x80
         AND     r0, r0, r5
-        ST     r0, [r7 - 10]          /* result sign */
+        ST     r0, [r7 + 38]          /* result sign */
 
         /* Extract both exponent fields. */
         MOV     r5, r2
@@ -126,13 +149,11 @@ __mulsf3:
 .Linfinity:
         LDI     r1, 0
         LI      r2, 0x7f80
-        LD     r0, [r7 - 10]
+        LD     r0, [r7 + 38]
         OR      r2, r2, r0
 
 .Lspecial_return:
-        LD     r6, [r7 - 12]
-        LD     r5, [r7 - 14]
-        RETS
+        ABI_RETURN
 
 .Lfinite:
         /* Restore significands, including implicit bits for normals. */
@@ -182,16 +203,16 @@ __mulsf3:
         JMP8    .Lnormalize_right
 
 .Lnormalized:
-        ST     r5, [r7 - 8]           /* signed biased result exponent */
+        ST     r5, [r7 + 40]          /* signed biased result exponent */
 #ifdef __RISCC_FULL__
         /*
          * The helper returns the exact 48-bit product in r3:r2:r1. Preserve
          * the public link because this is the only non-tail call.
          */
         MFS     r0, s7
-        ST     r0, [r7 - 6]
-        JAL16   s7, __riscc_umul24x24
-        LD     r0, [r7 - 6]
+        ST     r0, [r7 + 42]
+        JALL    s7, __riscc_umul24x24
+        LD     r0, [r7 + 42]
         MTS     s7, r0
 #else
         MOV     r6, r4                 /* preserve multiplier high */
@@ -217,14 +238,14 @@ __mulsf3:
         LDI     r3, 0
         LUI     r6, 0x80
         LDI     r0, 12
-        ST     r0, [r7 - 6]
+        ST     r0, [r7 + 42]
 .Lmultiply:
         .rept 2
         MUL_ROUND
         .endr
-        LD     r0, [r7 - 6]
+        LD     r0, [r7 + 42]
         ADDI    r0, -1
-        ST     r0, [r7 - 6]
+        ST     r0, [r7 + 42]
         BNEZ    .Lmultiply
 #endif
 
@@ -242,9 +263,9 @@ __mulsf3:
 .Lproduct_bit47:
         ANDI    r4, 0x1f
         LDI     r6, 5
-        LD     r0, [r7 - 8]
+        LD     r0, [r7 + 40]
         ADDI    r0, 1
-        ST     r0, [r7 - 8]
+        ST     r0, [r7 + 40]
 .Lproduct_shift:
         OR      r4, r4, r5
 .Lproduct_shift_loop:
@@ -259,17 +280,13 @@ __mulsf3:
 .Lproduct_exact:
         MOV     r1, r2
         MOV     r2, r3
-        LD     r3, [r7 - 10]
-        LD     r4, [r7 - 8]
-        LD     r6, [r7 - 12]
-        LD     r5, [r7 - 14]
+        LD     r3, [r7 + 38]
+        LD     r4, [r7 + 40]
         TAIL_PACK                      /* tail call */
 
 .Lzero:
         LDI     r1, 0
-        LD     r2, [r7 - 10]
+        LD     r2, [r7 + 38]
 .Lreturn:
-        LD     r6, [r7 - 12]
-        LD     r5, [r7 - 14]
-        RETS
+        ABI_RETURN
         .size __mulsf3, . - __mulsf3

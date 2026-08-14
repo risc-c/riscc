@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Assembler for RISC-C (see doc/RISC-C-ISA.md).
+"""Reference encoder for RISC-C (see doc/RISC-C-ISA.md).
 
-Flat two-pass assembler.  Labels evaluate to byte addresses.  Branch
-displacements are word-relative from PC+1; register jump/call targets are word
-addresses, so use expressions such as ``target >> 1`` when materializing them.
+This flat two-pass encoder supplies the independent oracle for LLVM MC
+encoding checks and instruction fuzzing. Production images use LLVM MC, LLD,
+and llvm-objcopy. Labels evaluate to byte addresses. Branch displacements
+count halfwords from the following instruction; register jump/call targets use
+the address representation selected by the ISA profile.
 
 The source preprocessor supports simple conditional assembly:
 ``.ifdef NAME``, ``.ifndef NAME``, ``.else``, and ``.endif``.  Define symbols
@@ -60,7 +62,6 @@ R_FUNC = {
     "DIVU": 0x10,
     "MULHU": 0x14,
     "LDX": 0x08,
-    "LDPH": 0x0A,
     "LDB": 0x0A,
     "STB": 0x0B,
     "SRLI": 0x0C,
@@ -84,6 +85,8 @@ SREGS = {f"S{i}": i for i in range(8)}
 MNEMONIC_ALIASES = {
     "MOV": "OR",
     "SHL1": "ADD",
+    "JALL": "JAL16",
+    "JMPL": "JMP16",
     }
 
 
@@ -262,15 +265,17 @@ def parse_section_name(text: str) -> str:
     return name
 
 
-def to_instruction_addr(value: int, what: str) -> int:
+def code_addr(value: int, what: str) -> int:
     if value & 1:
         raise AsmError(f"{what} must be 2-byte-aligned: {value:#x}")
-    return (value >> 1) & 0xFFFF
+    if not 0 <= value <= 0xFFFF:
+        raise AsmError(f"{what} exceeds the 16-bit byte address range: {value:#x}")
+    return value
 
 
 def insn_size(op: str, operands: List[str]) -> int:
     op = op.upper()
-    if op in ("LDI16", "LI", "CALL16", "JMP16", "JAL16"):
+    if op in ("LDI16", "LI", "CALL16", "JMP16", "JAL16", "JALL", "JMPL"):
         return 4
     if MNEMONIC_ALIASES.get(op, op) == "OR" and op == "MOV":
         return 2
@@ -441,16 +446,23 @@ def enc_r(rd: int, ra: int, func: int, rb: int) -> int:
 
 
 def enc_branch(cc: int, rel8: int) -> int:
-    return enc_i(cc, 7, rel8)
+    # Branch fields are rotated so the hardware can append the implicit
+    # low zero directly: encoded[0] is the sign bit and encoded[7:1] are
+    # displacement bits 6:0.  This preserves the full signed rel8 range.
+    rel8 &= 0xFF
+    encoded = ((rel8 << 1) & 0xFE) | (rel8 >> 7)
+    return enc_i(cc, 7, encoded)
 
 
-def enc_long(rd: int, op: int, imm16: int) -> bytes:
-    head = (rd << 11) | (op << 8)
+def enc_long(rd: int, imm16: int) -> bytes:
+    head = (rd << 11) | 0x0034
     return encode_word(head) + encode_word(imm16)
 
 
 def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -> bytes:
     op = op.upper()
+    if op in ("JALL", "JMPL"):
+        op = MNEMONIC_ALIASES[op]
 
     def n_ops(count: int, usage: str) -> None:
         if len(operands) != count:
@@ -458,18 +470,17 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
 
     if op in ("JAL16", "CALL16", "JMP16"):
         # Two-halfword direct jump-and-link: the second halfword is the target
-        # instruction address.
-        # Sd == S0 writes no link; CALL16 = JAL16 S7, JMP16 = JAL16 S0.
+        # byte address.
+        # Sd == S0 writes no link; CALL16 = JALL S7, JMPL = JALL S0.
         if op == "JAL16":
-            n_ops(2, "JAL16 Sd, target")
+            n_ops(2, "JALL Sd, target")
             sd = sreg(operands[0])
             target = eval_expr(operands[1], labels)
         else:
             n_ops(1, f"{op} target")
             sd = 7 if op == "CALL16" else 0
             target = eval_expr(operands[0], labels)
-        return enc_long(sd, 7,
-                        to_instruction_addr(target, f"{op} target"))
+        return enc_long(sd, code_addr(target, f"{op} target"))
 
     if op in ("RET", "RETS", "RETI", "ERET"):
         # RET Sa: pc = S[aaa], IE untouched; RETI Sa also sets IE.
@@ -567,14 +578,6 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         if len(mem) != 2:
             raise AsmError("LDX requires [ra+rb]")
         return encode_word(enc_r(rd, reg(mem[0]), R_FUNC[op], reg(mem[1])))
-
-    if op in ("LDPH", "LDP"):
-        n_ops(2, f"{op} rd, [ra]")
-        rd = reg(operands[0])
-        mem = parse_mem(operands[1])
-        if len(mem) != 1:
-            raise AsmError(f"{op} requires [ra]")
-        return encode_word(enc_r(rd, reg(mem[0]), R_FUNC["LDPH"], 0b011))
 
     if op in ("LDB", "LDBS"):
         n_ops(2, f"{op} rd, [ra]")

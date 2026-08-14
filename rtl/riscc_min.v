@@ -1,4 +1,4 @@
-// riscc_tiny_min.v : Min-profile serial RISC-C core (W=1, 2, 4, or 8).
+// riscc_min.v : RC16 Min-profile serial RISC-C core (W=1, 2, 4, or 8).
 //
 // This core deliberately contains only the Min profile.  Keeping Sys/Full
 // scheduling and decode out of this module makes its area-critical control
@@ -6,7 +6,7 @@
 
 `default_nettype none
 
-module riscc_tiny_min #(
+module riscc_min #(
     parameter integer W = 4,
     parameter [15:0] RESET_PC = 16'h0000
 ) (
@@ -69,8 +69,8 @@ module riscc_tiny_min #(
     wire [2:0] bbb = instr_q[2:0];
 
     wire imm_mem_group = ~instr_q[15];
-    wire immediate_group = instr_q[15] & ~register_format_q;
-    wire register_group = instr_q[15] & register_format_q;
+    wire immediate_group = instr_q[15] & ~instr_q[14];
+    wire register_group = instr_q[15] & instr_q[14];
 
     wire branch_group = immediate_group & (aaa == 3'b111);
     wire immediate_alu_op = immediate_group & ~branch_group;
@@ -78,7 +78,6 @@ module riscc_tiny_min #(
     // Branches share aaa[1:0] with CMPI, but never write the ALU result.
     // Let them alias the internal subtract control to keep decode shallow.
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
-    wire jmp8_op = branch_group & ddd[2];
     wire link_dest_nonzero = |ddd;
 
     wire f_group_01 = ~f5[4] & f5[3];
@@ -102,34 +101,26 @@ module riscc_tiny_min #(
 
     wire register_memory_plane = register_group & f_group_01;
     // Native LDX uses 01_000. Direct unsigned loads, stores, and signed loads
-    // use 01_010, 01_011, and 01_110; bbb[0] selects data or program space.
-    // Min may alias unsupported widths within those families.
+    // use 01_010, 01_011, and 01_110. Min may alias reserved width selectors
+    // within those families.
     wire indexed_mem_op =
         register_memory_plane & ~f5[2] & ~f5[1];
     wire direct_load_op =
         register_memory_plane & f5[1] & ~f5[0];
-    wire program_load_op = direct_load_op & bbb[0];
     wire register_store_op =
         register_memory_plane & ~f5[2] & f5[1] & f5[0];
-    // Only direct operations observe the address adder in this plane; the
-    // unsupported 01_111 Min encoding may alias the zero-B control.
-    wire direct_mem_op = register_memory_plane & f5[1];
-
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
     wire link_context = system_op & ~bbb[1] & bbb[0];
     wire register_target_op = system_op & ~bbb[1];
 
-    wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
-    wire load_op = (imm_mem_group & ~instr_q[14]) |
+    wire store_op = (imm_mem_group & instr_q[0]) | register_store_op;
+    wire load_op = (imm_mem_group & ~instr_q[0]) |
                    indexed_mem_op | direct_load_op;
     wire mem_op = store_op | load_op;
     wire sign_extend_byte = f5[2];
     wire needs_rb_pass = register_alu_op | indexed_mem_op;
-    wire needs_operand_pass = needs_rb_pass |
-        (((W == 2) ? direct_load_op : direct_mem_op) & bbb[0]);
+    wire needs_operand_pass = needs_rb_pass;
     // Funnel shifts stage aaa, then stream the old read/write destination ddd.
-    // Program loads stage aaa, then add it to itself to convert the
-    // architectural halfword pointer to a byte address.
     wire needs_init_pass = mem_op | slt_op | funnel_op;
 
     // ------------------------------------------------------------------
@@ -138,19 +129,10 @@ module riscc_tiny_min #(
     wire src_system_bank = system_op & ~bbb[0];
     wire dst_system_bank = system_op & bbb[0];
     // The funnel operand pass selects aaa; fallback is old ddd in INIT/EXECUTE.
-    // Equivalent mux spellings below fit the characterized mappers better.
     wire source_is_rd = instr_q[15] &
         (~register_format_q | (f5[4] & ~f5[3]));
-`ifdef RISCC_ECP5
     wire [3:0] rf_src_reg = {src_system_bank,
-        (W == 1) ?
-        (aaa ^ ({3{source_is_rd}} & (aaa ^ ddd))) :
-        (ddd ^ ({3{~source_is_rd}} & (aaa ^ ddd)))};
-`else
-    wire [3:0] rf_src_reg = {src_system_bank,
-        (W == 8) ? (source_is_rd ? ddd : aaa) :
-        (aaa ^ ({3{source_is_rd}} & (aaa ^ ddd)))};
-`endif
+        source_is_rd ? ddd : aaa};
     wire [3:0] rf_dst_reg = {dst_system_bank, ddd & {3{~cmpi_op}}};
 
     wire rf_read_rb = needs_rb_pass &
@@ -174,16 +156,15 @@ module riscc_tiny_min #(
         byte_lane_offset;
 
     wire writes_rd = immediate_alu_op | register_alu_op | load_op |
-                     any_shift_op | system_move_op |
+                     right_shift_op | system_move_op |
                      (link_dest_nonzero & link_context);
     wire rf_we = in_execute & writes_rd;
 
     wire [W-1:0] rf_rdata;
     wire [W-1:0] rf_wdata;
 
-    wire byte_load = (W == 4) ?
-        (direct_mem_op & ~needs_operand_pass) :
-        (direct_load_op & ~bbb[0]);
+    // RC16 has only direct byte accesses; reserved width selectors may alias.
+    wire byte_load = direct_load_op;
     // All defined non-byte loads are aligned, so only a byte load can reach
     // writeback with an odd address.
     wire load_high_byte = (W != 1) & load_op & memory_lane_q;
@@ -204,6 +185,8 @@ module riscc_tiny_min #(
     // ------------------------------------------------------------------
     // Immediate stream
     // ------------------------------------------------------------------
+    // The branch ALU value is unused; aliasing it onto the signed-immediate
+    // path keeps the shared immediate decode compact.
     wire sign_extend_imm =
         imm_mem_group | add_immediate_op | cmpi_op | branch_group;
     wire lui_op = immediate_group & (aaa == 3'b001);
@@ -235,7 +218,8 @@ module riscc_tiny_min #(
         alu_b_raw ^ {W{alu_subtract & ~slt_execute}};
 
     reg alu_carry_q;
-    reg funnel_bit_q;
+    // Funnel shifts preserve one endpoint bit between serial passes.
+    reg serial_bit_q;
     wire [W:0] alu_sum_ext =
         {1'b0, alu_a} + {1'b0, alu_b} +
         {{W{1'b0}}, alu_carry_q};
@@ -251,14 +235,14 @@ module riscc_tiny_min #(
             (slt_op ? less_than_result : data_stream_q[W-1]) :
             alu_active ? alu_sum_ext[W] : alu_subtract;
 
+    always @(posedge clk)
+        if (in_init & first_slice)
+            serial_bit_q <= data_stream_q[0];
+
     // INIT2 has staged ra in data_stream_q when a funnel INIT begins. Preserve
     // its low bit while INIT streams the old rd; this is the only extra FSR1
     // storage. On INIT's last slice, data_stream_q still exposes ra[15],
     // allowing FSL1 to seed the existing ALU carry without another saved bit.
-    always @(posedge clk)
-        if (in_init & first_slice)
-            funnel_bit_q <= data_stream_q[0];
-
     wire logic_op =
         (immediate_alu_op & aaa[2]) |
         (register_alu_op & f5[2]);
@@ -275,33 +259,20 @@ module riscc_tiny_min #(
     // Address and shift streams
     // ------------------------------------------------------------------
     reg [15:0] address_stream_q;
-    reg pc_msb_q;
-    wire [W-1:0] next_fetch_address_slice =
-        (next_pc_slice << 1) | {{(W-1){1'b0}}, pc_msb_q};
+    wire [W-1:0] next_fetch_address_slice = next_pc_slice;
 
     always @(posedge clk) begin
-        pc_msb_q <= in_execute ? next_pc_slice[W-1] : 1'b0;
         if (rst)
-            address_stream_q <= {RESET_PC[14:0], 1'b0};
+            address_stream_q <= RESET_PC;
         else if (in_init | in_execute)
             address_stream_q <= {
                 in_init ? alu_sum : next_fetch_address_slice,
                 address_stream_q[15:W]};
     end
 
-    // f5[4] and ~f5[3] are equivalent at the shift/funnel boundary. Keep the
-    // width choices that map best for the inferred Agilex RF and open targets.
-`ifdef RISCC_INFERRED_SYNC_RF
-    localparam F4_SHIFT_BOUNDARY = (W == 1) || (W == 4);
-`else
-    localparam F4_SHIFT_BOUNDARY = (W == 2) || (W == 4);
-`endif
     wire right_shift_input = last_slice ?
-        (F4_SHIFT_BOUNDARY ?
-             (f5[4] ? funnel_bit_q :
-                      (arithmetic_shift & data_stream_q[W-1])) :
-             (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
-                      funnel_bit_q)) :
+        (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
+                 serial_bit_q) :
         data_stream_q[W];
     wire [W-1:0] shift_result_slice =
         (data_stream_q[W-1:0] >> 1) |
@@ -374,15 +345,22 @@ module riscc_tiny_min #(
                     load_high_byte ? load_fill_q : rf_wdata[W-1];
         end
 
-    wire branch_taken = branch_group & ~ddd[2] &
-        ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]);
-    wire use_pc_offset = branch_taken | jmp8_op;
+    wire use_pc_offset = branch_group &
+        (ddd[2] |
+         ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]));
 
     reg [15:0] pc_q;
     reg pc_carry_q;
 
+    // Encoded bits 7:1 already occupy byte-offset bits 7:1. The sequential-PC
+    // step replaces bit zero; encoded bit zero supplies only the upper fill.
+    wire [W-1:0] branch_offset_slice =
+        slice_idx_q[SLICE_BITS-1] ? {W{instr_q[0]}} :
+        immediate_low_slice;
+    wire [W-1:0] pc_step_slice =
+        {{(W-1){1'b0}}, first_slice};
     wire [W-1:0] pc_offset_slice =
-        use_pc_offset ? imm_slice : {W{1'b0}};
+        (branch_offset_slice & {W{use_pc_offset}}) | pc_step_slice;
     wire [W:0] pc_sum_ext =
         {1'b0, pc_q[W-1:0]} +
         {1'b0, pc_offset_slice} +
@@ -423,7 +401,7 @@ module riscc_tiny_min #(
                 state_q <= ST_DECODE;
             ST_DECODE:
                 state_q <=
-                    (needs_operand_pass | register_target_op | any_shift_op) ?
+                    (needs_operand_pass | register_target_op | right_shift_op) ?
                     ST_INIT2 :
                     needs_init_pass ? ST_INIT : ST_EXECUTE;
             ST_INIT2:
@@ -450,7 +428,7 @@ module riscc_tiny_min #(
             slice_idx_next : {SLICE_BITS{1'b0}};
 
         if (in_fetch_capture) begin
-            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            instr_q <= mem_rdata;
             register_format_q <= mem_rdata[14];
         end
     end
@@ -467,9 +445,8 @@ module riscc_tiny_min #(
     wire tr_commit_i = in_execute & last_slice;
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
-    wire [14:0] tr_pc_i = pc_q[14:0];
-    wire [15:0] tr_ir_i =
-        {instr_q[15], register_format_q, instr_q[13:0]};
+    wire [14:0] tr_pc_i = pc_q[15:1];
+    wire [15:0] tr_ir_i = instr_q;
     wire tr_ie_i = 1'b0;
     wire tr_rf_we_i = rf_we;
     wire tr_rf_bank_i = rf_dst_reg[3];

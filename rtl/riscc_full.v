@@ -1,18 +1,18 @@
-// riscc_tiny_full.v : parameterized serial RISC-C Full core (W=1, 2, 4, or 8).
+// riscc_full.v : parameterized RC16 Full core (W=1, 2, 4, or 8).
 //
 // Serial microarchitecture: doc/HARDWARE.md 'Implementation family' (branch
 // shadow, one PC adder, address/data streams, and the INIT2 staging lap).
-// W must be 1, 2, 4, or 8; Min uses riscc_tiny_min.v.
+// W must be 1, 2, 4, or 8; Min uses riscc_min.v.
 
-`ifndef RISCC_TINY_FULL_V
-`define RISCC_TINY_FULL_V
+`ifndef RISCC_RC16_FULL_V
+`define RISCC_RC16_FULL_V
 `default_nettype none
 
 // Full adds MUL, whose pass loop rides the existing shift machinery.
 
-module riscc_tiny #(
+module riscc #(
     parameter integer W = 4,
-    parameter [15:0] RESET_PC = 16'h0000           // word address
+    parameter [15:0] RESET_PC = 16'h0000           // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -37,137 +37,32 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     // State and serial-slice counter
     // ------------------------------------------------------------------
-    // The encoding is area-tuned: state_q[2] enables all counted states.
-`ifdef RISCC_ECP5
-`ifdef RISCC_FMAX_TINY
-    // Timing-only state specialization; standard area encodings below
-    // remain unchanged.
+    // state_q[2] enables every counted state.  Encoding depends only on the
+    // elaborated datapath width, not target, RF implementation, or build goal.
     localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd0 : 3'd0;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
                                                (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd3 : 3'd2;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd2 :
-                                               (W == 4) ? 3'd1 : 3'd3;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
-                                               (W == 2) ? 3'd1 :
-                                               (W == 4) ? 3'd2 : 3'd1;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd7 :
-                                               (W == 2) ? 3'd5 :
-                                               (W == 4) ? 3'd6 : 3'd7;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd4 :
-                                               (W == 2) ? 3'd7 :
-                                               (W == 4) ? 3'd7 : 3'd4;
-    localparam [2:0] ST_INIT          = (W == 1) ? 3'd5 :
-                                               (W == 2) ? 3'd4 :
-                                               (W == 4) ? 3'd4 : 3'd5;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 :
-                                               (W == 2) ? 3'd6 :
-                                               (W == 4) ? 3'd5 : 3'd6;
-`else
-    // State codes are independently area-tuned by width and RF mapping;
-    // every counted state retains state_q[2] set.
-`ifdef RISCC_ECP5_BLOCK_RF
-    localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd3 : 3'd2;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
-                                               (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd0 : 3'd1;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd1 :
-                                               (W == 4) ? 3'd1 : 3'd3;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
-                                               (W == 2) ? 3'd2 :
                                                (W == 4) ? 3'd2 : 3'd0;
+    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
+                                               (W == 2) ? 3'd0 :
+                                               (W == 4) ? 3'd1 : 3'd2;
+    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
+                                               (W == 2) ? 3'd1 :
+                                               (W == 4) ? 3'd3 : 3'd1;
+    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
+                                               (W == 2) ? 3'd2 :
+                                               (W == 4) ? 3'd0 : 3'd3;
     localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd7 :
                                                (W == 2) ? 3'd7 :
-                                               (W == 4) ? 3'd6 : 3'd4;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd4 :
-                                               (W == 2) ? 3'd4 :
-                                               (W == 4) ? 3'd5 : 3'd5;
-    localparam [2:0] ST_INIT          = (W == 1) ? 3'd5 :
-                                               (W == 2) ? 3'd6 :
-                                               (W == 4) ? 3'd7 : 3'd6;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 :
-                                               (W == 2) ? 3'd5 :
                                                (W == 4) ? 3'd4 : 3'd7;
-`else
-    localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd0 : 3'd2;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
-                                               (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd2 : 3'd1;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd1 :
-                                               (W == 4) ? 3'd1 : 3'd0;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
-                                               (W == 2) ? 3'd2 :
-                                               (W == 4) ? 3'd3 : 3'd3;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd7 :
-                                               (W == 2) ? 3'd7 :
-                                               (W == 4) ? 3'd7 : 3'd7;
     localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd4 :
                                                (W == 2) ? 3'd4 :
-                                               (W == 4) ? 3'd6 : 3'd4;
+                                               (W == 4) ? 3'd5 : 3'd6;
     localparam [2:0] ST_INIT          = (W == 1) ? 3'd5 :
                                                (W == 2) ? 3'd6 :
-                                               (W == 4) ? 3'd5 : 3'd5;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 :
-                                               (W == 2) ? 3'd5 :
-                                               (W == 4) ? 3'd4 : 3'd6;
-`endif
-`endif
-`else
-`ifdef RISCC_FMAX_TINY
-    // The packed lookup constant-folds before the timing mapper and is
-    // faster for generic W4 without changing the area-build encoding.
-    localparam [11:0] ST_FETCH_WAIT_CODES = {3'd0, 3'd0, 3'd0, 3'd0};
-    localparam [2:0] ST_FETCH_WAIT    = ST_FETCH_WAIT_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_FETCH_CAPTURE_CODES = {3'd1, 3'd2, 3'd1, 3'd1};
-    localparam [2:0] ST_FETCH_CAPTURE = ST_FETCH_CAPTURE_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_DECODE_CODES = {3'd3, 3'd1, 3'd2, 3'd3};
-    localparam [2:0] ST_DECODE        = ST_DECODE_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_MEM_WAIT_CODES = {3'd2, 3'd3, 3'd3, 3'd2};
-    localparam [2:0] ST_MEM_WAIT      = ST_MEM_WAIT_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_EXECUTE_CODES = {3'd5, 3'd5, 3'd7, 3'd7};
-    localparam [2:0] ST_EXECUTE       = ST_EXECUTE_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_MEM_XFER_CODES = {3'd6, 3'd6, 3'd4, 3'd5};
-    localparam [2:0] ST_MEM_XFER      = ST_MEM_XFER_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_INIT_CODES = {3'd4, 3'd7, 3'd5, 3'd6};
-    localparam [2:0] ST_INIT          = ST_INIT_CODES[(W_LOG2 * 3) +: 3];
-    localparam [11:0] ST_INIT2_CODES = {3'd7, 3'd4, 3'd6, 3'd4};
-    localparam [2:0] ST_INIT2         = ST_INIT2_CODES[(W_LOG2 * 3) +: 3];
-`else
-    localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd1 :
-                                               (W == 4) ? 3'd0 : 3'd0;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
-                                               (W == 2) ? 3'd2 :
-                                               (W == 4) ? 3'd1 : 3'd1;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd3 : 3'd2;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
-                                               (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd2 : 3'd3;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd5 :
-                                               (W == 2) ? 3'd5 :
-                                               (W == 4) ? 3'd7 : 3'd7;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd4 :
-                                               (W == 2) ? 3'd4 :
                                                (W == 4) ? 3'd6 : 3'd5;
-    localparam [2:0] ST_INIT          = (W == 1) ? 3'd7 :
-                                               (W == 2) ? 3'd7 :
-                                               (W == 4) ? 3'd5 : 3'd6;
     localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 :
-                                               (W == 2) ? 3'd6 :
-                                               (W == 4) ? 3'd4 : 3'd4;
-`endif
-`endif
+                                               (W == 2) ? 3'd5 :
+                                               (W == 4) ? 3'd7 : 3'd4;
 
     reg  [2:0] state_q;
     reg  [SLICE_BITS-1:0] slice_idx_q;
@@ -192,7 +87,7 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     reg [15:0] instr_q;
     reg        register_format_q;
-`ifdef RISCC_TINY_CONTROL_NORMALIZE
+`ifdef RISCC_RC16_CONTROL_NORMALIZE
     // Normalize the packed control row at capture on timing-oriented targets.
     // This keeps its new architectural encoding out of the serial datapath's
     // established writeback and register-target decode cones.
@@ -228,6 +123,7 @@ module riscc_tiny #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
+    // Defined JAL16 uses the 00 major space; reserved long words alias it.
     wire long_form_op = ~instr_q[15] & ~register_format_q;
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
@@ -295,12 +191,11 @@ module riscc_tiny #(
                              (repeat_pass_idx_q == 4'd0);
     wire shift_writeback_op = variable_shift_op | funnel_right_op;
 
-    // Native LDX uses 01_000. Reserved 01_001 may alias its indexed path but
-    // is never a program load. LDB/LDPH share 01_010, LDBS uses 01_110, and
-    // STB uses 01_011. For LDPH, bbb=011 is a modifier; aaa is the sole source.
+    // Native LDX uses 01_000. LDB, LDBS, and STB use 01_010, 01_110,
+    // and 01_011 respectively.
     wire register_memory_plane = register_group & f_group_01;
     wire direct_memory_plane = register_memory_plane & f5[1];
-`ifdef RISCC_TINY_DIRECT_PLANE_FACTOR
+`ifdef RISCC_RC16_DIRECT_PLANE_FACTOR
     wire register_store_op = direct_memory_plane & ~f5[2] & f5[0];
     wire native_load_op = register_memory_plane & ~f5[2] & ~f5[1];
     wire direct_load_op = direct_memory_plane & ~f5[0];
@@ -310,7 +205,7 @@ module riscc_tiny #(
     wire native_load_op = register_memory_plane & ~f5[2] & ~f5[1];
     wire direct_load_op = register_memory_plane & f5[1] & ~f5[0];
 `endif
-`ifdef RISCC_TINY_W2_OPT
+`ifdef RISCC_RC16_W2_OPT
     wire register_memory_op = register_memory_plane &
                               (~f5[2] | (f5[1] & ~f5[0]));
     // W=2 benefits from factoring the broad memory plane before removing STB.
@@ -330,8 +225,8 @@ module riscc_tiny #(
         (native_load_op | (register_memory_plane & f5[1] & ~f5[0]));
 `endif
 
-`ifdef RISCC_TINY_CONTROL_NORMALIZE
-    // Capture normalization presents the former internal control layout:
+`ifdef RISCC_RC16_CONTROL_NORMALIZE
+    // Capture normalization presents the internal control layout:
     // returns use bbb=000, direct IE controls use bbb=110, and every ddd bit
     // carries the selected IE value.
     wire control_ie_value = ddd[2];
@@ -353,64 +248,30 @@ module riscc_tiny #(
     wire control_ie_value = ddd[2];
     wire control_plane = system_op & ~bbb[1] & ~bbb[0];
     // RET feeds the old value back; RETI/STI force one and CLI forces zero.
-    // Equivalent Boolean forms route differently after width specialization.
-`ifdef RISCC_TINY_W4_CONTROL
     wire control_ie_next = control_ie_value | (~ddd[1] & ie_q);
-`else
-`ifdef RISCC_ECP5
-    wire control_ie_next = (W == 2) ?
-        (control_ie_value | (~ddd[1] & ie_q)) :
-        ~(~control_ie_value & (ddd[1] | ~ie_q));
-`else
-    wire control_ie_next =
-        ~(~control_ie_value & (ddd[1] | ~ie_q));
-`endif
-`endif
     // Reserved bbb=101 aliases JALR, allowing the register-target plane to
     // share one mux-shaped decode between packed returns and register jumps.
     wire register_jal_op = system_op & ~bbb[1] & bbb[0];
-`ifdef RISCC_ECP5
-`ifdef RISCC_TINY_W4_CONTROL
-    wire register_target_op = system_op & ~bbb[1] &
-                              ~(~bbb[0] & ddd[1]);
-`else
     wire register_target_op = system_op & ~bbb[1] &
                               (bbb[0] | ~ddd[1]);
-`endif
-`else
-    wire register_target_op = system_op & ~bbb[1] &
-                              (bbb[0] | ~ddd[1]);
-`endif
-    // CLI/STI never write the RF, so either the exact or broad target plane
-    // is valid here; select the smaller mapping after width specialization.
-`ifdef RISCC_TINY_W4_CONTROL
-    wire register_link_data_op = register_target_op;
-`else
-`ifdef RISCC_ECP5
-    wire register_link_data_op =
-        ((W == 1) || (W == 2) || (W == 4)) ? register_target_op :
-                                              (system_op & ~bbb[1]);
-`else
     wire register_link_data_op = system_op & ~bbb[1];
-`endif
-`endif
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
     wire link_context = register_jal_op | jal16_target_phase_q;
     wire ie_write_op = control_plane;
     wire ie_next = control_ie_next;
 `endif
 
-    wire store_op = (imm_mem_group & instr_q[14]) | register_store_op;
-    wire load_op = (imm_mem_group & ~instr_q[14]) | indexed_mem_op;
+    wire store_op = (imm_mem_group & instr_q[0]) | register_store_op;
+    wire load_op = (imm_mem_group & ~instr_q[0]) | indexed_mem_op;
     wire mem_op = store_op | load_op;
     wire byte_access = direct_memory_plane & ~bbb[0];
     wire sign_extend_byte = f5[2];
-    // Ordinary ALU operations stage bbb. Funnels and LDPH stage aaa through
-    // the same pass; LDPH then reuses it as both address-adder operands.
-`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
+    // Ordinary ALU operations stage bbb. Funnels stage aaa through the same
+    // pass.
+`ifdef RISCC_RC16_DIRECT_STREAM_INDEX
     wire alu_uses_rb_stream = ordinary_alu_op |
                               (indexed_mem_op & ~f5[1]);
-`elsif RISCC_TINY_DIRECT_STREAM_SUBTRACT
+`elsif RISCC_RC16_DIRECT_STREAM_SUBTRACT
     wire alu_uses_rb_stream =
         (ordinary_alu_op | indexed_mem_op) & ~direct_load_op;
 `else
@@ -439,7 +300,7 @@ module riscc_tiny #(
     // addressed {reg, slice}, read one W-bit slice ahead of use.
     //
     // Read schedule (one stream at a time):
-    //   INIT2 first lap : bbb/aaa -> data_stream_q    (two-source ops / LDPH)
+    //   INIT2 first lap : bbb/aaa -> data_stream_q    (two-source operations)
     //   INIT            : aaa -> ALU / ddd -> funnel stream
     //   store-data lap  : rd  -> data_stream_q        (MEM_XFER normally;
     //                                                   second INIT2 for
@@ -449,9 +310,9 @@ module riscc_tiny #(
     // This private define compile-removes the alternate scheduler everywhere
     // except the one mapping that benefits from it; it is not a build option.
 `ifdef RISCC_ECP5
-`define RISCC_TINY_SPLIT_STORE_SCHEDULE
+`define RISCC_RC16_SPLIT_STORE_SCHEDULE
 `endif
-`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
+`ifdef RISCC_RC16_SPLIT_STORE_SCHEDULE
     // A second INIT2 store-data lap maps smaller for ECP5 Full /4 and /8.
     // /1 and /2 keep the normal MEM_XFER lap.
     localparam STORE_DATA_IN_SECOND_INIT2 = (W >= 4);
@@ -517,37 +378,15 @@ module riscc_tiny #(
                 store_data_mem_pass |
                 (in_execute & multiply_op);
 `ifdef RISCC_ECP5
-`ifdef RISCC_ECP5_BLOCK_RF
-            assign rf_operand_reg = (W == 4) ?
-                (f5[4] ? aaa : bbb) :
-                (bbb ^ ({3{f5[4]}} & (bbb ^ aaa)));
+            assign rf_operand_reg = (W == 2) ?
+                (bbb ^ ({3{f5[4]}} & (bbb ^ aaa))) :
+                (f5[4] ? aaa : bbb);
 `else
-            assign rf_operand_reg =
-                bbb ^ ({3{f5[4]}} & (bbb ^ aaa));
-`endif
-`else
-            assign rf_operand_reg = (W == 4) ?
-                (f5[4] ? aaa : bbb) :
-                (bbb ^ ({3{f5[4]}} & (bbb ^ aaa)));
+            assign rf_operand_reg = f5[4] ? aaa : bbb;
 `endif
         end
     endgenerate
-    // The sum-of-products fallback pairs with the ternary operand mux above
-    // for the timing-better generic and block-RF /4 mappings. LUTRAM /4 packs
-    // better with the simple source mux.
-`ifdef RISCC_ECP5
-`ifdef RISCC_ECP5_BLOCK_RF
-    assign rf_src_low = (W == 4) ?
-        ((aaa & {3{~source_is_rd}}) | (ddd & {3{source_is_rd}})) :
-        (source_is_rd ? ddd : aaa);
-`else
     assign rf_src_low = source_is_rd ? ddd : aaa;
-`endif
-`else
-    assign rf_src_low = (W == 4) ?
-        ((aaa & {3{~source_is_rd}}) | (ddd & {3{source_is_rd}})) :
-        (source_is_rd ? ddd : aaa);
-`endif
     wire [3:0] rf_src_reg = {src_system_bank, rf_src_low};
     wire [2:0] rf_dst_low = ddd & {3{~(trap_active | cmpi_op)}};
     wire [3:0] rf_dst_reg = {trap_active | dst_system_bank, rf_dst_low};
@@ -600,15 +439,14 @@ module riscc_tiny #(
     // a power of two, flipping the counter MSB performs that rotation.
     // ADDI/CMPI and branches sign-extend. Their selectors factor as
     // 01x and 111; the remaining immediate ALU operations zero-extend.
-    wire sign_extend_imm = (W == 1) ?
+    wire sign_extend_imm = (W <= 2) ?
         (~instr_q[15] | add_immediate_op | cmpi_op | branch_group) :
-        (~instr_q[15] |
-         (immediate_group & aaa[1] & (~aaa[2] | aaa[0])));
+        (~instr_q[15] | (immediate_group & ~aaa[2] & aaa[1]));
     wire lui_op = immediate_group & (aaa == 3'b001);
     wire [SLICE_BITS-1:0] immediate_slice_index =
         slice_idx_q ^ {lui_op, {(SLICE_BITS-1){1'b0}}};
     wire [W-1:0] immediate_low_slice =
-`ifdef RISCC_TINY_DIRECT_IMM_MASK
+`ifdef RISCC_RC16_DIRECT_IMM_MASK
         instr_q[((immediate_slice_index * W) & 7) +: W] &
         {W{~(indexed_mem_op & f5[1])}};
 `else
@@ -627,14 +465,14 @@ module riscc_tiny #(
     wire direct_store_stream_base = register_store_op & slow_direct_store;
     wire alu_a_enable =
         ~(immediate_group & ~aaa[2] & ~aaa[1]) & ~direct_store_stream_base;
-`ifdef RISCC_TINY_DIRECT_ZERO_MERGED
+`ifdef RISCC_RC16_DIRECT_ZERO_MERGED
     wire alu_b_zero = system_op |
                      (register_memory_plane & f5[1] & ~bbb[0] &
                       ((W <= 2) | ~f5[0]));
-`elsif RISCC_TINY_DIRECT_IMM_MASK
+`elsif RISCC_RC16_DIRECT_IMM_MASK
     wire alu_b_zero = system_op |
                      ((W != 1) & register_store_op & ~slow_direct_store);
-`elsif RISCC_TINY_DIRECT_SOURCE_EXACT
+`elsif RISCC_RC16_DIRECT_SOURCE_EXACT
     wire alu_b_zero = system_op |
                      ((W != 1) & register_store_op & ~slow_direct_store);
 `else
@@ -655,7 +493,7 @@ module riscc_tiny #(
     wire [W-1:0] alu_b_raw =
         ((needs_operand_pass | multiply_op | direct_store_stream_base) ?
          data_stream_q[W-1:0] :
-`ifdef RISCC_TINY_DIRECT_SOURCE_EXACT
+`ifdef RISCC_RC16_DIRECT_SOURCE_EXACT
          (imm_slice & {W{~direct_load_op}})) &
 `else
          imm_slice) &
@@ -676,20 +514,20 @@ module riscc_tiny #(
         (rf_rdata[W-1] & signed_compare) ^
         ~(alu_b_raw[W-1] & signed_compare) ^ alu_sum_ext[W];
 
-`ifdef RISCC_FMAX_TINY
+`ifdef RISCC_FMAX_RC16
 `ifdef RISCC_ECP5
-`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
-`define RISCC_TINY_FULL_ECP5_W8_FMAX
+`ifdef RISCC_RC16_DIRECT_STREAM_INDEX
+`define RISCC_RC16_FULL_ECP5_W8_FMAX
 `endif
 `else
-`ifdef RISCC_TINY_DIRECT_PLANE_FACTOR
-`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
-`define RISCC_TINY_FULL_GENERIC_W8_FMAX
+`ifdef RISCC_RC16_DIRECT_PLANE_FACTOR
+`ifdef RISCC_RC16_DIRECT_STREAM_INDEX
+`define RISCC_RC16_FULL_GENERIC_W8_FMAX
 `endif
 `endif
 `endif
 `endif
-`ifdef RISCC_TINY_FULL_ECP5_W8_FMAX
+`ifdef RISCC_RC16_FULL_ECP5_W8_FMAX
     wire timing_init_carry =
         (funnel_op & data_stream_q[W-1]) |
         (slt_op & less_than_result);
@@ -698,7 +536,7 @@ module riscc_tiny #(
                        alu_active ?
                            (alu_sum_ext[W] & ~(last_slice & repeat_exec)) :
                            alu_subtract;
-`elsif RISCC_TINY_FULL_GENERIC_W8_FMAX
+`elsif RISCC_RC16_FULL_GENERIC_W8_FMAX
     always @(posedge clk)
         alu_carry_q <= (funnel_op & in_init & last_slice) ?
                            data_stream_q[W-1] :
@@ -744,11 +582,11 @@ module riscc_tiny #(
     endgenerate
 `endif
 `endif
-`ifdef RISCC_TINY_FULL_ECP5_W8_FMAX
-`undef RISCC_TINY_FULL_ECP5_W8_FMAX
+`ifdef RISCC_RC16_FULL_ECP5_W8_FMAX
+`undef RISCC_RC16_FULL_ECP5_W8_FMAX
 `endif
-`ifdef RISCC_TINY_FULL_GENERIC_W8_FMAX
-`undef RISCC_TINY_FULL_GENERIC_W8_FMAX
+`ifdef RISCC_RC16_FULL_GENERIC_W8_FMAX
+`undef RISCC_RC16_FULL_GENERIC_W8_FMAX
 `endif
 
     wire logic_op = (immediate_alu_op & aaa[2]) | (ordinary_alu_op & f5[2]);
@@ -761,18 +599,13 @@ module riscc_tiny #(
     wire [W-1:0] alu_result = logic_op ? logic_result : alu_sum;
 
     // ------------------------------------------------------------------
-    // Address stream: data byte address or next fetch address
-    // During EXECUTE it shifts in next_pc_slice<<1, avoiding a fetch/data
-    // address mux at the memory port.
+    // Address stream: data byte address or next fetch byte address.
     // ------------------------------------------------------------------
     reg [15:0] address_stream_q;
-    reg pc_msb_q;
-    wire [W-1:0] next_fetch_address_slice =
-        (next_pc_slice << 1) | {{(W-1){1'b0}}, pc_msb_q};
+    wire [W-1:0] next_fetch_address_slice = next_pc_slice;
     always @(posedge clk) begin
-        pc_msb_q <= in_execute ? next_pc_slice[W-1] : 1'b0;
         if (rst)
-            address_stream_q <= {RESET_PC[14:0], 1'b0};
+            address_stream_q <= RESET_PC;
         // During MUL, address_stream_q parks the multiplier.  Rotate one
         // slice at each W-pass boundary; the final pass refills the fetch
         // address stream.
@@ -894,20 +727,20 @@ module riscc_tiny #(
     reg r0_zero_so_far_q;
     wire writes_r0 = rf_we & ~(|rf_dst_reg);
 
-`ifdef RISCC_FMAX_TINY
+`ifdef RISCC_FMAX_RC16
 `ifdef RISCC_ECP5
-`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
-`define RISCC_TINY_FULL_W8_FMAX
+`ifdef RISCC_RC16_DIRECT_STREAM_INDEX
+`define RISCC_RC16_FULL_W8_FMAX
 `endif
 `else
-`ifdef RISCC_TINY_DIRECT_PLANE_FACTOR
-`ifdef RISCC_TINY_DIRECT_STREAM_INDEX
-`define RISCC_TINY_FULL_W8_FMAX
+`ifdef RISCC_RC16_DIRECT_PLANE_FACTOR
+`ifdef RISCC_RC16_DIRECT_STREAM_INDEX
+`define RISCC_RC16_FULL_W8_FMAX
 `endif
 `endif
 `endif
 `endif
-`ifdef RISCC_TINY_FULL_W8_FMAX
+`ifdef RISCC_RC16_FULL_W8_FMAX
     // Under writes_r0, trap/link/EPC write data is unreachable.
     wire [W-1:0] r0_load_slice =
         (byte_access &
@@ -952,8 +785,8 @@ module riscc_tiny #(
                     load_high_byte ? load_fill_q : rf_wdata[W-1];
         end
 `endif
-`ifdef RISCC_TINY_FULL_W8_FMAX
-`undef RISCC_TINY_FULL_W8_FMAX
+`ifdef RISCC_RC16_FULL_W8_FMAX
+`undef RISCC_RC16_FULL_W8_FMAX
 `endif
 
     wire branch_taken = branch_group & ~ddd[2] &
@@ -961,15 +794,31 @@ module riscc_tiny #(
     wire use_pc_offset = branch_taken | jmp8_op;
 
     // ------------------------------------------------------------------
-    // PC stream and serial adder (PC + offset + forced carry 1).
-    // The adder output is also every link/EPC value: PC+1 for JALR/JAL16;
+    // PC stream and serial adder (byte PC + offset + two-byte step).
+    // The adder output is also every link/EPC value: PC+2 for JALR/JAL16;
     // for IRQ entry the parked carry is forced to 0 (and the
     // offset gated off) so the same adder yields the raw preempted pc_q.
     // ------------------------------------------------------------------
     reg [15:0] pc_q;
     reg pc_carry_q;
 
-    wire [W-1:0] pc_offset_slice = use_pc_offset ? imm_slice : {W{1'b0}};
+    wire branch_sign_fill = slice_idx_q[SLICE_BITS-1] & instr_q[0];
+    wire [W-1:0] pc_step_slice =
+        {{(W-1){1'b0}}, first_slice & ~trap_active};
+    wire [W-1:0] pc_offset_slice;
+    generate
+        if (W <= 2) begin : g_direct_branch_offset
+            assign pc_offset_slice =
+                (slice_idx_q[SLICE_BITS-1] ?
+                    {W{use_pc_offset & instr_q[0]}} :
+                    (immediate_low_slice & {W{use_pc_offset}})) |
+                pc_step_slice;
+        end else begin : g_shared_branch_offset
+            assign pc_offset_slice =
+                (imm_slice & {W{use_pc_offset}}) |
+                {W{branch_sign_fill & use_pc_offset}} | pc_step_slice;
+        end
+    endgenerate
     wire [W:0] pc_sum_ext = {1'b0, pc_q[W-1:0]} +
                             {1'b0, pc_offset_slice} +
                             {{W{1'b0}}, pc_carry_q};
@@ -983,12 +832,12 @@ module riscc_tiny #(
     // Register jumps stream rs1 into data_stream_q during INIT2, sharing the
     // same PC path used by a JAL16 target word.
     wire pc_from_register = register_target_op;
-    wire [15:0] irq_pc_word = 16'h0002 >> (slice_idx_q * W);
+    wire [15:0] irq_pc_word = 16'h0004 >> (slice_idx_q * W);
     wire [W-1:0] irq_pc_slice = irq_pc_word[W-1:0];
     wire [W-1:0] next_pc_slice =
         trap_active ? irq_pc_slice :
         (pc_from_register | jal16_target_phase_q) ?
-                                                data_stream_q[W-1:0] :
+                                         data_stream_q[W-1:0] :
                                                  pc_sum;
 
     always @(posedge clk)
@@ -1013,22 +862,6 @@ module riscc_tiny #(
     // ------------------------------------------------------------------
     // System profile state
     // ------------------------------------------------------------------
-`ifdef RISCC_ECP5
-    // Keep this top-level for ECP5; Yosys mis-lowers the same logic under a
-    // constant generate branch.
-    always @(posedge clk) begin
-        if (in_decode) begin
-            trap_q <= take_irq;
-            if (ie_write_op)
-                ie_q <= ie_next;
-        end else if (in_execute & trap_q & last_slice)
-            ie_q <= 1'b0;
-        if (rst) begin
-            ie_q   <= 1'b0;
-            trap_q <= 1'b0;
-        end
-    end
-`else
     localparam DECODE_IE_UPDATE = (W == 2) || (W == 4);
     // Updating controls at decode packs best for W=2/4.  IE is not sampled
     // again until the next decode boundary, so this is architecturally
@@ -1066,7 +899,6 @@ module riscc_tiny #(
             end
         end
     endgenerate
-`endif
 
     // ------------------------------------------------------------------
     // Sequencer
@@ -1108,7 +940,7 @@ module riscc_tiny #(
         if (rst)
             state_q <= ST_FETCH_WAIT;
 
-`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
+`ifdef RISCC_RC16_SPLIT_STORE_SCHEDULE
         if (in_fetch_capture)
             init_pass_done_q <= 1'b0;
         if (in_init & last_slice)
@@ -1119,13 +951,13 @@ module riscc_tiny #(
                                        {SLICE_BITS{1'b0}};
 
         if (in_fetch_capture) begin
-`ifdef RISCC_TINY_CONTROL_NORMALIZE
-            instr_q <= {fetch_instr[15], fetch_instr[0], fetch_instr[13:0]};
+`ifdef RISCC_RC16_CONTROL_NORMALIZE
+            instr_q <= fetch_instr;
 `ifdef RISCC_TRACE
             trace_instr_q <= mem_rdata;
 `endif
 `else
-            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            instr_q <= mem_rdata;
 `endif
             register_format_q <= mem_rdata[14];
         end
@@ -1157,12 +989,11 @@ module riscc_tiny #(
                          ~trap_active);
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};
-    wire [14:0] tr_pc_i = pc_q[14:0];
-`ifdef RISCC_TINY_CONTROL_NORMALIZE
+    wire [14:0] tr_pc_i = pc_q[15:1];
+`ifdef RISCC_RC16_CONTROL_NORMALIZE
     wire [15:0] tr_ir_i = trace_instr_q;
 `else
-    wire [15:0] tr_ir_i =
-        {instr_q[15], register_format_q, instr_q[13:0]};
+    wire [15:0] tr_ir_i = instr_q;
 `endif
     wire        tr_ie_i = ie_q;
     wire        tr_rf_we_i = rf_we;
@@ -1173,8 +1004,8 @@ module riscc_tiny #(
 `include "riscc_trace_state.vh"
 `endif
 
-`ifdef RISCC_TINY_SPLIT_STORE_SCHEDULE
-`undef RISCC_TINY_SPLIT_STORE_SCHEDULE
+`ifdef RISCC_RC16_SPLIT_STORE_SCHEDULE
+`undef RISCC_RC16_SPLIT_STORE_SCHEDULE
 `endif
 endmodule
 

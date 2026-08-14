@@ -12,6 +12,16 @@
 #define MATH_RETURN RETS
 #endif
 
+        .macro SAVE_R4
+        ADDI    r7, -2
+        ST      r4, [r7 + 0]
+        .endm
+
+        .macro RESTORE_R4
+        LD      r4, [r7 + 0]
+        ADDI    r7, 2
+        .endm
+
         .macro FUNCTION name
         .section .text.\name,"ax",@progbits
         .p2align 1
@@ -22,6 +32,7 @@
         .endm
 
         FUNCTION __riscc_math_shift_left_one
+        SAVE_R4
         LDI     r3, 0                   /* previous unmodified lower limb */
         MOV     r0, r2
         BEQZ    .Lmath_shl1_done
@@ -47,10 +58,12 @@
         MOV     r0, r2
         BNEZ    .Lmath_shl1_loop
 .Lmath_shl1_done:
+        RESTORE_R4
         MATH_RETURN
         .size __riscc_math_shift_left_one, . - __riscc_math_shift_left_one
 
         FUNCTION __riscc_math_shift_left_two
+        SAVE_R4
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
 #endif
@@ -88,10 +101,12 @@
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
 #endif
+        RESTORE_R4
         MATH_RETURN
         .size __riscc_math_shift_left_two, . - __riscc_math_shift_left_two
 
         FUNCTION __riscc_math_shift_right_one
+        SAVE_R4
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
         LUI     r5, 128
@@ -127,5 +142,6 @@
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
 #endif
+        RESTORE_R4
         MATH_RETURN
         .size __riscc_math_shift_right_one, . - __riscc_math_shift_right_one

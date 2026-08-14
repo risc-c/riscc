@@ -11,21 +11,22 @@ between the RTL and the ISS shows up as a FAIL with a distinct code per
 checked item.
 
 Program shape (per seed): random straight-line ALU/imm/memory ops over
-r1..r6 with a high-RAM data window, adjacent LDPH/LDP program loads,
+r1..r6 with a high-RAM data window,
 forward-branch blocks, bounded counted loops, CALL/RETS subroutines,
 MTS/MFS spills, and -- in sys
 configs -- STI/CLI and testbench-IRQ triggers (counted in S1) with a
 save/restore handler.  Vector layout follows the current exception
-model: reset enters at word 0 (JMP16 slot), IRQ at word 2; min images
+model: reset enters at word 0 (JMPL slot), IRQ at word 2; min images
 have no vector table.
 
 Usage:
   riscc_fuzz.py --seed 42 --config sys
-  riscc_fuzz.py --campaign 25 --cores tiny1,tiny2,tiny4,tiny8,tiny16
+  riscc_fuzz.py --campaign 25 --cores rc16-1,rc16-2,rc16-4,rc16-8,rc16-16
   riscc_fuzz.py --campaign 25                 # random campaign base seed
   riscc_fuzz.py --campaign 25 --base-seed 12345
   riscc_fuzz.py --family nano --campaign 25
-  riscc_fuzz.py --campaign 25 --config sys --cores tiny1
+  riscc_fuzz.py --family rc32 --campaign 25
+  riscc_fuzz.py --campaign 25 --config sys --cores rc16-1
 """
 
 import argparse
@@ -45,16 +46,20 @@ TEST = os.path.join(ROOT, "test")
 WIN = 0xFC00              # data window, high RAM below the suite scratch
 WIN_WORDS = 32
 NANO_SCRATCH = 0xFB00     # saved nano GPR image, below WIN
+RC32_WIN = 0xFC00         # 4-byte aligned RC32 data window
+RC32_WIN_WORDS = 16
 TEST_IRQ = 0xFFFA         # I/O page: write trigger, read acknowledge
 RESULT = 0xFFFE           # I/O page: result register
 FAILBASE = 0x0B00         # fail codes 0x0B01.. per checked item
 
-TINY_CONFIGS = ("min", "sys", "full")
+RC16_CONFIGS = ("min", "sys", "full")
 NANO_CONFIGS = ("nano",)
+RC32_CONFIGS = ("min",)
+RC32_WIDTHS = (1, 2, 4, 8, 16)
 
 
 def parse_config(config):
-    if config not in TINY_CONFIGS:
+    if config not in RC16_CONFIGS:
         raise ValueError("unknown config: %s" % config)
     return {
         "sys": config != "min",
@@ -138,19 +143,6 @@ class Gen:
             lines.append("    STB   %s, [r0]" % self.reg())
         return lines
 
-    def op_program_load(self):
-        # Canonical bbb=011 is a selector, not an r3 operand. Poison r3 and
-        # keep both destinations elsewhere while adjacent r7 pointers exercise
-        # both halfword-address parities.
-        dests = (1, 2, 4, 5, 6)
-        return [
-            "    LDI16 r3, fail >> 1",
-            "    LDI16 r7, start >> 1",
-            "    LDPH  r%d, [r7]" % self.rng.choice(dests),
-            "    ADDI  r7, 1",
-            "    LDP    r%d, [r7]" % self.rng.choice(dests),
-        ]
-
     def op_sreg(self):
         s = self.rng.randint(4, 6)
         if self.rng.random() < 0.5:
@@ -188,7 +180,7 @@ class Gen:
         if self.sys and self.rng.random() < 0.5:
             return ["    CALL16 %s" % lab]
         r = self.reg()
-        return ["    LDI16 %s, %s >> 1" % (r, lab),
+        return ["    LDI16 %s, %s" % (r, lab),
                 "    CALL  %s" % r]
 
     def op_irq(self):
@@ -222,7 +214,6 @@ class Gen:
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
             lines.append("    ST   r1, [r7+%d]" % (w * 2))
-        lines += self.op_program_load()
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
             if k < 0.45:
@@ -251,14 +242,14 @@ class Gen:
         ]
         if self.sys:
             head += [
-                "    JMP16 reset_tramp",
-                "    JMP16 irq_h",
-                "    JMP16 brk_h",
+                "    JMPL reset_tramp",
+                "    JMPL irq_h",
+                "    JMPL brk_h",
             ]
         head += [
             ".text",
             "reset_tramp:",
-            "    LDI16 r0, start >> 1",
+            "    LDI16 r0, start",
             "    JMP   r0",
             "fail:",
             "    LDI16 r7, 0x0BAD",
@@ -290,7 +281,7 @@ class Gen:
         body, subs = self.body()
 
         # subroutines live at a fixed place BEFORE the epilogue so that
-        # label addresses (captured into registers by LDI16 sub>>1) are
+        # label addresses (captured into registers by LDI16 sub) are
         # identical in the probe and self-checking builds
         for lab, code_lines in subs:
             head.append(lab)
@@ -437,7 +428,7 @@ class NanoGen:
         for _ in range(self.rng.randint(1, 3)):
             body += self.simple_op(exclude="r7")
         subs.append(("%s:" % lab, body + ["    JMP   r7"]))
-        return ["    LDI16 r1, %s >> 1" % lab,
+        return ["    LDI16 r1, %s" % lab,
                 "    CALL  r7, r1"]
 
     def body(self):
@@ -485,7 +476,7 @@ class NanoGen:
             ".vectors",
             ".text",
             "reset_tramp:",
-            "    LDI16 r0, start >> 1",
+            "    LDI16 r0, start",
             "    JMP   r0",
             "fail:",
             "    LDI16 r7, 0x0BAD",
@@ -528,12 +519,230 @@ class NanoGen:
         return "\n".join(head + body + tail) + "\n"
 
 
+class RC32Gen:
+    """Seeded RC32-Min programs with local literal pools.
+
+    Every full-width constant goes through a nearby LDPC pool.  This keeps the
+    programs valid independently of their random body length and continuously
+    exercises the RC32-specific PC-relative load path.
+    """
+
+    def __init__(self, seed):
+        self.rng = random.Random(seed)
+        self.seed = seed
+        self.label = 0
+
+    def new_label(self, stem):
+        self.label += 1
+        return ".%s_%d" % (stem, self.label)
+
+    def reg(self):
+        return "r%d" % self.rng.randint(1, 6)
+
+    def literal(self, reg, value):
+        literal = self.new_label("literal")
+        after = self.new_label("after_literal")
+        return [
+            "    ldpc  %s, %s" % (reg, literal),
+            "    jmp8  %s" % after,
+            "    .balign 4",
+            "%s:" % literal,
+            "    .long %s" % value,
+            "%s:" % after,
+        ]
+
+    def literal_value(self, reg, value):
+        return self.literal(reg, "0x%08X" % (value & 0xffffffff))
+
+    def op_alu(self):
+        op = self.rng.choice(["add", "sub", "slt", "sltu", "and", "or", "xor"])
+        return ["    %-5s %s, %s, %s" % (op, self.reg(), self.reg(), self.reg())]
+
+    def op_imm(self):
+        op = self.rng.choice(["ldi", "addi", "cmpi", "andi", "ori", "xori"])
+        if op in ("addi", "cmpi"):
+            value = self.rng.randint(-128, 127)
+        else:
+            value = self.rng.randint(0, 255)
+        return ["    %-5s %s, %d" % (op, self.reg(), value)]
+
+    def op_shift(self):
+        op = self.rng.choice(["srli", "srai"])
+        return ["    %-5s %s, %s, 1" % (op, self.reg(), self.reg())]
+
+    def op_mem(self):
+        kind = self.rng.randrange(6)
+        offset = self.rng.randrange(RC32_WIN_WORDS) * 4
+        lines = self.literal_value("r7", RC32_WIN)
+        if kind == 0:
+            lines.append("    st    %s, [r7 + %d]" % (self.reg(), offset))
+        elif kind == 1:
+            lines.append("    ld    %s, [r7 + %d]" % (self.reg(), offset))
+        elif kind == 2:
+            lines += self.literal_value("r0", self.rng.randrange(RC32_WIN_WORDS * 4))
+            lines += ["    add   r0, r7, r0",
+                      "    %s   %s, [r0]" % (self.rng.choice(["ldb", "ldbs"]), self.reg())]
+        elif kind == 3:
+            lines += self.literal_value("r0", self.rng.randrange(RC32_WIN_WORDS * 4))
+            lines += ["    add   r0, r7, r0", "    stb   %s, [r0]" % self.reg()]
+        elif kind == 4:
+            lines += self.literal_value("r0", self.rng.randrange(RC32_WIN_WORDS * 2) * 2)
+            lines += ["    add   r0, r7, r0",
+                      "    %s   %s, [r0]" % (self.rng.choice(["ldh", "ldhs"]), self.reg())]
+        else:
+            lines += self.literal_value("r0", self.rng.randrange(RC32_WIN_WORDS * 2) * 2)
+            lines += ["    add   r0, r7, r0", "    sth   %s, [r0]" % self.reg()]
+        return lines
+
+    def simple_op(self, exclude=None):
+        while True:
+            chance = self.rng.random()
+            if chance < 0.40:
+                lines = self.op_alu()
+            elif chance < 0.70:
+                lines = self.op_imm()
+            elif chance < 0.80:
+                lines = self.op_shift()
+            else:
+                lines = self.op_mem()
+            if exclude is None or not any((exclude + ",") in line or
+                                          line.rstrip().endswith(exclude)
+                                          for line in lines):
+                return lines
+
+    def op_branch_block(self):
+        target = self.new_label("branch")
+        cc = self.rng.choice(["beqz", "bnez", "bltz", "bgez"])
+        lines = ["    cmpi  %s, %d" % (self.reg(), self.rng.randint(-128, 127)),
+                 "    %-5s %s" % (cc, target)]
+        for _ in range(self.rng.randint(1, 3)):
+            lines += self.simple_op()
+        lines.append("%s:" % target)
+        return lines
+
+    def op_loop(self):
+        target = self.new_label("loop")
+        count = "r%d" % self.rng.randint(1, 6)
+        body = []
+        for _ in range(self.rng.randint(1, 2)):
+            body += self.simple_op(exclude=count)
+        return (["    ldi   %s, %d" % (count, self.rng.randint(1, 5)),
+                 "%s:" % target] + body +
+                ["    addi  %s, -1" % count,
+                 "    or    r0, %s, %s" % (count, count),
+                 "    bnez  %s" % target])
+
+    def body(self):
+        lines = self.literal_value("r7", RC32_WIN)
+        for word in range(RC32_WIN_WORDS):
+            lines += self.literal_value("r1", self.rng.getrandbits(32))
+            lines.append("    st    r1, [r7 + %d]" % (word * 4))
+        for _ in range(self.rng.randint(20, 32)):
+            chance = self.rng.random()
+            if chance < 0.55:
+                lines += self.simple_op()
+            elif chance < 0.76:
+                lines += self.op_mem()
+            elif chance < 0.90:
+                lines += self.op_branch_block()
+            else:
+                lines += self.op_loop()
+
+        sub = self.new_label("sub")
+        literal = self.new_label("sub_literal")
+        after = self.new_label("after_sub_literal")
+        lines += [
+            "    ldpc  r4, %s" % literal,
+            "    jalr  s3, r4",
+            "    jmp8  %s" % after,
+            "    .balign 4",
+            "%s:" % literal,
+            "    .long %s" % sub,
+            "%s:" % after,
+            # The literal carries the subroutine's absolute address.  It
+            # moves when the self-checking tail is appended, so do not retain
+            # it as an architectural result to compare with the probe image.
+            "    ldi   r4, 0",
+        ]
+        # Keep this body independent of the absolute target value held in
+        # r4.  The probe and self-check image have different tail sizes, so
+        # that pointer itself legitimately changes between the two links.
+        sub_body = ["    add   r5, r5, r5", "    ret   s3"]
+        return lines, (sub, sub_body)
+
+    def store_result(self, value):
+        return (self.literal_value("r7", value) +
+                self.literal_value("r6", RESULT) +
+                ["    sth   r7, [r6]", "    halt"])
+
+    def check_reg(self, reg, value, code):
+        ok = self.new_label("check_ok")
+        return (self.literal_value("r7", value) +
+                ["    sub   r0, %s, r7" % reg,
+                 "    beqz  %s" % ok] +
+                self.store_result(code) + ["%s:" % ok])
+
+    def emit(self, expect=None):
+        head = [
+            "; generated by riscc_fuzz.py seed=%d family=rc32 config=min" % self.seed,
+            ".text",
+            ".globl start",
+            "start:",
+        ]
+        self.rng = random.Random(self.seed)
+        self.label = 0
+        body, (sub, sub_body) = self.body()
+        if expect is None:
+            tail = ["    mts   s4, r6", "    mts   s5, r7"] + self.store_result(0x600D)
+        else:
+            tail = ["    mts   s4, r6", "    mts   s5, r7"]
+            code = FAILBASE
+            for index in range(1, 6):
+                code += 1
+                tail += self.check_reg("r%d" % index, expect["r"][index], code)
+            for sreg in (3, 4, 5):
+                code += 1
+                tail += ["    mfs   r6, s%d" % sreg]
+                tail += self.check_reg("r6", expect["s"][sreg], code)
+            for word in expect["probes"]:
+                code += 1
+                tail += self.literal_value("r7", RC32_WIN + word * 4)
+                tail += ["    ld    r6, [r7 + 0]"]
+                tail += self.check_reg("r6", expect["mem"][word], code)
+            tail += self.store_result(0x600D)
+        return "\n".join(head + body + tail + ["%s:" % sub] + sub_body) + "\n"
+
+
 def assemble(asm_path, bin_path, profile=None):
     cmd = [sys.executable, os.path.join(HERE, "riscc_asm.py")]
     if profile is not None:
         cmd += ["--profile", profile]
     cmd += [asm_path, "-o", bin_path]
     subprocess.run(cmd, check=True,
+                   stdout=subprocess.DEVNULL)
+
+
+def llvm_rc32_tools():
+    bindir = os.environ.get("RISCC_LLVM_BIN",
+                            os.path.join(ROOT, "build", "llvm-riscc", "bin"))
+    tools = [os.path.join(bindir, name)
+             for name in ("llvm-mc", "ld.lld", "llvm-objcopy")]
+    if not all(os.path.isfile(tool) for tool in tools):
+        raise RuntimeError("RC32 LLVM tools are missing; build them with make llvm-riscc "
+                           "or set RISCC_LLVM_BIN")
+    return tools
+
+
+def assemble_rc32(asm_path, bin_path):
+    mc, lld, objcopy = llvm_rc32_tools()
+    obj_path = bin_path + ".o"
+    elf_path = bin_path + ".elf"
+    subprocess.run([mc, "-triple=riscc-none-elf", "-mcpu=min", "-mattr=+rc32",
+                    "-filetype=obj", asm_path, "-o", obj_path], check=True,
+                   stdout=subprocess.DEVNULL)
+    subprocess.run([lld, "-m", "elf32lriscc", "-Ttext=0", "-e", "start",
+                    "-o", elf_path, obj_path], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([objcopy, "-O", "binary", elf_path, bin_path], check=True,
                    stdout=subprocess.DEVNULL)
 
 
@@ -594,14 +803,14 @@ def verilator_makeflags():
     return " ".join(flags)
 
 
-def make_tiny_case(seed, config, outdir):
+def make_rc16_case(seed, config, outdir):
     cfg = parse_config(config)
     g = Gen(seed, config)
     stem = os.path.join(outdir, "fuzz_%s_%d" % (config, seed))
     with open(stem + "_probe.asm", "w") as f:
         f.write(g.emit(None))
     assemble(stem + "_probe.asm", stem + "_probe.bin", config)
-    sim = tiny_state(stem + "_probe.bin", config)
+    sim = rc16_state(stem + "_probe.bin", config)
     if sim["outcome"] != "DONE":
         raise RuntimeError("probe did not finish (seed %d)" % seed)
     rng = random.Random(seed ^ 0x5EED)
@@ -616,7 +825,7 @@ def make_tiny_case(seed, config, outdir):
     with open(stem + ".asm", "w") as f:
         f.write(g2.emit(expect))
     assemble(stem + ".asm", stem + ".bin", config)
-    chk = tiny_state(stem + ".bin", config, dump_window=False)
+    chk = rc16_state(stem + ".bin", config, dump_window=False)
     if chk["outcome"] != "DONE" or chk["result"] != 0x600D:
         raise RuntimeError("self-check failed under ISS (seed %d, result 0x%04X)"
                            % (seed, chk["result"]))
@@ -649,10 +858,40 @@ def make_nano_case(seed, config, outdir):
     return stem + ".bin"
 
 
+def make_rc32_case(seed, outdir):
+    stem = os.path.join(outdir, "fuzz_rc32_min_%d" % seed)
+    generator = RC32Gen(seed)
+    with open(stem + "_probe.s", "w") as source:
+        source.write(generator.emit(None))
+    assemble_rc32(stem + "_probe.s", stem + "_probe.bin")
+    probe = rc32_state(stem + "_probe.bin", dump_window=True)
+    if probe["outcome"] != "DONE" or probe["result"] != 0x600D:
+        raise RuntimeError("RC32 probe did not finish (seed %d, result 0x%08X)" %
+                           (seed, probe["result"]))
+    rng = random.Random(seed ^ 0x5EED)
+    expect = {
+        "r": list(probe["r"]),
+        "s": list(probe["s"]),
+        "mem": list(probe["mem"]),
+        "probes": sorted(rng.sample(range(RC32_WIN_WORDS), 4)),
+    }
+    checker = RC32Gen(seed)
+    with open(stem + ".s", "w") as source:
+        source.write(checker.emit(expect))
+    assemble_rc32(stem + ".s", stem + ".bin")
+    checked = rc32_state(stem + ".bin", dump_window=False)
+    if checked["outcome"] != "DONE" or checked["result"] != 0x600D:
+        raise RuntimeError("RC32 self-check failed under ISS (seed %d, result 0x%08X)" %
+                           (seed, checked["result"]))
+    return stem + ".bin"
+
+
 def make_case(seed, family, config, outdir):
     if family == "nano":
         return make_nano_case(seed, config, outdir)
-    return make_tiny_case(seed, config, outdir)
+    if family == "rc32":
+        return make_rc32_case(seed, outdir)
+    return make_rc16_case(seed, config, outdir)
 
 
 def shell_join(args):
@@ -672,9 +911,11 @@ def replay_command(args, config, seed, core=None):
 
 
 def trace_supported(family, core):
-    return (family == "nano" and core == "nano1") or (
-        family == "tiny" and core in ("tiny1", "tiny2", "tiny4", "tiny8", "tiny16")) or (
-        family == "fast" and core in ("fast", "fast-dsp", "fast-ice", "fast-ice-dsp"))
+    return (family == "nano" and core == "nano") or (
+        family == "rc16" and core in ("rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16")) or (
+        family == "fast" and core in ("fast", "fast-dsp", "fast-ice", "fast-ice-dsp")) or (
+        family == "rc32" and core in
+        tuple("rc32-%d" % width for width in RC32_WIDTHS))
 
 
 def fast_iss_path():
@@ -688,6 +929,8 @@ def fast_iss_path():
 
 
 def sim_base_args(family, config, image, fast_iss):
+    if family == "rc32":
+        return [fast_iss, image, "--rc32"]
     if family == "nano":
         return [fast_iss, image, "--nano"]
 
@@ -754,10 +997,10 @@ def sim_trace_args(family, config, image):
     return args
 
 
-def tiny_state(image, config, dump_window=True):
-    state = run_fast_state("tiny", config, image, dump_base=(WIN >> 1),
+def rc16_state(image, config, dump_window=True):
+    state = run_fast_state("rc16", config, image, dump_base=(WIN >> 1),
                            dump_len=WIN_WORDS) if dump_window else \
-        run_fast_state("tiny", config, image)
+        run_fast_state("rc16", config, image)
     return state
 
 
@@ -776,6 +1019,17 @@ def nano_state(image, config, dump_window=True):
         state["mem"] = dumped[win_w - scratch_w:win_w - scratch_w + WIN_WORDS]
     else:
         state = run_fast_state("nano", config, image)
+    return state
+
+
+def rc32_state(image, dump_window=True):
+    if not dump_window:
+        return run_fast_state("rc32", "min", image)
+    state = run_fast_state("rc32", "min", image, dump_base=(RC32_WIN >> 1),
+                           dump_len=RC32_WIN_WORDS * 2)
+    halves = state["mem"]
+    state["mem"] = [halves[index * 2] | (halves[index * 2 + 1] << 16)
+                    for index in range(RC32_WIN_WORDS)]
     return state
 
 
@@ -844,15 +1098,26 @@ def build_tb(core, family, config, outdir):
     if not trace_supported(family, core):
         raise ValueError("trace compare does not support %s" % core)
 
-    if family == "nano":
+    if family == "rc32":
+        try:
+            width = int(core.removeprefix("rc32-"))
+        except ValueError as error:
+            raise ValueError("invalid RC32 core name: %s" % core) from error
+        if width not in RC32_WIDTHS:
+            raise ValueError("unsupported RC32 datapath width: %d" % width)
+        d = os.path.join(outdir, "v_trace_%s" % core)
+        top = "riscc32_min"
+        rtl = os.path.join(RTL, "riscc32_min.v")
+        defs = ["-GW=%d" % width]
+    elif family == "nano":
         d = os.path.join(outdir, "v_trace_nano")
-        top = "riscc_nano1"
-        rtl = os.path.join(RTL, "riscc_nano1.v")
+        top = "riscc_nano"
+        rtl = os.path.join(RTL, "riscc_nano.v")
         defs = []
     elif family == "fast":
         d = os.path.join(outdir, "v_trace_%s" % core)
-        top = "riscc_fast"
-        rtl = os.path.join(RTL, "riscc_fast.v")
+        top = "riscc16_fast"
+        rtl = os.path.join(RTL, "riscc16_fast.v")
         defs = []
         if "dsp" in core:
             defs.append("-DRISCC_FAST_DSP")
@@ -860,22 +1125,22 @@ def build_tb(core, family, config, outdir):
             defs.append("-DRISCC_FAST_SYNC_RF")
     else:
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
-        width = int(core.removeprefix("tiny"))
+        width = int(core.removeprefix("rc16-"))
         if width == 16 and config == "min":
-            top = "riscc_tiny16_min"
-            rtl = os.path.join(RTL, "riscc_tiny16_min.v")
+            top = "riscc16_min"
+            rtl = os.path.join(RTL, "riscc16_min.v")
             width_args = []
         elif width == 16:
-            top = "riscc_tiny16"
-            rtl = os.path.join(RTL, "riscc_tiny16_full.v" if config == "full" else "riscc_tiny16_sys.v")
+            top = "riscc16"
+            rtl = os.path.join(RTL, "riscc16_full.v" if config == "full" else "riscc16_sys.v")
             width_args = []
         elif config == "min":
-            top = "riscc_tiny_min"
-            rtl = os.path.join(RTL, "riscc_tiny_min.v")
+            top = "riscc_min"
+            rtl = os.path.join(RTL, "riscc_min.v")
             width_args = ["-GW=%d" % width]
         else:
-            top = "riscc_tiny"
-            rtl = os.path.join(RTL, "riscc_tiny_full.v" if config == "full" else "riscc_tiny_sys.v")
+            top = "riscc"
+            rtl = os.path.join(RTL, "riscc_full.v" if config == "full" else "riscc_sys.v")
             width_args = ["-GW=%d" % width]
         defs = config_defs(config).split()
         defs += width_args
@@ -886,6 +1151,8 @@ def build_tb(core, family, config, outdir):
                      os.path.getmtime(__file__),
                      os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_ports.vh")),
                      os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_state.vh")),
+                     os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_ports32.vh")),
+                     os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_state32.vh")),
                      os.path.getmtime(os.path.join(TEST, "riscc_test.cpp")))
     if os.path.exists(tb) and os.path.getmtime(tb) > newest_src:
         return tb
@@ -903,9 +1170,10 @@ def build_tb(core, family, config, outdir):
     ] + defs + [
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
         " -DRISCC_TB_TRACE" +
+        (" -DRISCC_TB_RC32" if family == "rc32" else "") +
         (" -DRISCC_TB_TRACE_DRAIN=1" if family == "fast" else
          " -DRISCC_TB_TRACE_DRAIN=0"
-         if family == "tiny" and core == "tiny16" else ""),
+         if family == "rc16" and core == "rc16-16" else ""),
         "-o", "tb",
         rtl,
         os.path.join(TEST, "riscc_test.cpp"),
@@ -924,7 +1192,7 @@ def main():
                     help="first deterministic campaign seed")
     ap.add_argument("--random-seed", action="store_true",
                     help="choose and print a fresh random campaign base seed")
-    ap.add_argument("--family", default="tiny", choices=["tiny", "nano", "fast"])
+    ap.add_argument("--family", default="rc16", choices=["rc16", "nano", "fast", "rc32"])
     ap.add_argument("--config")
     ap.add_argument("--cores")
     ap.add_argument("--outdir", default=os.path.join(ROOT, "build", "fuzz"))
@@ -932,7 +1200,8 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     valid_configs = (NANO_CONFIGS if args.family == "nano" else
-                     ("full",) if args.family == "fast" else TINY_CONFIGS)
+                     RC32_CONFIGS if args.family == "rc32" else
+                     ("full",) if args.family == "fast" else RC16_CONFIGS)
     if args.config is not None and args.config not in valid_configs:
         ap.error("--config must be one of: %s" % ", ".join(valid_configs))
     if args.random_seed and args.base_seed is not None:
@@ -948,9 +1217,11 @@ def main():
         return
 
     cores = args.cores.split(",") if args.cores else (
-        ["nano1"] if args.family == "nano" else
+        ["nano"] if args.family == "nano" else
+        ["rc32-%d" % width for width in RC32_WIDTHS]
+        if args.family == "rc32" else
         ["fast", "fast-dsp"] if args.family == "fast" else
-        ["tiny1", "tiny2", "tiny4", "tiny8", "tiny16"])
+        ["rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16"])
     configs = [args.config] if args.config else valid_configs
     base_seed = (args.base_seed if args.base_seed is not None
                  else random.SystemRandom().randrange(0, 1 << 31))

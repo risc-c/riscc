@@ -1,12 +1,12 @@
-// RISC-C nano1 bit-serial implementation.
+// RISC-C Nano bit-serial implementation.
 //
-// Nano keeps the tiny1 serial datapath shape but removes the expensive
+// Nano keeps the RC16 /1 serial datapath shape but removes the expensive
 // architectural conveniences: no S-bank, no system/interrupt profile,
 // no CMPI, no signed SLT, and CALL writes its link to rd.
 
 `default_nettype none
 
-module riscc_nano1 #(
+module riscc_nano #(
     parameter [15:0] RESET_PC = 16'h0000
 ) (
     input  wire        clk,
@@ -44,7 +44,7 @@ module riscc_nano1 #(
 
     reg [2:0] state_q;
     reg [15:0] instr_q;
-    // Physical bit 14 is retained while instr_q[14] carries compact S.
+    // Physical bit 14 is duplicated for a shallow format decode.
     reg        register_format_q;
     reg [15:0] pc_q;
     reg [15:0] addr_q;
@@ -110,7 +110,7 @@ module riscc_nano1 #(
     wire mem_op = imm_mem_group | register_memory_op;
     // f5[0] retains the existing direct load/store distinction. Nano does
     // not inspect the direct-family bbb sub-operation.
-    wire mem_store_decode = imm_mem_group ? instr_q[14] : f5[0];
+    wire mem_store_decode = imm_mem_group ? instr_q[0] : f5[0];
     wire store_op = mem_op & mem_store_decode;
     wire load_op = mem_op & ~mem_store_decode;
     wire byte_access = register_memory_op & f5[1];
@@ -177,7 +177,8 @@ module riscc_nano1 #(
     wire lui_op = immediate_group & (aaa == 3'b001);
     wire imm_stream_bit =
         lui_op ? (bit_idx_q[3] ? instr_q[imm_low_idx] : 1'b0) :
-        bit_idx_q[3] ? (sign_extend_imm & instr_q[7]) : instr_q[imm_low_idx];
+        bit_idx_q[3] ? (sign_extend_imm & instr_q[7]) :
+        instr_q[imm_low_idx];
 
     // ------------------------------------------------------------------
     // Bit-serial ALU
@@ -207,7 +208,13 @@ module riscc_nano1 #(
     // ------------------------------------------------------------------
     wire use_pc_offset = branch_group &
         (ddd[2] | ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]));
-    wire pc_offset_bit = use_pc_offset ? imm_stream_bit : 1'b0;
+    // The compact branch field is physically arranged as byte-offset bits
+    // 7:1 followed by its sign in bit zero. The forced two-byte step masks
+    // that low sign copy, while high serial bits repeat it directly.
+    wire branch_offset_bit = bit_idx_q[3] ?
+        instr_q[0] : instr_q[imm_low_idx];
+    wire pc_offset_bit = first_bit ? 1'b1 :
+        (use_pc_offset & branch_offset_bit);
     wire [1:0] pc_sum = {1'b0, pc_q[0]} + {1'b0, pc_offset_bit} +
                         {1'b0, pc_carry_q};
     wire pc_sum_bit = pc_sum[0];
@@ -242,10 +249,9 @@ module riscc_nano1 #(
             alu_carry_q <= subtract;
 
         pc_carry_q <= in_execute ? pc_sum[1] : 1'b1;
-
         if (in_execute) begin
             pc_q <= {next_pc_bit, pc_q[15:1]};
-            addr_q <= {first_bit ? 1'b0 : pc_q[15], addr_q[15:1]};
+            addr_q <= {next_pc_bit, addr_q[15:1]};
         end else if (in_prep) begin
             addr_q <= {loose_byte_decode ? rf_read_bit : sum_bit,
                        addr_q[15:1]};
@@ -267,7 +273,7 @@ module riscc_nano1 #(
         // Other datapath registers are overwritten before they are observed.
         if (rst) begin
             pc_q <= RESET_PC;
-            addr_q <= {RESET_PC[14:0], 1'b0};
+            addr_q <= RESET_PC;
             r0_zero_q <= 1'b1;
             r0_negative_q <= 1'b0;
         end
@@ -296,8 +302,7 @@ module riscc_nano1 #(
         bit_idx_q <= serial_active ? bit_idx_next : 4'd0;
 
         if (in_fetch_capture) begin
-            // Reuse the original high store-decode bit for compact S.
-            instr_q <= {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+            instr_q <= mem_rdata;
             register_format_q <= mem_rdata[14];
         end
 
@@ -321,10 +326,8 @@ module riscc_nano1 #(
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 1;
     wire        tr_commit_i = in_execute & last_bit;
-    wire [14:0] tr_pc_i = pc_q[14:0];
-    wire [15:0] tr_ir_i = {instr_q[15],
-                            instr_q[15] ? register_format_q : 1'b1,
-                            instr_q[13:0]};
+    wire [14:0] tr_pc_i = pc_q[15:1];
+    wire [15:0] tr_ir_i = instr_q;
     wire        tr_ie_i = 1'b0;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = 1'b0;

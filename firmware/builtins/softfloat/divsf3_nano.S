@@ -36,12 +36,20 @@
 .Ldiv_no_subtract\@:
         .endm
 
+        .macro NANO_RETURN
+        LD      r4, [r7 - 12]
+        RET     r6
+        .endm
+
         .section .text.__divsf3,"ax",@progbits
         .p2align 1
         .global __divsf3
         .hidden __divsf3
         .type __divsf3,@function
 __divsf3:
+        ST     r4, [r7 - 12]
+        LD     r3, [r7 + 0]             /* second operand */
+        LD     r4, [r7 + 2]
         ST     r5, [r7 - 10]
         ST     r6, [r7 - 8]
         XOR     r0, r2, r4
@@ -73,7 +81,7 @@ __divsf3:
 .Learly_return:
         LD     r6, [r7 - 8]
         LD     r5, [r7 - 10]
-        RET     r6
+        NANO_RETURN
 
 .Lboth_normal:
         /* Biased result exponent: a_exp - b_exp + 127. */
@@ -187,5 +195,5 @@ __divsf3:
 
         LD     r6, [r7 - 8]
         LD     r5, [r7 - 10]
-        RET     r6
+        NANO_RETURN
         .size __divsf3, . - __divsf3

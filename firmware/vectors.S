@@ -12,7 +12,7 @@ __vectors:
         JMP8    .Lno_irq
         NOP
 #else
-        JAL16   S0, _start
-        JAL16   S0, __riscc_irq_vector
+        JMPL    _start
+        JMPL    __riscc_irq_vector
 #endif
         .size __vectors, . - __vectors

@@ -1,14 +1,14 @@
-// riscc_tiny16_min.v : area-specialized RISC-C/16 Min core.
+// riscc16_min.v : area-specialized RISC-C/16 Min core.
 //
 // This full-width Min implementation uses one shared 17-bit adder/result
 // path, one memory-data register, and a one-port synchronous register file.
 // Sys IRQ, JAL16, variable-shift, and Full multiply machinery remain in the
-// separate riscc_tiny16 Sys/Full core.
+// separate riscc16 Sys/Full core.
 
 `default_nettype none
 
-module riscc_tiny16_min #(
-    parameter [15:0] RESET_PC = 16'h0000           // word address
+module riscc16_min #(
+    parameter [15:0] RESET_PC = 16'h0000           // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -61,6 +61,8 @@ module riscc_tiny16_min #(
     // ------------------------------------------------------------------
     reg [15:0] instruction_q;
     reg        register_format_q;
+    // Instruction addresses are aligned, so retain the PC without its
+    // constant-zero byte bit and restore that bit only at the shared adder.
     reg [14:0] pc_q;
     reg [15:0] mdr_q;
     // The byte lane and less-than result have disjoint lifetimes.
@@ -69,7 +71,7 @@ module riscc_tiny16_min #(
     reg        r0_negative_q;
 
     wire immediate_memory = !instruction_q[15];
-    wire immediate_store_word = immediate_memory && instruction_q[14];
+    wire immediate_store_word = immediate_memory && instruction_q[0];
     wire immediate_class = instruction_q[15] && !register_format_q;
     wire register_class  = instruction_q[15] && register_format_q;
 
@@ -105,8 +107,7 @@ module riscc_tiny16_min #(
     // Reserved register-memory selectors may alias these loose planes.
     wire register_memory_decode =
         register_memory_group &&
-        (!register_opcode[2] ||
-         (register_opcode[1] && !register_opcode[0]));
+        (!register_opcode[2] || register_opcode[1]);
     wire register_store_group =
         register_memory_group &&
         register_opcode[1] && register_opcode[0];
@@ -137,17 +138,15 @@ module riscc_tiny16_min #(
     wire mts_op = system_group && !rb[2] && rb[1] && rb[0];
     wire link_enabled = |rd;
 
-    // Min distinguishes its defined direct byte/data and halfword/program
-    // operations with P=rb[0]; unsupported widths may alias either path.
+    // Reserved direct width selectors may alias these loose decode planes.
     wire direct_memory_plane =
         register_memory_group && register_opcode[1];
-    wire program_load_op = direct_memory_plane && rb[0];
     // In memory-transfer states, instruction_q[15] distinguishes register
     // memory from immediate word memory; the remaining bits select byte/data.
     wire byte_memory_op =
-        instruction_q[15] && register_opcode[1] && !rb[0];
+        instruction_q[15] && register_opcode[1];
     wire direct_address_op =
-        immediate_memory | (direct_memory_plane && !rb[0]);
+        immediate_memory | direct_memory_plane;
     wire memory_op = immediate_memory | register_memory_decode;
     wire store_op = immediate_store_word | register_store_group;
     wire signed_byte_load = register_opcode[2];
@@ -156,14 +155,13 @@ module riscc_tiny16_min #(
     wire executes_directly =
         immediate_load_group | immediate_alu_op | direct_address_op |
         right_shift_slot | mfs_op | mts_op;
-    // Genuine two-source operations stage rb. Program loads and funnels use
-    // the same operand-load state to stage ra; funnels then reissue old rd.
+    // Genuine two-source operations stage rb. Funnels use the operand-load
+    // state to stage ra, then reissue old rd.
     wire indexed_load_op =
         register_memory_decode && !register_opcode[1];
     wire ordinary_rb_operand = register_alu_group | indexed_load_op;
-    wire staged_alu_operand = ordinary_rb_operand | program_load_op;
-    wire needs_operand =
-        ordinary_rb_operand | program_load_op | funnel_op;
+    wire staged_alu_operand = ordinary_rb_operand;
+    wire needs_operand = ordinary_rb_operand | funnel_op;
 
     // ------------------------------------------------------------------
     // Sequencer and synchronous RF schedule
@@ -181,8 +179,7 @@ module riscc_tiny16_min #(
         in_mdr_writeback;
     wire writeback_complete =
         execute_complete | in_compare_writeback;
-    wire start_fetch =
-        in_fetch_request | writeback_complete;
+    wire start_fetch = in_fetch_request | writeback_complete;
 
     // A read issued in one state appears during the following state. LDI,
     // LUI, and branches ignore RF data, so one broad immediate selector is
@@ -192,12 +189,12 @@ module riscc_tiny16_min #(
         (in_operand_load && register_group[1]);
 `ifdef RISCC_ECP5
     wire select_read_rb =
-        start_operand_load && !program_load_op && !funnel_op;
+        start_operand_load && !funnel_op;
 `else
     // Group 10 always reads ra in the compact baseline. Using the group bit
     // directly leaves the iCE40 RF-address path shallower at identical area.
     wire select_read_rb =
-        start_operand_load && !program_load_op && !register_group[1];
+        start_operand_load && !register_group[1];
 `endif
     wire [2:0] rf_read_register =
         select_read_rd ? rd : select_read_rb ? rb : ra;
@@ -231,6 +228,10 @@ module riscc_tiny16_min #(
     // ------------------------------------------------------------------
     // Load formatting and shared ALU
     // ------------------------------------------------------------------
+    // Compact branches rotate their signed halfword displacement in the
+    // instruction: physical bit zero is the sign, and bits 7:1 become byte
+    // offset bits 7:1.  This lets the byte-PC adder consume the displacement
+    // directly, with no shifter or second branch state.
     wire [15:0] zero_extended_imm8 = {8'h00, instruction_q[7:0]};
     wire [15:0] upper_immediate = {instruction_q[7:0], 8'h00};
     wire [7:0] selected_load_byte =
@@ -242,8 +243,8 @@ module riscc_tiny16_min #(
                          mem_rdata[15:8],
         selected_load_byte};
 
-    // Increment PC while the fetched word is captured. Decode then sees
-    // pc_next, so JALR can write its link immediately without another state.
+    // Advance the byte PC by two while capturing the fetched halfword. Decode
+    // then sees pc_next, so JALR can write its link without another state.
     wire alu_a_is_pc = in_instruction_capture | in_decode;
     wire alu_a_is_zero =
         (in_execute &&
@@ -252,7 +253,7 @@ module riscc_tiny16_min #(
         (in_mdr_writeback && !funnel_op) |
         in_compare_writeback;
     wire [15:0] alu_a =
-        alu_a_is_pc ? {1'b0, pc_q} :
+        alu_a_is_pc ? {pc_q, 1'b0} :
         alu_a_is_zero ? 16'h0000 :
         rf_read_data;
 
@@ -262,8 +263,6 @@ module riscc_tiny16_min #(
         (rd[2] && !rd[1]) |
         (!rd[2] &&
          ((rd[1] ? r0_negative_q : r0_zero_q) ^ rd[0]));
-    // Always form a branch target; the PC write enable decides whether it is
-    // consumed. This keeps the flag result out of the wide ALU-input mux.
     wire alu_b_is_zero_extended_imm =
         (in_execute &&
          (load_immediate | immediate_arithmetic | immediate_memory)) |
@@ -275,7 +274,7 @@ module riscc_tiny16_min #(
         alu_b_is_mdr ? mdr_q :
         alu_b_is_upper_imm ? upper_immediate :
         alu_b_is_zero_extended_imm ? zero_extended_imm8 :
-        16'h0000;
+        {15'h0000, in_instruction_capture};
 
     wire [15:0] logic_rhs =
         register_logic_op ? mdr_q : zero_extended_imm8;
@@ -314,8 +313,11 @@ module riscc_tiny16_min #(
     wire sign_extend_immediate =
         (in_execute && (immediate_arithmetic | immediate_memory)) |
         (in_decode && branch_op);
-    wire fill_high_byte =
-        sign_extend_immediate && instruction_q[7];
+    // Sign extension is active in Decode only for branches; every other
+    // signed immediate reaches the adder in Execute.
+    wire immediate_sign_bit =
+        in_decode ? instruction_q[0] : instruction_q[7];
+    wire fill_high_byte = sign_extend_immediate && immediate_sign_bit;
     // The XOR stage performs subtraction and immediate sign extension.
     wire [15:0] adjusted_alu_b =
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
@@ -357,7 +359,7 @@ module riscc_tiny16_min #(
     always @(posedge clk) begin
         if (rst) begin
             state_q <= (10'b1 << (ST_FETCH_REQUEST - 1));
-            pc_q <= RESET_PC[14:0];
+            pc_q <= RESET_PC[15:1];
             r0_zero_q <= 1'b1;
             r0_negative_q <= 1'b0;
         end else begin
@@ -380,15 +382,14 @@ module riscc_tiny16_min #(
                 in_load_capture | funnel_left_execute;
 
             if (in_instruction_capture) begin
-                instruction_q <=
-                    {mem_rdata[15], mem_rdata[0], mem_rdata[13:0]};
+                instruction_q <= mem_rdata;
                 register_format_q <= mem_rdata[14];
             end
 
             if (in_instruction_capture |
                 (in_decode && branch_op && branch_taken) |
                 in_jump_commit)
-                pc_q <= alu_result[14:0];
+                pc_q <= alu_result[15:1];
 
             if (in_load_capture | update_mdr_from_alu)
                 mdr_q <= in_load_capture ? load_result : alu_result;
@@ -412,8 +413,7 @@ module riscc_tiny16_min #(
         writeback_complete | (in_decode && branch_op) |
         memory_write_cycle | in_jump_commit;
     wire [14:0] tr_pc_i = pc_q;
-    wire [15:0] tr_ir_i =
-        {instruction_q[15], register_format_q, instruction_q[13:0]};
+    wire [15:0] tr_ir_i = instruction_q;
     wire        tr_ie_i = 1'b0;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_write_system_bank;

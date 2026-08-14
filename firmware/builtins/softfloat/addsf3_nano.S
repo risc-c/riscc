@@ -14,12 +14,20 @@
 .Lfsl_done\@:
         .endm
 
+        .macro NANO_RETURN
+        LD      r4, [r7 - 14]
+        RET     r6
+        .endm
+
         .section .text.__addsf3,"ax",@progbits
         .p2align 1
         .global __addsf3
         .hidden __addsf3
         .type __addsf3,@function
 __addsf3:
+        ST     r4, [r7 - 14]
+        LD     r3, [r7 + 0]             /* second operand */
+        LD     r4, [r7 + 2]
         ST     r5, [r7 - 12]
         ST     r6, [r7 - 10]
         ST     r2, [r7 - 8]           /* left sign */
@@ -41,7 +49,7 @@ __addsf3:
 .Learly_return:
         LD     r6, [r7 - 10]
         LD     r5, [r7 - 12]
-        RET     r6
+        NANO_RETURN
 
 .Lboth_normal:
         ST     r0, [r7 - 2]
@@ -259,5 +267,5 @@ __addsf3:
 .Lreturn:
         LD     r6, [r7 - 10]
         LD     r5, [r7 - 12]
-        RET     r6
+        NANO_RETURN
         .size __addsf3, . - __addsf3

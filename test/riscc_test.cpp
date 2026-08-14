@@ -1,6 +1,6 @@
 // Shared black-box Verilator testbench for the whole RISC-C core family
-// (tiny1/2/4/8/16, nano): build any core against it with
-//     verilator --top-module riscc_<core> --prefix Vriscc ...
+// (rc16-1/2/4/8/16, nano): build any core against it with the corresponding
+// top module (riscc_min, riscc16, riscc_nano, or another renamed RTL top).
 // so every top compiles into the same Vriscc class.  Drives only the
 // architectural memory/irq interface -- no internal signals.
 //
@@ -50,6 +50,23 @@ static void print_trace(RISCC_TB_TOP *top, uint64_t step)
     if (!top->trace_valid)
         return;
 
+#ifdef RISCC_TB_RC32
+    printf("TRACE step=%llu pc=%08X ir=%04X ie=%u "
+        "r=%08X,%08X,%08X,%08X,%08X,%08X,%08X,%08X "
+        "s=%08X,%08X,%08X,%08X,%08X,%08X,%08X,%08X\n",
+        (unsigned long long)step,
+        (unsigned)top->trace_pc,
+        (unsigned)top->trace_ir,
+        (unsigned)top->trace_ie,
+        (unsigned)top->trace_r0, (unsigned)top->trace_r1,
+        (unsigned)top->trace_r2, (unsigned)top->trace_r3,
+        (unsigned)top->trace_r4, (unsigned)top->trace_r5,
+        (unsigned)top->trace_r6, (unsigned)top->trace_r7,
+        (unsigned)top->trace_s0, (unsigned)top->trace_s1,
+        (unsigned)top->trace_s2, (unsigned)top->trace_s3,
+        (unsigned)top->trace_s4, (unsigned)top->trace_s5,
+        (unsigned)top->trace_s6, (unsigned)top->trace_s7);
+#else
     printf("TRACE step=%llu pc=%04X ir=%04X ie=%u "
         "r=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X "
         "s=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X\n",
@@ -65,6 +82,7 @@ static void print_trace(RISCC_TB_TOP *top, uint64_t step)
         (unsigned)top->trace_s2, (unsigned)top->trace_s3,
         (unsigned)top->trace_s4, (unsigned)top->trace_s5,
         (unsigned)top->trace_s6, (unsigned)top->trace_s7);
+#endif
 }
 #endif
 

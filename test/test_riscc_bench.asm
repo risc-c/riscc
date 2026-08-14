@@ -17,12 +17,15 @@
 ; Fail codes 0x0BA1..0x0BA8 identify the kernel; success writes 0x600D
 ; to the result register in the I/O page (byte 0xFFFE).
 
-.vectors
-
 .text
+.globl start
 reset_tramp:
-    LDI16 r0, start >> 1
-    JMP   r0
+    LDI16 r0, start
+.ifdef RISCC_NANO
+    JALR  r0, r0
+.else
+    JALR  S0, r0
+.endif
 
 fail:                       ; near stub for the (unused) vectors
     LDI16 r7, 0x0BAD
@@ -41,23 +44,23 @@ cmp_b:
     .asciz "benchmark-Bx"
 crc_dat:
     .ascii "RISC-C16"
-    .align 2
+    .balign 2, 0
 sort_dat:
-    .word 0x4BEE, 0x0007, 0xD00D, 0x1234, 0xBEEF, 0x0F0F
-    .word 0x8000, 0x0001, 0x7FFF, 0xAAAA, 0x00FF, 0x4BEE
-    .align 2
+    .short 0x4BEE, 0x0007, 0xD00D, 0x1234, 0xBEEF, 0x0F0F
+    .short 0x8000, 0x0001, 0x7FFF, 0xAAAA, 0x00FF, 0x4BEE
+    .balign 2, 0
 fir_data:
-    .word 1, 2, 3, 4, 5, 6, 7, 8
-    .word 9, 10, 11, 12, 13, 14, 15
+    .short 1, 2, 3, 4, 5, 6, 7, 8
+    .short 9, 10, 11, 12, 13, 14, 15
 fir_coeff:
-    .word 1, 0xFFFF, 2, 0xFFFE, 3, 0xFFFD, 4, 0xFFFC
+    .short 1, 0xFFFF, 2, 0xFFFE, 3, 0xFFFD, 4, 0xFFFC
 dst_buf:
     .space 32
 .ifdef RISCC_NANO
 nano_taps:
-    .word 0
+    .short 0
 nano_outputs:
-    .word 0
+    .short 0
 .endif
 
 start:
@@ -345,8 +348,8 @@ fir_outer_n:
 fir_inner_n:
     LD   r1, [r4+0]
     LD   r2, [r5+0]
-    LDI16 r3, __mul16 >> 1
-    CALL  r7, r3
+    LDI16 r3, __mul16
+    JALR  r7, r3
     ADD   r6, r6, r1
     ADDI  r4, 2
     ADDI  r5, 2
@@ -506,5 +509,5 @@ mul_n15:
     ADD   r1, r1, r3
 mul_n16:
     ADD   r2, r2, r2
-    JMP   r7
+    JALR  r0, r7
 .endif

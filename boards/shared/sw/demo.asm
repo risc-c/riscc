@@ -1,9 +1,9 @@
 ; RISC-C shared board SoC demo.
 ;
-; UART hardware is intentionally tiny.  The ISR moves bytes between the
+; UART hardware is intentionally compact.  The ISR moves bytes between the
 ; hardware registers and software queues; the main loop owns command policy.
 
-.vectors
+.section .vectors, "ax", @progbits
     JMP16 start
     JMP16 isr_irq
 
@@ -14,7 +14,7 @@ boot_msg:
 .else
     .asciz "RISC-C on icepi-zero\r\n"
 .endif
-    .align 2
+    .balign 2, 0
 
 ; Queue byte r1 into the TX software queue.  Drops on full.
 ; Clobbers r0..r5.  Preserves r6/r7.
@@ -212,15 +212,15 @@ draw_not_left_edge:
     LDI16 r3, 0xF000      ; preserve right border pixel
     OR    r1, r1, r3
 draw_store_word:
-    SHL1  r2, r4
+    ADD   r2, r4, r4
     ADD   r2, r2, r7
     ST   r1, [r2+0]
 
     ADDI  r4, 1
     CMPI  r4, 40
     BEQZ  draw_x_done
-    LDI16 r1, draw_x_loop >> 1
-    JMP   r1
+    LDI16 r1, draw_x_loop
+    JALR  S0, r1
 draw_x_done:
     LDI16 r1, yblk
     ST   r6, [r1+0]
@@ -237,8 +237,8 @@ draw_x_done:
     ADDI  r6, 1
     CMPI  r6, 119
     BEQZ  draw_done
-    LDI16 r1, draw_y_loop >> 1
-    JMP   r1
+    LDI16 r1, draw_y_loop
+    JALR  S0, r1
 draw_done:
     LDI   r1, 13          ; one line per completed frame
     CALL16 tx_push
@@ -262,8 +262,8 @@ border_top_loop:
     ADDI  r6, 1
     CMPI  r6, 40
     BEQZ  border_top_done
-    LDI16 r2, border_top_loop >> 1
-    JMP   r2
+    LDI16 r2, border_top_loop
+    JALR  S0, r2
 border_top_done:
     LDI16 r7, 0xA530
     LDI   r6, 0
@@ -273,8 +273,8 @@ border_bottom_loop:
     ADDI  r6, 1
     CMPI  r6, 40
     BEQZ  border_bottom_done
-    LDI16 r2, border_bottom_loop >> 1
-    JMP   r2
+    LDI16 r2, border_bottom_loop
+    JALR  S0, r2
 border_bottom_done:
     LDI16 r7, 0x8050
     LDI   r6, 1
@@ -296,8 +296,8 @@ border_side_loop:
     ADDI  r6, 1
     CMPI  r6, 119
     BEQZ  border_done
-    LDI16 r2, border_side_loop >> 1
-    JMP   r2
+    LDI16 r2, border_side_loop
+    JALR  S0, r2
 border_done:
     RETS
 
@@ -432,14 +432,14 @@ ticker_store_word:
     ADDI  r6, 1
     CMPI  r6, 40
     BEQZ  ticker_row_done
-    LDI16 r1, ticker_word_loop >> 1
-    JMP   r1
+    LDI16 r1, ticker_word_loop
+    JALR  S0, r1
 ticker_row_done:
     ADDI  r7, 1
     CMPI  r7, 10
     BEQZ  ticker_done_rows
-    LDI16 r1, ticker_row_loop >> 1
-    JMP   r1
+    LDI16 r1, ticker_row_loop
+    JALR  S0, r1
 ticker_done_rows:
     LDI16 r1, ticker_scroll
     LD   r2, [r1+0]
@@ -490,7 +490,7 @@ ticker_emit_pixel:
 
     LDI16 r1, ticker_lane
     LD   r2, [r1+0]
-    SHL1  r2, r2
+    ADD   r2, r2, r2
     LDI16 r1, ticker_nibble_masks
     LDX  r5, [r1+r2]
     LDI16 r1, ticker_word
@@ -572,7 +572,7 @@ julia_iter:
     LDI16 r0, zy_var
     LD   r2, [r0+0]
     CALL16 fmul_q10
-    SHL1  r7, r1          ; new zy = 2*zx*zy + julia_cy
+    ADD   r7, r1, r1      ; new zy = 2*zx*zy + julia_cy
     LDI16 r6, julia_cy
     LD   r6, [r6+0]
     ADD   r7, r7, r6
@@ -751,8 +751,10 @@ isr_done:
     MFS   r2, S3
     MFS   r1, S2
     MFS   r0, S1
-    ERET
+    RETI  S0
 
+.globl _start
+_start:
 start:
     LDI16 r7, boot_msg
     LDI   r6, 0
@@ -767,7 +769,7 @@ boot_queue_loop:
 boot_queue_done:
     CALL16 draw_border
     ; Enable the UART source in the shared two-source interrupt controller.
-    LDI16 r1, 0xFFE0
+    LDI16 r1, 0xFFF6
     LDI   r2, 1
     ST   r2, [r1+0]
     LDI16 r1, 0xFFF2
@@ -781,45 +783,45 @@ main_loop:
     JMP8  main_loop
 
 .data
-rx_head: .word 0
-rx_tail: .word 0
-tx_head: .word 0
-tx_tail: .word 0
-pattern: .word 0
-speed:   .word 0
-frame:   .word 0
-draw_link: .word 0
-fractal_link: .word 0
-julia_cx: .word -571
-julia_cy: .word 571
-julia_target: .word 1
-view_step: .word 20
-zy0_var: .word 0
-zx_var:  .word 0
-zy_var:  .word 0
-zx2_var: .word 0
-zy2_var: .word 0
-new_zy_var: .word 0
-iter_var: .word 0
-fmul_sign: .word 0
-xblk:    .word 0
-yblk:    .word 0
-fb_row:  .word 0
-xpix:    .word 0
-pack_word: .word 0
-ticker_link: .word 0
-ticker_scroll: .word 0
-ticker_row: .word 0
-ticker_col: .word 0
-ticker_char: .word 0
-ticker_lane: .word 0
-ticker_word: .word 0
-ticker_fb_addr: .word 0
+rx_head: .short 0
+rx_tail: .short 0
+tx_head: .short 0
+tx_tail: .short 0
+pattern: .short 0
+speed:   .short 0
+frame:   .short 0
+draw_link: .short 0
+fractal_link: .short 0
+julia_cx: .short -571
+julia_cy: .short 571
+julia_target: .short 1
+view_step: .short 20
+zy0_var: .short 0
+zx_var:  .short 0
+zy_var:  .short 0
+zx2_var: .short 0
+zy2_var: .short 0
+new_zy_var: .short 0
+iter_var: .short 0
+fmul_sign: .short 0
+xblk:    .short 0
+yblk:    .short 0
+fb_row:  .short 0
+xpix:    .short 0
+pack_word: .short 0
+ticker_link: .short 0
+ticker_scroll: .short 0
+ticker_row: .short 0
+ticker_col: .short 0
+ticker_char: .short 0
+ticker_lane: .short 0
+ticker_word: .short 0
+ticker_fb_addr: .short 0
 ticker_nibble_masks:
-    .word 0x000F, 0x00F0, 0x0F00, 0xF000
+    .short 0x000F, 0x00F0, 0x0F00, 0xF000
 ticker_bit_masks:
     .byte 0x10, 0x08, 0x04, 0x02, 0x01
-    .align 2
+    .balign 2, 0
 ticker_glyphs:
     ; R
     .byte 0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11
@@ -884,23 +886,23 @@ ticker_glyphs:
     .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    .align 2
+    .balign 2, 0
 julia_path:
-    .word -571, 571
-    .word -746, 309
-    .word -807, 0
-    .word -746, -309
-    .word -571, -571
-    .word -309, -746
-    .word 0, -807
-    .word 309, -746
-    .word 571, -571
-    .word 746, -309
-    .word 807, 0
-    .word 746, 309
-    .word 571, 571
-    .word 309, 746
-    .word 0, 807
-    .word -309, 746
+    .short -571, 571
+    .short -746, 309
+    .short -807, 0
+    .short -746, -309
+    .short -571, -571
+    .short -309, -746
+    .short 0, -807
+    .short 309, -746
+    .short 571, -571
+    .short 746, -309
+    .short 807, 0
+    .short 746, 309
+    .short 571, 571
+    .short 309, 746
+    .short 0, 807
+    .short -309, 746
 rx_q:    .space 16
 tx_q:    .space 64
