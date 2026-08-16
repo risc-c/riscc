@@ -5,8 +5,8 @@
 __riscc_heap_limit:
         MOV r1, r7
 #ifdef __RISCC_NANO__
-        JALR r0, r6
+        JMP r6
 #else
-        RETS
+        RET     S7
 #endif
         .size __riscc_heap_limit, .-__riscc_heap_limit

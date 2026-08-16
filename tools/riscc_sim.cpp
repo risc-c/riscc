@@ -268,7 +268,12 @@ struct Opts
 
     bool has_shifts() const
     {
-        return fast || faster || nano || !min;
+        return fast || faster || nano || full;
+    }
+
+    bool has_long_jall() const
+    {
+        return fast || faster || (!nano && !min);
     }
 
     bool has_full() const
@@ -581,8 +586,8 @@ struct Sim
         uint8_t imm8 = static_cast<uint8_t>(ir);
         if ((ir & 0xc7ff) == 0x0034)
         {
-            if (!opts.has_sys())
-                throw std::runtime_error("long instruction outside sys profile");
+            if (!opts.has_long_jall())
+                throw std::runtime_error("long instruction outside a profile with JALL");
             uint16_t extension = mem[pc_next & 0x7fff];
             pc_next = static_cast<uint16_t>((pc_next + 1) & 0x7fff);
             if (rd != 0)
@@ -778,7 +783,7 @@ struct Sim
             else if (func == 0x0f)
             {
                 if (opts.nano || !opts.has_shifts())
-                    throw std::runtime_error("SLLI is not in the min profile");
+                    throw std::runtime_error("SLLI is only in the full profile");
                 r[rd] = static_cast<uint16_t>(r[ra] << (rb + 1));
                 instr_cycles = cycle.variable_shift(static_cast<int>(rb + 1));
             }

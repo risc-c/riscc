@@ -10,7 +10,7 @@ The RISC-C specification and reference implementations are released under
 the ISC License and may be used, copied, modified, and distributed for any
 purpose, with or without fee.
 
-Version: `v0.21.0`.
+Version: `v0.22.0`.
 
 Author: Arto Vuori <avuori@iki.fi>
 
@@ -390,9 +390,9 @@ bits. Its shift count is `bbb+1`.
 low XLEN-bit portion is the same for signed and unsigned multiplication.
 
 `SLLI`, `SRLI`, and `SRAI` encode shift counts from 1 through 8. In the
-`min` profile, `SRLI` and `SRAI` always shift by one and their `bbb` field
-must be zero; `SLLI` is undefined. `MUL` is available only in the `full`
-profile.
+`min` and `sys` profiles, `SRLI` and `SRAI` always shift by one and their
+`bbb` field must be zero; `SLLI` is undefined. `MUL` is available only in
+the `full` profile.
 
 ### 5.1 Two-Operand Group
 
@@ -468,7 +468,8 @@ Consequently, `RET S0` preserves `IE`, while `RETI S0` sets it.
 
 `JALR` transfers control to the byte address in `ra` and, unless `Sd` is `S0`,
 writes the byte address of the following instruction to `Sd`. Thus,
-`JALR S0, ra` is a register-indirect jump without a link write.
+`JALR S0, ra` is a register-indirect jump without a link write; assemblers
+accept its conventional spelling, `JMP ra`.
 
 `MFS` copies the selected S-register to `rd`.
 
@@ -581,11 +582,11 @@ smaller profile's defined instructions is valid on a larger profile.
 | `SLL rd, ra` § |  |  |  |
 | `SRL rd, ra` § |  |  |  |
 | `SRA rd, ra` § |  |  |  |
-| `SLLI rd, ra, 1..8` |  | X | X |
+| `SLLI rd, ra, 1..8` |  |  | X |
 | `SRLI rd, ra, 1` | X | X | X |
-| `SRLI rd, ra, 2..8` |  | X | X |
+| `SRLI rd, ra, 2..8` |  |  | X |
 | `SRAI rd, ra, 1` | X | X | X |
-| `SRAI rd, ra, 2..8` |  | X | X |
+| `SRAI rd, ra, 2..8` |  |  | X |
 | `MUL rd, ra, rb` |  |  | X |
 | `MULHU rl, rh, rb` § |  |  |  |
 | `DIVU rr, rq, rb` § |  |  |  |
@@ -638,8 +639,8 @@ are undefined in Nano.
 
 Nano redefines the base register-indirect `JALR` encoding as `JALR rd, ra`. It
 writes `pc_next` to general register `rd` and transfers control through `R[a]`.
-With `rd = r0`, no link is written; this is a plain register jump. Assemblers
-may spell these forms as `CALL rd, ra` and `JMP ra`, respectively.
+With `rd = r0`, no link is written; this is a plain register jump, spelled
+`JMP ra`. A call spells its link destination explicitly as `JALR rd, ra`.
 
 ## Appendix B. Multiply-Divide Instructions (MDU) Extension
 
@@ -771,8 +772,8 @@ their result to 32 bits as specified by the mnemonic.
 ### C.3 RC32 Long Instructions
 
 The long-instruction length and interrupt rules in section 7 apply. RC32
-defines only the shared `JALL` and `JMPL` encoding in its `sys` and
-`full` profiles; it remains absent from `min`. All other base-RC32 long
+defines the shared `JALL` and `JMPL` encoding in its `sys` and `full`
+profiles; it remains absent from `min`. All other base-RC32 long
 encodings are reserved. Appendix D defines additional long instructions when
 RC32X is present.
 
@@ -786,8 +787,8 @@ JALR Sd, rt
 target_literal: .word target
 ```
 
-`JALR S0, rt` suppresses the link write. In `sys` and `full`, `JALL`
-provides a one-instruction call to an aligned address in the low 2 MiB and
+`JALR S0, rt` suppresses the link write. In `sys` and `full`, `JALL` provides
+a one-instruction call to an aligned address in the low 2 MiB and
 `JMPL` is its `Sd=S0` alias.
 
 ### C.4 RC32 Profiles
@@ -795,8 +796,8 @@ provides a one-instruction call to an aligned address in the low 2 MiB and
 RC32 defines `min`, `sys`, and `full` profiles corresponding to the RC16
 mainline profiles. Each inherits the instruction availability of its RC16
 counterpart except that compact `LUI` is replaced by `LDPC`; `LDPC` and compact
-branches use the shared rotated `rel8` field. `JALL`/`JMPL` remain
-available in `sys` and `full`. RC32 has no Nano profile.
+branches use the shared rotated `rel8` field. `JALL`/`JMPL` are available in
+`sys` and `full`. RC32 has no Nano profile.
 
 The following typed halfword instructions are additionally mandatory in every
 RC32 mainline profile:
@@ -877,7 +878,7 @@ function and low register fields retain the compact register-format positions.
 The RC32X long `JALR` and shared `JALL` defined in section D.3 retain three-bit
 S-register link destinations. Other control-transfer and interrupt-control
 instructions retain their compact forms. RC32X does not widen the 21-bit
-absolute target or add `JALL` to `min`; its base `sys` and `full` availability
+absolute target or add `JALL` to `min`; its base Sys/Full availability
 is unchanged.
 
 ### D.2 Long Register Instructions
@@ -945,8 +946,8 @@ retain its operand restrictions.
 For `SLLI`, `SRLI`, and `SRAI`, `xb` is an unsigned five-bit shift-count
 encoding rather than a register selector; the shift count is `xb + 1`, from
 one through 32. Appendix E defines the register-count forms. RC32X `min` permits
-only the existing one-bit `SRLI` and `SRAI` forms, while RC32X `sys` and `full`
-permit the full immediate-shift set. At a count of 32, `SLLI` and `SRLI`
+only the existing one-bit `SRLI` and `SRAI` forms, while RC32X `full` permits
+the full immediate-shift set. At a count of 32, `SLLI` and `SRLI`
 produce zero, while `SRAI` produces 32 copies of the original sign bit.
 
 The long `FSL1` and `FSR1` forms are full three-register operations. The
@@ -1189,12 +1190,12 @@ encoding.
 | `11dddaaa01011000` | — | `STB rs, [ra]` | all |
 | `11dddaaa01011010` | — | `STH rs, [ra]` | RC32 |
 | `11dddaaa01100000` | — | `SRLI rd, ra, 1` | all |
-| `11dddaaa01100bbb` | — | `SRLI rd, ra, 2..8` | RC16 sys |
+| `11dddaaa01100bbb` | — | `SRLI rd, ra, 2..8` | RC16 full |
 | `11dddaaa01101000` | — | `SRAI rd, ra, 1` | all |
-| `11dddaaa01101bbb` | — | `SRAI rd, ra, 2..8` | RC16 sys |
+| `11dddaaa01101bbb` | — | `SRAI rd, ra, 2..8` | RC16 full |
 | `11dddaaa01110000` | — | `LDBS rd, [ra]` | RC16 |
 | `11dddaaa01110010` | — | `LDHS rd, [ra]` | RC32 |
-| `11dddaaa01111bbb` | — | `SLLI rd, ra, 1..8` | RC16 sys |
+| `11dddaaa01111bbb` | — | `SLLI rd, ra, 1..8` | RC16 full |
 | `11dddaaa10000bbb` | — | `DIVU rr, rq, rb` | RC16 MDU |
 | `11dddaaa10001000` | — | `FSL1 rd, ra` | RC16 |
 | `11dddaaa10001001` | — | `FSR1 rd, ra` | RC16 |
@@ -1210,10 +1211,10 @@ encoding.
 | `11dddaaa11111011` | — | `MTS Sd, ra` | RC16 |
 | `1101000011111000` | — | `CLI` | RC16 sys |
 | `1111100011111000` | — | `STI` | RC16 sys |
-| `00ddd00000110100` | `llllllllllllllll` | `JALL Sd, addr16` | RC16 sys |
-| `0000000000110100` | `llllllllllllllll` | `JMPL addr16` | RC16 sys |
-| `00dddhhhhh110100` | `llllllllllllllll` | `JALL Sd, addr21` | RC32 sys |
-| `00000hhhhh110100` | `llllllllllllllll` | `JMPL addr21` | RC32 sys |
+| `00ddd00000110100` | `llllllllllllllll` | `JALL Sd, addr16` | RC16 Sys/Full |
+| `0000000000110100` | `llllllllllllllll` | `JMPL addr16` | RC16 Sys/Full |
+| `00dddhhhhh110100` | `llllllllllllllll` | `JALL Sd, addr21` | RC32 Sys/Full |
+| `00000hhhhh110100` | `llllllllllllllll` | `JMPL addr21` | RC32 Sys/Full |
 | `00dddaaa00000000` | `DDAABB0000000bbb` | `ADD Xd, Xa, Xb` | RC32X |
 | `00dddaaa00000000` | `DDAABB0000001bbb` | `SUB Xd, Xa, Xb` | RC32X |
 | `00dddaaa00000000` | `DDAABB0000010bbb` | `SLT Xd, Xa, Xb` | RC32X |
@@ -1226,14 +1227,14 @@ encoding.
 | `00dddaaa00000000` | `DDAABB0001010bbb` | `LDB Xd, [Xa+Xb]` | RC32X |
 | `00dddaaa00000000` | `DDAABB0101010bbb` | `LDH Xd, [Xa+Xb]` | RC32X |
 | `00dddaaa00000000` | `DDAA000001100000` | `SRLI Xd, Xa, 1` | RC32X |
-| `00dddaaa00000000` | `DDAABB0001100bbb` | `SRLI Xd, Xa, 2..32` | RC32X sys |
+| `00dddaaa00000000` | `DDAABB0001100bbb` | `SRLI Xd, Xa, 2..32` | RC32X full |
 | `00dddaaa00000000` | `DDAABB0101100bbb` | `SRL Xd, Xa, Xb` | RC32X VSH |
 | `00dddaaa00000000` | `DDAA000001101000` | `SRAI Xd, Xa, 1` | RC32X |
-| `00dddaaa00000000` | `DDAABB0001101bbb` | `SRAI Xd, Xa, 2..32` | RC32X sys |
+| `00dddaaa00000000` | `DDAABB0001101bbb` | `SRAI Xd, Xa, 2..32` | RC32X full |
 | `00dddaaa00000000` | `DDAABB0101101bbb` | `SRA Xd, Xa, Xb` | RC32X VSH |
 | `00dddaaa00000000` | `DDAABB0001110bbb` | `LDBS Xd, [Xa+Xb]` | RC32X |
 | `00dddaaa00000000` | `DDAABB0101110bbb` | `LDHS Xd, [Xa+Xb]` | RC32X |
-| `00dddaaa00000000` | `DDAABB0001111bbb` | `SLLI Xd, Xa, 1..32` | RC32X sys |
+| `00dddaaa00000000` | `DDAABB0001111bbb` | `SLLI Xd, Xa, 1..32` | RC32X full |
 | `00dddaaa00000000` | `DDAABB0101111bbb` | `SLL Xd, Xa, Xb` | RC32X VSH |
 | `00dddaaa00000000` | `DDAABB0010000bbb` | `DIVU Xr, Xq, Xb` | RC32X MDU |
 | `00dddaaa00000000` | `DDAABB0010001bbb` | `FSL1 Xd, Xa, Xb` | RC32X |

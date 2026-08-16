@@ -16,7 +16,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 14]
-        RET     r6
+        JMP     r6
         .endm
 
         .section .text.__addsf3,"ax",@progbits
@@ -33,7 +33,7 @@ __addsf3:
         ST     r2, [r7 - 8]           /* left sign */
         ST     r4, [r7 - 6]           /* right sign */
 
-        LI      r5, 0x7f80
+        LDI16   r5, 0x7f80
         AND     r6, r2, r5
         MOV     r0, r6
         BNEZ    .Lleft_normal

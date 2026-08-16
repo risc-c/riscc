@@ -15,6 +15,8 @@ typedef union
     uint64_t bits;
 } double_shape;
 
+int16_t __riscc_math_compare(const uint16_t *, const uint16_t *, uint16_t);
+
 static volatile float float_half = 0.5f;
 static volatile float float_two = 2.0f;
 static volatile float float_five_and_half = 5.5f;
@@ -51,6 +53,15 @@ int main(void)
     double dhalf = double_half;
     double dtwo = double_two;
     double dfive = double_five_and_half;
+    uint16_t compare_left[4] = {0x1000, 0x9999, 0x1234, 0xffff};
+    uint16_t compare_right[4] = {0x1001, 0x0001, 0x1234, 0xfffe};
+
+    CHECK(__riscc_math_compare(compare_left, compare_right, 0) == 0 &&
+            __riscc_math_compare(compare_left, compare_right, 1) < 0 &&
+            __riscc_math_compare(compare_left, compare_right, 2) > 0 &&
+            __riscc_math_compare(compare_left, compare_right, 4) > 0 &&
+            __riscc_math_compare(compare_left, compare_left, 4) == 0,
+        15);
 
     CHECK(fpclassify(0.0f) == FP_ZERO &&
             fpclassify(float_subnormal.value) == FP_SUBNORMAL &&

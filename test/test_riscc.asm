@@ -173,7 +173,7 @@ done:
 
 subr:
     LDI   r3, 0x42
-    JALR  r0, r7
+    JMP   r7
 .else
 .ifdef RISCC_SYS
 .section .vectors, "ax", @progbits
@@ -422,32 +422,42 @@ shifts_start:
     SUB   r0, r5, r4
     BNEZ  fail_late
 
-    ; --- register call: link in S7, return via RETS ---
+    ; --- register call: link in S7, return via RET S7 ---
 .ifdef RISCC_MIN
     LDI16 r1, subr
 .else
     LDI16 r1, subr
 .endif
-    CALL  r1
+    JALR  S7, r1
 after_call:
     LDI   r4, 0x42
     SUB   r0, r3, r4
     BNEZ  fail_late
 
-.ifndef RISCC_SYS
-    ; --- far call / jump fallback (mandatory core has no JALL/JMPL) ---
+.ifndef RISCC_MIN
+    ; --- two-word direct call / jump (JALL / JMPL / RET S7) ---
     LDI   r3, 0
-    LDI16 r1, subr16
-    CALL  r1                ; far call = LDI16 + CALL ra; returns via RETS
+    JALL  S7, subr16        ; link {IE, pc+2} -> S7; subr16 returns via RET S7
     SUB   r0, r3, r4
     BNEZ  fail_late
-    LDI16 r1, far_ok
-    JALR  S0, r1            ; far jump; S7 keeps the link
+    JMPL  c16_ok            ; no link: S7 keeps the last call's link
     JMP8  fail_late
+.else
+    ; --- far call / jump fallback (LDI16 plus register control transfer) ---
+    LDI   r3, 0
+    LDI16 r1, subr16
+    JALR  S7, r1            ; far call = LDI16 + JALR S7,ra; returns via RET S7
+    SUB   r0, r3, r4
+    BNEZ  fail_late
+    LDI16 r1, c16_ok
+    JMP   r1                ; far jump; S7 keeps the link
+    JMP8  fail_late
+.endif
 subr16:
     LDI   r3, 0x42
-    RETS
-far_ok:
+    RET   S7
+c16_ok:
+.ifndef RISCC_SYS
     ; --- S registers: min-profile spill slots survive round trips ---
     LDI16 r1, 0xBEEF
     MTS   S5, r1
@@ -458,17 +468,6 @@ far_ok:
     BNEZ  fail_late
     JMP8  feature_tests
 .else
-    ; --- two-word direct call / jump (CALL16 / JMPL / RETS) ---
-    LDI   r3, 0
-    CALL16 subr16           ; link {IE, pc+2} -> S7; subr16 returns via RETS
-    SUB   r0, r3, r4
-    BNEZ  fail_late
-    JMPL  c16_ok            ; no link: S7 keeps the last call's link
-    JMP8  fail_late
-subr16:
-    LDI   r3, 0x42
-    RETS
-c16_ok:
     ; --- system profile: S registers, IRQ, RETI ---
     LDI16 r1, 0xBEEF
     MTS   S5, r1
@@ -549,7 +548,12 @@ wait_sti_irq:
     ADDI  r1, -1
     MOV   r0, r1
     BEQZ  control_irq_log_ok
+.ifndef RISCC_MIN
     JMPL  fail_late
+.else
+    LDI16 r1, fail_late
+    JMP   r1
+.endif
 control_irq_log_ok:
     LD   r1, [r5+2]        ; r1 = 2 entries
     MFS   r2, S5            ; r2 = 0xBEEF (round trip survived the ISR)
@@ -557,7 +561,7 @@ control_irq_log_ok:
 .endif
 
 feature_tests:
-.ifdef RISCC_SYS
+.ifdef RISCC_FULL
     ; --- immediate shifts: amounts 1..8, sign fill, rd==ra, composed shifts ---
     LDI16 r1, 0x8001
     SRLI  r3, r1, 4         ; 0x0800
@@ -651,7 +655,7 @@ feature_tests:
 .else
     LDI16 r1, gen_jmp
 .endif
-    JALR  S0, r1
+    JMP   r1
 gen_back:
     MFS   r2, S0
     LDI16 r4, 0x1234
@@ -672,7 +676,7 @@ gen_sub:
 gen_jmp:
     JMP8  gen_back
 gen_done:
-.ifdef RISCC_SYS
+.ifndef RISCC_MIN
     JALL  S5, gen16         ; two-word form with a non-default link
 g16r:
     JMP8  g16ok             ; reached again via RET S5
@@ -708,7 +712,7 @@ feature_fail:
 
 subr:
     LDI   r3, 0x42
-    RETS
+    RET   S7
 
 success:
     LDI16 r7, 0x600D

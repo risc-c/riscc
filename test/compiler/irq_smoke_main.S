@@ -11,8 +11,15 @@
         .extern riscc_irq_enable
         .extern riscc_irq_disable
 main:
-        CALL16  irq_smoke_install
-        CALL16  riscc_irq_enable
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        JALL    S7, irq_smoke_install
+        JALL    S7, riscc_irq_enable
+#else
+        LDI16   r0, irq_smoke_install
+        JALR    S7, r0
+        LDI16   r0, riscc_irq_enable
+        JALR    S7, r0
+#endif
 
         // S3 holds the normal C stack pointer; S4 holds the TLS anchor.
         // S7 is an ordinary interrupted link/scratch register to preserve.
@@ -114,7 +121,12 @@ main:
         BNEZ    .Lfail
 
         ADDI    r7, 14
-        CALL16  riscc_irq_disable
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        JALL    S7, riscc_irq_disable
+#else
+        LDI16   r0, riscc_irq_disable
+        JALR    S7, r0
+#endif
         LDI16   r0, 0x600d
         LDI16   r1, 0xfffe
         ST     r0, [r1+0]
@@ -144,5 +156,5 @@ irq_smoke_clobber_s:
         MTS     S5, r0
         LDI16   r0, 0x0606
         MTS     S6, r0
-        RETS
+        RET     S7
         .size irq_smoke_clobber_s, . - irq_smoke_clobber_s

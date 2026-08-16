@@ -84,7 +84,7 @@ __riscc_pack_sf:
         SLTU    r0, r4, r5
         BNEZ    .Lsubnormal_test
         LDI     r1, 0
-        LI      r2, 0x7f80
+        LDI16   r2, 0x7f80
         OR      r2, r2, r3
         JMP8    .Lreturn
 
@@ -98,7 +98,7 @@ __riscc_pack_sf:
 
 .Lpack:
         /* Low result word: (extended >> 3). */
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 3
         FSR1    r1, r2
         SRLI    r2, r2, 1
@@ -114,7 +114,7 @@ __riscc_pack_sf:
 
         /* High result word: sign | exponent<<7 | fraction[22:16]. */
         MOV     r5, r4
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 7
         ADD     r5, r5, r5
         .endr
@@ -134,5 +134,5 @@ __riscc_pack_sf:
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
         ADDI    r7, 48
-        RETS
+        RET     S7
         .size __riscc_pack_sf, . - __riscc_pack_sf

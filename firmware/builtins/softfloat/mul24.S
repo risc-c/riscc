@@ -63,7 +63,7 @@ __riscc_umul24x24:
 
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        RETS
+        RET     S7
 #else
 
         /*
@@ -193,7 +193,7 @@ __riscc_umul24x24:
 
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        RETS
+        RET     S7
 #endif
         .size __riscc_umul24x24, . - __riscc_umul24x24
 #endif

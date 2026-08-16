@@ -3,7 +3,7 @@ ENTRY(_start)
 MEMORY
 {
   RAM (rwx) : ORIGIN = 0x0000,
-              LENGTH = DEFINED(__riscc_ram_length) ? __riscc_ram_length : 0x8000
+              LENGTH = DEFINED(__riscc_ram_length) ? __riscc_ram_length : 0x10000
 }
 
 SECTIONS
@@ -15,6 +15,11 @@ SECTIONS
 
   ASSERT(SIZEOF(.vectors) == 8,
          "RISC-C requires two four-byte vector slots")
+
+  .vectors.tramp ALIGN(2) :
+  {
+    KEEP(*(.vectors.tramp))
+  } > RAM
 
   .text ALIGN(2) :
   {
@@ -70,11 +75,16 @@ SECTIONS
 
   __image_end = .;
   __heap_start = __image_end;
-  __stack_top = ORIGIN(RAM) + LENGTH(RAM);
+  /* Current platforms reserve the high MMIO aperture.  A RAM-only platform
+   * can set __riscc_io_start=0x10000; keep that all-RAM stack top representable. */
+  __ram_end = ORIGIN(RAM) + LENGTH(RAM);
+  __io_start = DEFINED(__riscc_io_start) ? __riscc_io_start : 0xfff0;
+  __usable_end = __ram_end < __io_start ? __ram_end : __io_start;
+  __stack_top = __usable_end == 0x10000 ? 0xfffe : __usable_end;
   __heap_end = __stack_top;
 
   ASSERT(__image_end <= __stack_top,
-         "RISC-C unified image exceeds the 32 KiB RAM")
+         "RISC-C unified image exceeds RAM")
 
   /DISCARD/ :
   {

@@ -33,7 +33,7 @@ tx_push:
     STB   r1, [r4]
     ST   r0, [r2+0]
 tx_push_done:
-    RETS
+    RET S7
 
 ; Queue asciz string at r7 into TX queue.
 ; Clobbers r0..r6.  Preserves r7.
@@ -44,11 +44,11 @@ tx_puts_loop:
     LDB   r1, [r0]
     OR    r0, r1, r1
     BEQZ  tx_puts_done
-    CALL16 tx_push
+    JALL S7, tx_push
     ADDI  r6, 1
     JMP8  tx_puts_loop
 tx_puts_done:
-    RETS
+    RET S7
 
 ; Pop one RX byte into r1 if available and apply simple demo controls.
 ; Clobbers r0..r5.
@@ -102,7 +102,7 @@ pr_not_plus:
     ADDI  r1, -1
     ST   r1, [r2+0]
 process_rx_done:
-    RETS
+    RET S7
 
 ; Render the Julia set inside the fixed border.  Four adjacent pixels pack into
 ; each 16-bit framebuffer word.  Clobbers r0..r7.
@@ -128,16 +128,16 @@ draw_frame:
     ST   r1, [r3+0]
 
     LDI   r1, 'F'         ; frame entered
-    CALL16 tx_push
-    CALL16 draw_ticker
+    JALL S7, tx_push
+    JALL S7, draw_ticker
     LDI   r1, 'T'         ; ticker completed
-    CALL16 tx_push
+    JALL S7, tx_push
 
     LDI16 r7, 0x8320      ; byte address of current framebuffer row
     LDI   r6, 10          ; y: 10..118, top rows are the ticker band
 draw_y_loop:
     LDI   r1, '.'         ; hardware progress heartbeat: one dot per Julia row
-    CALL16 tx_push
+    JALL S7, tx_push
     MOV   r5, r6          ; zy0 = (y - 60) * view_step
     ADDI  r5, -60
     LDI16 r1, view_step
@@ -159,7 +159,7 @@ draw_x_loop:
     LDI16 r1, xpix
     ST   r5, [r1+0]
 
-    CALL16 julia_pixel     ; lane 0
+    JALL S7, julia_pixel   ; lane 0
     LDI16 r2, pack_word
     ST   r1, [r2+0]
 
@@ -167,7 +167,7 @@ draw_x_loop:
     LD   r5, [r2+0]
     ADDI  r5, 1
     ST   r5, [r2+0]
-    CALL16 julia_pixel
+    JALL S7, julia_pixel
     SLLI  r1, r1, 4
     LDI16 r2, pack_word
     LD   r3, [r2+0]
@@ -178,7 +178,7 @@ draw_x_loop:
     LD   r5, [r2+0]
     ADDI  r5, 1
     ST   r5, [r2+0]
-    CALL16 julia_pixel
+    JALL S7, julia_pixel
     SLLI  r1, r1, 8
     LDI16 r2, pack_word
     LD   r3, [r2+0]
@@ -189,7 +189,7 @@ draw_x_loop:
     LD   r5, [r2+0]
     ADDI  r5, 1
     ST   r5, [r2+0]
-    CALL16 julia_pixel
+    JALL S7, julia_pixel
     SLLI  r1, r1, 8
     SLLI  r1, r1, 4
     LDI16 r2, pack_word
@@ -220,13 +220,13 @@ draw_store_word:
     CMPI  r4, 40
     BEQZ  draw_x_done
     LDI16 r1, draw_x_loop
-    JALR  S0, r1
+    JMP   r1
 draw_x_done:
     LDI16 r1, yblk
     ST   r6, [r1+0]
     LDI16 r1, fb_row
     ST   r7, [r1+0]
-    CALL16 draw_ticker
+    JALL S7, draw_ticker
     LDI16 r1, yblk
     LD   r6, [r1+0]
     LDI16 r1, fb_row
@@ -238,17 +238,17 @@ draw_x_done:
     CMPI  r6, 119
     BEQZ  draw_done
     LDI16 r1, draw_y_loop
-    JALR  S0, r1
+    JMP   r1
 draw_done:
     LDI   r1, 13          ; one line per completed frame
-    CALL16 tx_push
+    JALL S7, tx_push
     LDI   r1, 10
-    CALL16 tx_push
-    CALL16 update_julia_param
+    JALL S7, tx_push
+    JALL S7, update_julia_param
     LDI16 r2, draw_link
     LD   r1, [r2+0]
     MTS   S7, r1
-    RETS
+    RET S7
 
 ; Draw a one-framebuffer-pixel border once at boot.  The renderer preserves
 ; these pixels instead of repainting them every frame.
@@ -263,7 +263,7 @@ border_top_loop:
     CMPI  r6, 40
     BEQZ  border_top_done
     LDI16 r2, border_top_loop
-    JALR  S0, r2
+    JMP   r2
 border_top_done:
     LDI16 r7, 0xA530
     LDI   r6, 0
@@ -274,7 +274,7 @@ border_bottom_loop:
     CMPI  r6, 40
     BEQZ  border_bottom_done
     LDI16 r2, border_bottom_loop
-    JALR  S0, r2
+    JMP   r2
 border_bottom_done:
     LDI16 r7, 0x8050
     LDI   r6, 1
@@ -297,9 +297,9 @@ border_side_loop:
     CMPI  r6, 119
     BEQZ  border_done
     LDI16 r2, border_side_loop
-    JALR  S0, r2
+    JMP   r2
 border_done:
-    RETS
+    RET S7
 
 ; Signed fixed-point multiply, Q10 output.  Inputs in r1/r2, result in r1.
 ; Clobbers r0..r7.  Exact enough for the fractal path; the dropped low
@@ -351,7 +351,7 @@ fmul_b_pos:
     LDI   r0, 0
     SUB   r1, r0, r1
 fmul_done:
-    RETS
+    RET S7
 
 ; Firmware title ticker.  Draws a 10-pixel-high band into the top framebuffer:
 ; two black guard rows, seven font rows, and one blank spacer row.
@@ -398,19 +398,19 @@ ticker_word_loop:
     LDI   r1, 0
     LDI16 r2, ticker_lane
     ST   r1, [r2+0]
-    CALL16 ticker_emit_pixel
+    JALL S7, ticker_emit_pixel
     LDI   r1, 1
     LDI16 r2, ticker_lane
     ST   r1, [r2+0]
-    CALL16 ticker_emit_pixel
+    JALL S7, ticker_emit_pixel
     LDI   r1, 2
     LDI16 r2, ticker_lane
     ST   r1, [r2+0]
-    CALL16 ticker_emit_pixel
+    JALL S7, ticker_emit_pixel
     LDI   r1, 3
     LDI16 r2, ticker_lane
     ST   r1, [r2+0]
-    CALL16 ticker_emit_pixel
+    JALL S7, ticker_emit_pixel
 
     LDI16 r1, ticker_word
     LD   r2, [r1+0]
@@ -433,13 +433,13 @@ ticker_store_word:
     CMPI  r6, 40
     BEQZ  ticker_row_done
     LDI16 r1, ticker_word_loop
-    JALR  S0, r1
+    JMP   r1
 ticker_row_done:
     ADDI  r7, 1
     CMPI  r7, 10
     BEQZ  ticker_done_rows
     LDI16 r1, ticker_row_loop
-    JALR  S0, r1
+    JMP   r1
 ticker_done_rows:
     LDI16 r1, ticker_scroll
     LD   r2, [r1+0]
@@ -454,7 +454,7 @@ ticker_scroll_store:
     LDI16 r2, ticker_link
     LD   r1, [r2+0]
     MTS   S7, r1
-    RETS
+    RET S7
 
 ticker_emit_pixel:
     LDI16 r1, ticker_col
@@ -515,7 +515,7 @@ ticker_char_store:
     ST   r4, [r2+0]
 ticker_col_store:
     ST   r3, [r1+0]
-    RETS
+    RET S7
 
 ; Compute one Julia sample for xpix/zy0_var.  r1 returns one 4-bit color.
 julia_pixel:
@@ -543,14 +543,14 @@ julia_iter:
     LDI16 r0, zx_var
     LD   r1, [r0+0]
     MOV   r2, r1
-    CALL16 fmul_q10
+    JALL S7, fmul_q10
     LDI16 r0, zx2_var
     ST   r1, [r0+0]
 
     LDI16 r0, zy_var
     LD   r1, [r0+0]
     MOV   r2, r1
-    CALL16 fmul_q10
+    JALL S7, fmul_q10
     LDI16 r0, zy2_var
     ST   r1, [r0+0]
 
@@ -571,7 +571,7 @@ julia_iter:
     LD   r1, [r0+0]
     LDI16 r0, zy_var
     LD   r2, [r0+0]
-    CALL16 fmul_q10
+    JALL S7, fmul_q10
     ADD   r7, r1, r1      ; new zy = 2*zx*zy + julia_cy
     LDI16 r6, julia_cy
     LD   r6, [r6+0]
@@ -616,7 +616,7 @@ julia_pixel_done:
     LDI16 r2, fractal_link
     LD   r0, [r2+0]
     MTS   S7, r0
-    RETS
+    RET S7
 
 ; Move the Julia parameter c around a Q10 approximation of the classic
 ; c = 0.7885*exp(i*a) animation path.  No zoom: all precision stays in pixels.
@@ -682,7 +682,7 @@ update_julia_y_done:
 update_julia_target_store:
     ST   r2, [r1+0]
 update_julia_done:
-    RETS
+    RET S7
 
 isr_irq:
     MTS   S1, r0
@@ -763,11 +763,11 @@ boot_queue_loop:
     LDB   r1, [r0]
     OR    r0, r1, r1
     BEQZ  boot_queue_done
-    CALL16 tx_push
+    JALL S7, tx_push
     ADDI  r6, 1
     JMP8  boot_queue_loop
 boot_queue_done:
-    CALL16 draw_border
+    JALL S7, draw_border
     ; Enable the UART source in the shared two-source interrupt controller.
     LDI16 r1, 0xFFF6
     LDI   r2, 1
@@ -778,8 +778,8 @@ boot_queue_done:
     STI
 
 main_loop:
-    CALL16 process_rx
-    CALL16 draw_frame
+    JALL S7, process_rx
+    JALL S7, draw_frame
     JMP8  main_loop
 
 .data

@@ -7,7 +7,7 @@
  */
 
         .macro EXTRACT_EXP reg
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 7
         SRLI    \reg, \reg, 1
         .endr
@@ -16,12 +16,12 @@
 #endif
         .endm
 
-        .macro TAIL_PACK
-#ifdef __RISCC_MIN__
-        LI      r0, __riscc_pack_sf
-        JALR    s0, r0
-#else
+        .macro JUMP_PACK
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
         JMPL    __riscc_pack_sf
+#else
+        LDI16   r0, __riscc_pack_sf
+        JMP     r0
 #endif
         .endm
 
@@ -34,7 +34,7 @@
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
         ADDI    r7, 48
-        RETS
+        RET     S7
         .endm
 
         .macro MUL_ROUND
@@ -144,11 +144,11 @@ __mulsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LI      r2, 0x7fc0
+        LDI16   r2, 0x7fc0
         JMP8    .Lspecial_return
 .Linfinity:
         LDI     r1, 0
-        LI      r2, 0x7f80
+        LDI16   r2, 0x7f80
         LD     r0, [r7 + 38]
         OR      r2, r2, r0
 
@@ -218,7 +218,7 @@ __mulsf3:
         MOV     r6, r4                 /* preserve multiplier high */
 
         /* Align multiplicand at bits 24..47. */
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 8
         FSL1    r2, r1
         ADD     r1, r1, r1
@@ -258,21 +258,20 @@ __mulsf3:
         MOV     r0, r3
         BLTZ    .Lproduct_bit47
         ANDI    r4, 0x0f
-        LDI     r6, 4
+        LDI     r0, 4
         JMP8    .Lproduct_shift
 .Lproduct_bit47:
         ANDI    r4, 0x1f
-        LDI     r6, 5
         LD     r0, [r7 + 40]
         ADDI    r0, 1
         ST     r0, [r7 + 40]
+        LDI     r0, 5
 .Lproduct_shift:
         OR      r4, r4, r5
 .Lproduct_shift_loop:
         FSR1    r2, r3
         SRLI    r3, r3, 1
-        ADDI    r6, -1
-        MOV     r0, r6
+        ADDI    r0, -1
         BNEZ    .Lproduct_shift_loop
         MOV     r0, r4
         BEQZ    .Lproduct_exact
@@ -282,7 +281,7 @@ __mulsf3:
         MOV     r2, r3
         LD     r3, [r7 + 38]
         LD     r4, [r7 + 40]
-        TAIL_PACK                      /* tail call */
+        JUMP_PACK                      /* preserve the caller's link */
 
 .Lzero:
         LDI     r1, 0

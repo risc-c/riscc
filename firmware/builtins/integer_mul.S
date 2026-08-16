@@ -34,7 +34,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 26]
-        RET     r6
+        JMP     r6
         .endm
 
         .macro NANO_RETURN64
@@ -69,7 +69,7 @@
         LD      r0, [r7 + 8]
         MTS     s6, r0
         ADDI    r7, 32
-        RETS
+        RET     S7
         .endm
 
         .macro ABI_RETURN64
@@ -286,16 +286,16 @@
         MUL_RETURN
 #else
         LDI     r3, 0
-.Lmulhi_loop:
-        MOV     r0, r2
-        ANDI    r0, 1
         LDI     r4, 0
-        SUB     r0, r4, r0
-        AND     r0, r0, r1
-        ADD     r3, r3, r0
+        MOV     r0, r2                  /* shifting multiplier */
+.Lmulhi_loop:
+        MOV     r2, r0
+        ANDI    r2, 1
+        SUB     r2, r4, r2
+        AND     r2, r2, r1
+        ADD     r3, r3, r2
         ADD     r1, r1, r1
-        SRLI    r2, r2, 1
-        MOV     r0, r2
+        SRLI    r0, r0, 1
         BNEZ    .Lmulhi_loop
         MOV     r1, r3
         MUL_RETURN

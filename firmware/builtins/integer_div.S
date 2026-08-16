@@ -36,7 +36,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 22]
-        RET     r6
+        JMP     r6
         .endm
 
         .macro NANO_RETURN64
@@ -57,7 +57,7 @@
 
         .macro NANO_SIGNED_RETURN
         LD      r4, [r7 - 24]
-        RET     r6
+        JMP     r6
         .endm
 #endif
 
@@ -87,7 +87,7 @@
         LD      r0, [r7 + 18]
         MTS     s6, r0
         ADDI    r7, 40
-        RETS
+        RET     S7
         .endm
 
         .macro ABI_RETURN64
@@ -589,13 +589,13 @@ __udivmodsi4:
         ST      r3, [r7 + 0]
         ST      r4, [r7 + 2]
 #ifdef __RISCC_NANO__
-        LI      r0, \name
+        LDI16   r0, \name
         JALR    r6, r0
-#elif defined(__RISCC_MIN__)
-        LI      r0, \name
-        JALR    s7, r0
-#else
+#elif defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
         JALL    s7, \name
+#else
+        LDI16   r0, \name
+        JALR    s7, r0
 #endif
         .endm
 

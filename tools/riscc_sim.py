@@ -10,12 +10,12 @@ riscc_test.cpp.
 
 Profile model mirrors the three RTL builds:
     --min           SLT/LDBS, count-one and funnel shifts, no sys profile
-    sys (default)   min + IRQ/RETI + JALL/JMPL + variable shifts
-    --full          sys + MUL
+    sys (default)   min + IRQ/RETI + JALL/JMPL
+    --full          sys + variable shifts + MUL
     --mdu           paired MULHU and DIVU (requires --full)
     --nano          nano ABI: no S-bank/sys profile/CMPI/JALL, JALR links to rd
-In min, SRLI/SRAI shift by exactly 1, FSL1/FSR1 are defined, and SLLI/MUL
-are undefined.
+In min and sys, SRLI/SRAI shift by exactly 1 and FSL1/FSR1 are defined.
+SLLI and MUL are undefined outside Full; JALL is undefined only in Min.
 
 Usage: riscc_sim.py image.bin [--min] [--full] [--mdu]
                        [--nano]
@@ -168,7 +168,8 @@ class Sim:
         self.irq_line = 0
         self.nano = nano
         self.sys_tier = False if nano else sys_tier
-        self.shifts = nano or sys_tier or full
+        self.shifts = nano or full
+        self.long_jall = sys_tier and not nano
         self.full = full and not nano
         self.mdu = mdu and self.full
         self.insns = 0
@@ -287,8 +288,8 @@ class Sim:
         bbb = ir & 7
         imm8 = ir & 0xFF
         if (ir & 0xC7FF) == 0x0034:
-            if not self.sys_tier:
-                raise Undefined("long instruction outside sys profile")
+            if not self.long_jall:
+                raise Undefined("long instruction outside a profile with JALL")
             extension = self.mem[pc_next & 0x7FFF]
             pc_next = (pc_next + 1) & 0x7FFF
             if ddd != 0:                                # JALL Sd, target
@@ -378,7 +379,7 @@ class Sim:
                 self.r[ddd] = v
             elif f5 == 0x0F:                            # SLLI
                 if self.nano or not self.shifts:
-                    raise Undefined("SLLI is not in the min profile")
+                    raise Undefined("SLLI is only in the full profile")
                 self.r[ddd] = (self.r[aaa] << (bbb + 1)) & 0xFFFF
             elif f5 in (0x10, 0x14):                    # DIVU / MULHU
                 if not self.mdu:
@@ -475,7 +476,7 @@ def sx16(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
-    ap.add_argument("--min", action="store_true", help="min profile (no sys/variable shifts)")
+    ap.add_argument("--min", action="store_true", help="min profile (no interrupt support)")
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--mdu", action="store_true",
                     help="enable the paired MULHU/DIVU extension (requires --full)")

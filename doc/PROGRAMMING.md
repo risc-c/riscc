@@ -30,15 +30,15 @@ depend on it.
 The assembler, linker, ISS, and firmware use the unified byte-addressed
 representation.
 
-RC16 unified-address code retains `LUI`, so its `LI rd, imm16` and `LDI16 rd, imm16`
-pseudos remain `LUI rd, hi8(imm16)` followed by `ORI rd, lo8(imm16)`. RC32
+RC16 unified-address code retains `LUI`, so `LDI16 rd, imm16` remains the
+explicit 16-bit materialization pseudo: `LUI rd, hi8(imm16)` followed by
+`ORI rd, lo8(imm16)`. RC32
 loads a full native-width constant with `LDPC` from a compiler-generated
 literal pool.
 
 Compact typed memory operations are direct: `LDB rd, [ra]`, `LDBS rd, [ra]`,
 and `STB rs, [ra]` use only the bracketed byte-address register; RC32 also has
-`LDH`, `LDHS`, and `STH`. Code and data use the same address representation,
-so no `LDP*` instruction exists. In RC32, `LDPC rd, rel8` directly loads one
+`LDH`, `LDHS`, and `STH`. In RC32, `LDPC rd, rel8` directly loads one
 aligned native-width literal relative to `pc_next`.
 
 The normal interactive ISS is `tools/riscc_sim.cpp`, built as
@@ -218,7 +218,8 @@ The C target is freestanding `riscc-none-elf`; `-mcpu=full` is the default.
 exactly one of `__RISCC_FULL__`, `__RISCC_SYS__`, `__RISCC_MIN__`, or
 `__RISCC_NANO__`. The backend replaces unavailable multiplication with
 `__mulhi3`, expands shifts to instructions legal for the selected profile, and
-uses register-target calls and jumps where a profile lacks `JALL`. Nano has
+uses register-target calls and jumps where a profile lacks `JALL` (Min).
+Nano has
 no S-register bank or TLS, receives a call link in allocatable `r6`, and uses
 the common `r1..r3` argument/result slots with `r4` and `r5`
 callee-saved; see the [C and object ABI](RISC-C-ABI.md#nano-register-variant).
@@ -385,9 +386,10 @@ implements directly.
   explicit 16-bit limbs. They avoid recursively calling the wide integer
   helpers and let leaf functions use the mainline S-register cache. Min, Sys,
   and Full use whole-routine assembly and a shared IEEE packer for gradual
-  underflow and round-to-nearest/ties-to-even. Sys and Full use their
-  fixed-count shifts directly; Full computes the binary32 24-by-24
-  significand product from native byte products. With `-mmdu`, the same
+  underflow and round-to-nearest/ties-to-even. Full uses its fixed-count
+  shifts directly; Sys uses the same one-bit shift sequences as Min. Full
+  computes the binary32 24-by-24 significand product from native byte
+  products. With `-mmdu`, the same
   routine uses paired products and binary32 divide uses two base-2^16
   `DIVU` digits; the extension remains optional.
 - Compiler-rt supplies the binary32 subtraction wrapper and comparisons,
@@ -566,34 +568,23 @@ clears the zero-initialized range, calls `main`, then executes the `HALT`
 the initial `S2` TLS anchor from `__tls_start`.
 
 [`firmware/unified.ld`](../firmware/unified.ld) places vectors, code, constants,
-initialized data, TLS, and ordinary data in one 32 KiB address space.
-[`firmware/split.ld`](../firmware/split.ld) uses separate code and data memory
-regions while giving both the same unified byte VMAs; code and data images may
-therefore overlap in the ELF address map without changing pointer values. Link
-it with lld's `--no-check-sections` option; the project make target supplies
-that option automatically.
+initialized data, TLS, and ordinary data anywhere in the unified 64 KiB
+byte-address space. Code and data therefore share one combined 64 KiB image
+budget rather than being restricted to separate 32 KiB halves. Current boards
+reserve `0xfff0..0xffff` as MMIO, so their ordinary RAM ends at `0xffef`; a
+RAM-only platform may set `__riscc_io_start=0x10000` to use that aperture as
+well. A board with less RAM may set `__riscc_ram_length` when linking.
 
-In both layouts, `.tdata` follows ordinary initialized data and supplies the
+In this layout, `.tdata` follows ordinary initialized data and supplies the
 initial TLS template; `.tbss` is followed by `.bss` in the range cleared by
 startup. The linker exports `__tls_start`, `__tdata_end`, `__tbss_start`,
 `__tls_end`, `__bss_start`, `__bss_end`, `__zero_start`, `__zero_end`,
 `__heap_start`, `__heap_end`, and `__stack_top` for startup or platform code.
 
-For physically split memories with unified VMAs, a platform may extract
-executable and initialized sections into separate images:
-
-```sh
-llvm-objcopy -O binary --only-section=.vectors --only-section='.text*' app.elf app.code.bin
-llvm-objcopy -O binary --only-section='.rodata*' --only-section='.data*' \
-  --only-section='.tdata*' app.elf app.data.bin
-```
-
-`.bss` and `.tbss` are absent from images. A physically split platform must
-preload each image or provide an equivalent initialization transport while
-preserving the linked byte addresses. RC32 literal pools are ordinary readable
-memory and are loaded with `LDPC`; RC16 can address constants with the normal
-load instructions after materializing their byte address. Current board
-targets use the unified layout.
+`.bss` and `.tbss` are absent from the initial binary and are cleared by
+startup. RC32 literal pools are ordinary readable memory and are loaded with
+`LDPC`; RC16 can address constants with normal load instructions after
+materializing their byte address.
 
 ### 3.7 TLS runtime use
 
@@ -630,8 +621,8 @@ The runtime currently provides none of the following:
 
 ## 4. Interrupt runtime (`libirq`)
 
-There is one hardware IRQ vector. The default vector slot transfers to
-`__riscc_irq_vector`; application code may provide a strong assembly definition
+There is one hardware IRQ vector. Sys and Full transfer directly to
+`__riscc_irq_vector`. Application code may provide a strong assembly definition
 of that symbol and own the entire entry/exit convention. If it does not, the
 weak `libirq.a` fallback is a two-byte halt loop. This keeps an application
 that does not use C interrupt handling from pulling in a wrapper or IRQ state.

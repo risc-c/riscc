@@ -22,9 +22,9 @@
 reset_tramp:
     LDI16 r0, start
 .ifdef RISCC_NANO
-    JALR  r0, r0
+    JMP   r0
 .else
-    JALR  S0, r0
+    JMP   r0
 .endif
 
 fail:                       ; near stub for the (unused) vectors
@@ -509,5 +509,5 @@ mul_n15:
     ADD   r1, r1, r3
 mul_n16:
     ADD   r2, r2, r2
-    JALR  r0, r7
+    JMP   r7
 .endif

@@ -275,7 +275,7 @@ def code_addr(value: int, what: str) -> int:
 
 def insn_size(op: str, operands: List[str]) -> int:
     op = op.upper()
-    if op in ("LDI16", "LI", "CALL16", "JMP16", "JAL16", "JALL", "JMPL"):
+    if op in ("LDI16", "JMP16", "JAL16", "JALL", "JMPL"):
         return 4
     if MNEMONIC_ALIASES.get(op, op) == "OR" and op == "MOV":
         return 2
@@ -468,38 +468,28 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         if len(operands) != count:
             raise AsmError(f"{op} requires {count} operand(s): {usage}")
 
-    if op in ("JAL16", "CALL16", "JMP16"):
+    if op in ("JAL16", "JMP16"):
         # Two-halfword direct jump-and-link: the second halfword is the target
-        # byte address.
-        # Sd == S0 writes no link; CALL16 = JALL S7, JMPL = JALL S0.
+        # byte address. Sd == S0 writes no link, so JMPL = JALL S0.
         if op == "JAL16":
             n_ops(2, "JALL Sd, target")
             sd = sreg(operands[0])
             target = eval_expr(operands[1], labels)
         else:
             n_ops(1, f"{op} target")
-            sd = 7 if op == "CALL16" else 0
+            sd = 0
             target = eval_expr(operands[0], labels)
         return enc_long(sd, code_addr(target, f"{op} target"))
 
-    if op in ("RET", "RETS", "RETI", "ERET"):
+    if op in ("RET", "RETI"):
         # RET Sa: pc = S[aaa], IE untouched; RETI Sa also sets IE.
-        # RETS = RET S7; ERET = RETI S0.  RET ra (general register) is the
-        # link-free register jump, i.e. JALR S0, ra.
-        sub = "RETI" if op in ("RETI", "ERET") else "RET"
-        if len(operands) == 0:
-            sa = 7 if op in ("RET", "RETS") else 0
-        else:
-            n_ops(1, f"{op} Sa")
-            tok = operands[0].strip().upper()
-            if tok in REGS and op == "RET":
-                return encode_word(enc_r(0, REGS[tok],
-                                         R_FUNC["SYS"], SYS_SUB["JALR"]))
-            sa = sreg(operands[0])
+        n_ops(1, f"{op} Sa")
+        sub = op
+        sa = sreg(operands[0])
         return encode_word(enc_r(CONTROL_CCC[sub], sa, R_FUNC["SYS"],
                                  SYS_SUB["CONTROL"]))
 
-    if op in ("LDI16", "LI"):
+    if op == "LDI16":
         n_ops(2, "LDI16 rd, imm16")
         rd = reg(operands[0])
         imm = eval_expr(operands[1], labels) & 0xFFFF
@@ -595,16 +585,14 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
             raise AsmError(f"{op} requires [ra]")
         return encode_word(enc_r(rd, reg(mem[0]), R_FUNC["STB"], 0))
 
-    if op in ("JALR", "JMP", "CALL"):
+    if op in ("JALR", "JMP"):
         # JALR Sd, ra: S[ddd] = pc_next unless ddd == S0, pc = ra.
-        # JMP ra = JALR S0, ra; CALL ra = JALR S7, ra.  Nano's dialect links
-        # into a general register: CALL rd, ra (same encoding, ddd names rd).
-        if op == "JMP" or len(operands) == 1:
-            n_ops(1, f"{op} ra")
-            d = 0 if op == "JMP" else 7
-            return encode_word(enc_r(d, reg(operands[0]),
+        # JMP ra is the conventional link-free spelling.
+        if op == "JMP":
+            n_ops(1, "JMP ra")
+            return encode_word(enc_r(0, reg(operands[0]),
                                      R_FUNC["SYS"], SYS_SUB["JALR"]))
-        n_ops(2, f"{op} Sd, ra")
+        n_ops(2, "JALR Sd, ra")
         tok = operands[0].strip().upper()
         d = REGS[tok] if tok in REGS else sreg(operands[0])
         return encode_word(enc_r(d, reg(operands[1]),

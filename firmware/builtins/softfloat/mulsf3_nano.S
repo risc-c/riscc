@@ -31,7 +31,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 14]
-        RET     r6
+        JMP     r6
         .endm
 
         /*
@@ -95,7 +95,7 @@ __mulsf3:
         ST     r0, [r7 - 8]
 
         /* Exponent-zero operands, including subnormals, flush to zero. */
-        LI      r5, 0x7f80
+        LDI16   r5, 0x7f80
         AND     r0, r2, r5
         BNEZ    .Lcheck_right
 

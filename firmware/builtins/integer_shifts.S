@@ -16,7 +16,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 6]
-        RET     r6
+        JMP     r6
         .endm
 
         .macro NANO_RETURN64
@@ -28,26 +28,25 @@
         NANO_RETURN
         .endm
 #else
-#define WIDE_RETURN RETS
+#define WIDE_RETURN RET S7
 
         /*
          * Wide results use an sret pointer in r1; the four input limbs and
-         * shift count are stack arguments.  The loops use r1:r4 internally.
+         * shift count are stack arguments.  The loops use r1:r4 internally
+         * and keep the remaining count in caller-saved r0.
          */
         .macro WIDE_DI_SAVE
-        ADDI    r7, -12
+        ADDI    r7, -6
         ST      r4, [r7 + 0]
-        ST      r5, [r7 + 2]
-        ST      r6, [r7 + 4]
         MFS     r0, s5
-        ST      r0, [r7 + 6]
+        ST      r0, [r7 + 2]
         MFS     r0, s6
-        ST      r0, [r7 + 8]
+        ST      r0, [r7 + 4]
         MTS     s3, r1
-        LD      r1, [r7 + 12]
-        LD      r2, [r7 + 14]
-        LD      r3, [r7 + 16]
-        LD      r4, [r7 + 18]
+        LD      r1, [r7 + 6]
+        LD      r2, [r7 + 8]
+        LD      r3, [r7 + 10]
+        LD      r4, [r7 + 12]
         .endm
 
         .macro WIDE_DI_RETURN
@@ -57,14 +56,12 @@
         ST      r3, [r0 + 4]
         ST      r4, [r0 + 6]
         LD      r4, [r7 + 0]
-        LD      r5, [r7 + 2]
-        LD      r6, [r7 + 4]
-        LD      r0, [r7 + 6]
+        LD      r0, [r7 + 2]
         MTS     s5, r0
-        LD      r0, [r7 + 8]
+        LD      r0, [r7 + 4]
         MTS     s6, r0
-        ADDI    r7, 12
-        RETS
+        ADDI    r7, 6
+        RET     S7
         .endm
 #endif
 
@@ -94,8 +91,12 @@
         FSL1    r2, r1
         ADD     r1, r1, r1
 #endif
+#ifdef __RISCC_NANO__
         ADDI    r3, -1
         MOV     r0, r3
+#else
+        ADDI    r0, -1
+#endif
         BNEZ    .Lshlsi_loop
 .Lshlsi_done:
         WIDE_RETURN
@@ -120,8 +121,12 @@
         FSR1    r1, r2
         SRLI    r2, r2, 1
 #endif
+#ifdef __RISCC_NANO__
         ADDI    r3, -1
         MOV     r0, r3
+#else
+        ADDI    r0, -1
+#endif
         BNEZ    .Llshrsi_loop
 .Llshrsi_done:
         WIDE_RETURN
@@ -146,8 +151,12 @@
         FSR1    r1, r2
         SRAI    r2, r2, 1
 #endif
+#ifdef __RISCC_NANO__
         ADDI    r3, -1
         MOV     r0, r3
+#else
+        ADDI    r0, -1
+#endif
         BNEZ    .Lashrsi_loop
 .Lashrsi_done:
         WIDE_RETURN
@@ -165,8 +174,7 @@
         ST     r0, [r7 - 4]
 #else
         WIDE_DI_SAVE
-        LD      r5, [r7 + 20]
-        MOV     r0, r5
+        LD      r0, [r7 + 14]
 #endif
         BEQZ    .Lshldi_done
 .Lshldi_loop:
@@ -196,8 +204,7 @@
         FSL1    r3, r2
         FSL1    r2, r1
         ADD     r1, r1, r1
-        ADDI    r5, -1
-        MOV     r0, r5
+        ADDI    r0, -1
 #endif
         BNEZ    .Lshldi_loop
 .Lshldi_done:
@@ -224,8 +231,7 @@
         LUI     r5, 128
 #else
         WIDE_DI_SAVE
-        LD      r5, [r7 + 20]
-        MOV     r0, r5
+        LD      r0, [r7 + 14]
 #endif
         BEQZ    .Llshrdi_done
 .Llshrdi_loop:
@@ -257,8 +263,7 @@
         FSR1    r2, r3
         FSR1    r3, r4
         SRLI    r4, r4, 1
-        ADDI    r5, -1
-        MOV     r0, r5
+        ADDI    r0, -1
 #endif
         BNEZ    .Llshrdi_loop
 .Llshrdi_done:
@@ -285,8 +290,7 @@
         LUI     r5, 128
 #else
         WIDE_DI_SAVE
-        LD      r5, [r7 + 20]
-        MOV     r0, r5
+        LD      r0, [r7 + 14]
 #endif
         BEQZ    .Lashrdi_done
 .Lashrdi_loop:
@@ -318,8 +322,7 @@
         FSR1    r2, r3
         FSR1    r3, r4
         SRAI    r4, r4, 1
-        ADDI    r5, -1
-        MOV     r0, r5
+        ADDI    r0, -1
 #endif
         BNEZ    .Lashrdi_loop
 .Lashrdi_done:

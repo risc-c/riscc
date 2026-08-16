@@ -51,7 +51,7 @@ the mainline S-register and system paths.
 PCs, links, and data addresses are byte addresses. Ordinary loads access the
 unified code/data space, so the cores require no separate program-load path.
 Reserved instruction encodings are implementation don't-cares: RC16 Sys/Full
-alias the unused `00` major space to the JAL16 path, and RC16 `/16` Sys also
+alias the unused `00` major space to the JAL16 path. RC16 `/16` Sys also
 aliases reserved system-row `rb[2]` forms to JALR/MFS/MTS.
 
 ![Serial RISC-C microarchitecture](riscc_serial_microarch.svg)
@@ -86,14 +86,24 @@ cores use the `mulh` and `muldiv` suffixes. Examples: `make test-16-sys`,
 The area tables are **core-only**: they include the register file but exclude
 instruction/data memory, peripherals, and board logic. iCE40 and ECP5 figures
 are reproducible open-FPGA measurements; run `make -j16 tables` to regenerate
-them. Agilex figures are published implementation snapshots, and its Fmax
-figures are restricted-Fmax estimates rather than timing closure at every
-listed clock.
+them. The Agilex Sys figures are fresh Quartus post-fit measurements; the other
+Agilex profiles remain published implementation snapshots. Its Fmax figures
+are restricted-Fmax estimates rather than timing closure at every listed
+clock.
+Use `AGILEX_RC16_ONLY` with `characterize-agilex-rc16` to refresh only the
+affected configurations; for example, `sys1 sys2 sys4 sys8 sys16`.
+
+Sys is uniformly Min plus the interrupt/IE path and JALL/JMPL: it retains
+Min's single-step right shifts at every width. The Agilex Sys row was refreshed
+from this lean implementation with the same MLAB-RF core harness and fixed
+seeds as the previous characterization.
+On iCE40 `/16`, the JALL/JMPL path adds four LUT4 over the corresponding
+interrupt-only Sys datapath by reusing its load capture and MDR writeback.
 
 | iCE40 LUT4 | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 119 | 133 | 161 | 216 | 258 |
-| `sys` | 155 | 165 | 198 | 259 | 290 |
+| `sys` | 145 | 157 | 186 | 243 | 278 |
 | `full` | 171 | 188 | 232 | 297 | 335 |
 | RC32 `min` | 145 | 154 | 179 | 222 | 305 |
 | nano | 94 | — | — | — | — |
@@ -102,7 +112,7 @@ listed clock.
 | ECP5 LUTs (RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 164 | 180 | 201 | 252 | 286 |
-| `sys` | 191 | 206 | 235 | 294 | 316 |
+| `sys` | 182 | 198 | 226 | 279 | 305 |
 | `full` | 209 | 231 | 270 | 333 | 360 |
 | RC32 `min` | 229 | 242 | 264 | 293 | 373 |
 | nano | 115 | — | — | — | — |
@@ -111,7 +121,7 @@ listed clock.
 | ECP5 LUTs (block RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 121 | 140 | 165 | 220 | 261 |
-| `sys` | 149 | 168 | 199 | 261 | 292 |
+| `sys` | 140 | 158 | 190 | 245 | 281 |
 | `full` | 166 | 190 | 234 | 300 | 336 |
 | RC32 `min` | 149 | 162 | 189 | 234 | 307 |
 | nano | 94 | — | — | — | — |
@@ -123,10 +133,10 @@ a smaller dedicated PC path. Wider registers and native 32-bit transfers
 account for most of the remaining difference. RC32 timing rows are single-seed
 measurements.
 
-| Published Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
+| Agilex 3 ALMs | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 93.7 | 100.1 | 108.0 | 120.1 | 118.0 |
-| `sys` | 108.1 | 116.2 | 121.6 | 141.9 | 145.2 |
+| `sys` | 104.1 | 106.9 | 120.7 | 137.7 | 150.7 |
 | `full` | 100.8 | 121.9 | 127.8 | 148.6 | 170.8 |
 | nano | 88.4 | — | — | — | — |
 | Fast soft / DSP | — | — | — | — | 271.3 / 264.8 |
@@ -138,21 +148,21 @@ measurements.
 | UP5K Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 36.39 | 34.95 | 32.01 | 29.34 | 27.77 |
-| `sys` | 35.97 | 34.09 | 31.49 | 29.74 | 28.70 |
+| `sys` | 35.63 | 32.19 | 32.17 | 28.86 | 29.25 |
 | `full` | 34.19 | 30.73 | 30.50 | 28.13 | 27.52 |
 | RC32 `min` | 36.61 | 29.11 | 25.70 | 28.00 | 25.04 |
 
 | ECP5 Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 104.44 | 104.94 | 88.72 | 76.07 | 89.18 |
-| `sys` | 97.99 | 106.37 | 96.32 | 82.96 | 91.25 |
+| `sys` | 107.87 | 106.88 | 93.53 | 86.60 | 87.23 |
 | `full` | 94.93 | 95.16 | 84.76 | 76.75 | 84.23 |
 | RC32 `min` | 99.22 | 92.34 | 81.68 | 78.64 | 76.86 |
 
-| Published Agilex 3 Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
+| Agilex 3 Fmax (MHz) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 323.42 | 317.76 | 289.44 | 278.71 | 270.12 |
-| `sys` | 323.83 | 304.69 | 278.24 | 290.28 | 248.20 |
+| `sys` | 308.64 | 290.78 | 264.62 | 268.67 | 245.04 |
 | `full` | 304.79 | 313.28 | 313.68 | 283.37 | 245.46 |
 
 | Other implementation Fmax (MHz) | UP5K | ECP5 | Agilex 3 |
@@ -172,16 +182,16 @@ targets, but no standalone open-FPGA area/Fmax target.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 1.02 | 1.77 | 2.81 | 4.15 | 6.89 | 1.10 | 11.04 | 12.51 | — | — |
-| ECP5 | 2.78 | 5.54 | 8.60 | 11.57 | 21.89 | 3.21 | 39.76 | 46.85 | — | — |
-| Agilex 3 | 9.18 | 15.86 | 24.84 | 40.48 | 59.55 | 9.86 | 107.63 | 101.67 | 142.92 | 125.39 |
+| iCE40 UP5K | 1.01 | 1.68 | 2.87 | 4.02 | 7.02 | 1.10 | 11.04 | 12.51 | — | — |
+| ECP5 | 3.06 | 5.56 | 8.35 | 12.08 | 20.93 | 3.21 | 39.76 | 46.85 | — | — |
+| Agilex 3 | 8.75 | 15.14 | 23.62 | 37.47 | 58.80 | 9.86 | 107.63 | 101.67 | 142.92 | 125.39 |
 
 | Benchmark MIPS per thousand logic units | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K, LUT4 | 6.6 | 10.8 | 14.2 | 16.0 | 23.7 | 11.7 | 22.7 | 27.6 | — | — |
-| ECP5, block RF sites | 18.6 | 33.0 | 43.2 | 44.3 | 75.0 | 34.2 | 74.2 | 96.0 | — | — |
-| ECP5, LUTRAM RF sites | 14.5 | 26.9 | 36.6 | 39.3 | 69.3 | 27.9 | 74.2 | 96.0 | — | — |
-| Agilex 3, ALM | 84.9 | 136.5 | 204.2 | 285.3 | 410.1 | 111.6 | 396.7 | 384.0 | 449.4 | 366.0 |
+| iCE40 UP5K, LUT4 | 7.0 | 10.7 | 15.4 | 16.6 | 25.2 | 11.7 | 22.7 | 27.6 | — | — |
+| ECP5, block RF sites | 21.8 | 35.2 | 43.9 | 49.3 | 74.5 | 34.2 | 74.2 | 96.0 | — | — |
+| ECP5, LUTRAM RF sites | 16.8 | 28.1 | 36.9 | 43.3 | 68.6 | 27.9 | 74.2 | 96.0 | — | — |
+| Agilex 3, ALM | 84.0 | 141.6 | 195.7 | 272.1 | 390.1 | 111.6 | 396.7 | 384.0 | 449.4 | 366.0 |
 
 The common mainline benchmark retires 3238 instructions; Nano's
 software-multiply version retires 8491 instructions. When comparing ISA

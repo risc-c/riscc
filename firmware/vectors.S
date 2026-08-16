@@ -5,14 +5,15 @@
         .global __vectors
         .type __vectors,@object
 __vectors:
-#if defined(__RISCC_MIN__) || defined(__RISCC_NANO__)
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        JMPL    _start
+        JMPL    __riscc_irq_vector
+        .size __vectors, . - __vectors
+#else
         JMP8    _start
         NOP
 .Lno_irq:
         JMP8    .Lno_irq
         NOP
-#else
-        JMPL    _start
-        JMPL    __riscc_irq_vector
-#endif
         .size __vectors, . - __vectors
+#endif

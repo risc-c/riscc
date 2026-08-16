@@ -7,7 +7,7 @@
  */
 
         .macro EXTRACT_EXP reg
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 7
         SRLI    \reg, \reg, 1
         .endr
@@ -16,12 +16,12 @@
 #endif
         .endm
 
-        .macro TAIL_PACK
-#ifdef __RISCC_MIN__
-        LI      r0, __riscc_pack_sf
-        JALR    s0, r0
-#else
+        .macro JUMP_PACK
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
         JMPL    __riscc_pack_sf
+#else
+        LDI16   r0, __riscc_pack_sf
+        JMP     r0
 #endif
         .endm
 
@@ -34,7 +34,7 @@
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
         ADDI    r7, 48
-        RETS
+        RET     S7
         .endm
 
         .macro DIV_ROUND
@@ -197,11 +197,11 @@ __divsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LI      r2, 0x7fc0
+        LDI16   r2, 0x7fc0
         JMP8    .Lspecial_return
 .Linfinity:
         LDI     r1, 0
-        LI      r2, 0x7f80
+        LDI16   r2, 0x7f80
         LD     r0, [r7 + 42]
         OR      r2, r2, r0
         JMP8    .Lspecial_return
@@ -233,13 +233,13 @@ __divsf3:
         OR      r0, r3, r4
         BNEZ    .Lnonzero_operands
         LDI     r1, 0
-        LI      r2, 0x7f80
+        LDI16   r2, 0x7f80
         LD     r0, [r7 + 42]
         OR      r2, r2, r0
         JMP8    .Lfinite_return
 .Lfinite_qnan:
         LDI     r1, 0
-        LI      r2, 0x7fc0
+        LDI16   r2, 0x7fc0
         JMP8    .Lfinite_return
 .Lfinite_zero:
         LDI     r1, 0
@@ -343,7 +343,7 @@ __divsf3:
 .Lmdu_exact:
         LD     r3, [r7 + 42]
         LD     r4, [r7 + 44]
-        TAIL_PACK
+        JUMP_PACK
 #else
         ST     r5, [r7 + 44]
         MOV     r5, r3                 /* divisor low */
@@ -392,7 +392,7 @@ __divsf3:
 .Lexact:
         LD     r3, [r7 + 42]
         LD     r4, [r7 + 44]
-        TAIL_PACK                      /* tail call */
+        JUMP_PACK                      /* preserve the caller's link */
 #endif
 #ifdef __RISCC_MDU__
 .Lmdu_div_digit:

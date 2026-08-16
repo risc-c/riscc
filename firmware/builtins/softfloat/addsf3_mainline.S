@@ -7,7 +7,7 @@
  */
 
         .macro EXTRACT_EXP reg
-#ifdef __RISCC_MIN__
+#ifndef __RISCC_FULL__
         .rept 7
         SRLI    \reg, \reg, 1
         .endr
@@ -16,12 +16,12 @@
 #endif
         .endm
 
-        .macro TAIL_PACK
-#ifdef __RISCC_MIN__
-        LI      r0, __riscc_pack_sf
-        JALR    s0, r0
-#else
+        .macro JUMP_PACK
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
         JMPL    __riscc_pack_sf
+#else
+        LDI16   r0, __riscc_pack_sf
+        JMP     r0
 #endif
         .endm
 
@@ -34,7 +34,7 @@
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
         ADDI    r7, 48
-        RETS
+        RET     S7
         .endm
 
         .section .text.__addsf3,"ax",@progbits
@@ -113,7 +113,7 @@ __addsf3:
         JMP8    .Lspecial_return
 .Lqnan:
         LDI     r1, 0
-        LI      r2, 0x7fc0
+        LDI16   r2, 0x7fc0
 .Lspecial_return:
         ABI_RETURN
 
@@ -275,5 +275,5 @@ __addsf3:
 .Lpack:
         LD     r3, [r7 + 40]
         MOV     r4, r5
-        TAIL_PACK                      /* tail call */
+        JUMP_PACK                      /* preserve the caller's link */
         .size __addsf3, . - __addsf3

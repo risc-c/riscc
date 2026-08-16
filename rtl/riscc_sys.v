@@ -8,7 +8,7 @@
 `define RISCC_RC16_SYS_V
 `default_nettype none
 
-// Sys is the baseline profile.
+// Sys is Min plus interrupt/IE control and the two-word JALL/JMPL form.
 
 module riscc #(
     parameter integer W = 4,
@@ -109,8 +109,9 @@ module riscc #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-    // Defined JAL16 uses the 00 major space; reserved long words alias it.
+    // JALL uses the 00 major space; other long heads share its datapath.
     wire long_form_op = ~op_class[1] & ~op_class[0];
+    wire jal16_target_phase = jal16_target_phase_q;
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_01 = ~f5[4] &  f5[3];
@@ -126,25 +127,12 @@ module riscc #(
 
     wire slt_op = ordinary_alu_op & ~f5[2] & f5[1];
     wire signed_compare = ~instr_q[3];
-    // SRLI/SRAI (01_100/101) and SLLI (01_111) repeat EXECUTE bbb+1
-    // times.
+    // Sys retains Min's single-step SRLI/SRAI. Larger right shifts compose
+    // those steps; SLLI is deliberately absent.
     wire right_shift_op =
         register_group & f_group_01 & f5[2] & ~f5[1];
-    wire mul_bit = 1'b0;
-    wire multiply_op = 1'b0;
-    wire left_shift_op = register_group & f_group_01 &
-                         f5[2] & f5[1] & f5[0];
-    wire variable_shift_op = right_shift_op | left_shift_op;
     wire arithmetic_shift = f5[0];
-    wire use_left_shift_path = f5[1];
-    // Previous slice's MSB, used as the SLLI carry-in.
-    reg left_shift_carry_q;
-    reg  [2:0] repeat_pass_idx_q;
-    // ~trap_active: see the FULL branch note -- preempted shifts must not loop
-    wire repeat_exec = variable_shift_op & ~trap_active &
-                       (repeat_pass_idx_q != 3'h7);
-    wire mul_clear_product = 1'b0;
-    wire shift_writeback_op = variable_shift_op | funnel_right_op;
+    wire shift_writeback_op = right_shift_op | funnel_right_op;
 
     // Native LDX uses 01_000. LDB, LDBS, and STB use 01_010, 01_110,
     // and 01_011 respectively.
@@ -175,7 +163,6 @@ module riscc #(
     wire ie_next = control_ie_value;
     wire register_jal_op = system_op & ~bbb[2] & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire jal16_target_phase = jal16_target_phase_q;
     wire link_context = register_jal_op | jal16_target_phase;
     wire register_target_op = system_op & ~bbb[2] & ~bbb[1];
     wire register_link_data_op = register_target_op;
@@ -184,7 +171,6 @@ module riscc #(
     // control; ddd[2] and ddd[0] duplicate the new/set IE value. Thus
     // 000/101 are RET/RETI and 010/111 are CLI/STI.
     wire control_ie_value = ddd[2];
-    // Let JALR join the IE-write plane while feeding the old value back.
     wire control_plane = system_op & ~bbb[1];
     wire control_ie_next = bbb[0] ? ie_q :
                            (control_ie_value | (~ddd[1] & ie_q));
@@ -192,15 +178,11 @@ module riscc #(
     // returns and register jumps.
     wire register_jal_op = system_op & ~bbb[1] & bbb[0];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire jal16_target_phase = jal16_target_phase_q;
-    wire link_context = register_jal_op |
-                        jal16_target_phase;
+    wire link_context = register_jal_op | jal16_target_phase;
     wire register_target_op = system_op & ~bbb[1] &
                               (bbb[0] | ~ddd[1]);
-    // CLI/STI never write the RF, so the write-data mux retains the broad
-    // target plane and keeps the packed-control selector off every slice.
-    wire register_link_data_op = system_op & ~bbb[1];
-    wire ie_write_op = control_plane;
+    wire register_link_data_op = register_target_op;
+    wire ie_write_op = control_plane & ~bbb[0];
     wire ie_next = control_ie_next;
 `endif
 
@@ -221,25 +203,18 @@ module riscc #(
     wire needs_rb_pass = alu_uses_rb_stream;
     wire needs_operand_pass =
         needs_rb_pass | (register_memory_plane & ~byte_access);
-    wire needs_init_pass = mem_op | slt_op | multiply_op | funnel_op;
+    wire needs_init_pass = mem_op | slt_op | funnel_op;
 
     // ------------------------------------------------------------------
     // System profile
     // ------------------------------------------------------------------
     reg ie_q;
     reg trap_q;
-    // Missing optional ops are undefined on builds that lack them.
+    // Spans the target-word fetch and its jump/link pass.
+    reg jal16_target_phase_q;
     // IRQ enters via word 2.
-    // No ~jal16_target_phase_q guard is needed: the target-word fetch runs
-    // through FETCH_WAIT/FETCH_CAPTURE, so no decode occurs mid-JAL16.
     wire take_irq = ie_q & irq;
     wire trap_active = trap_q;
-
-    // ------------------------------------------------------------------
-    // Two-word JAL16/JMP16 sequencing.  The flag is set after the first-word
-    // pass and spans the target-word fetch plus its jump/link pass.
-    // ------------------------------------------------------------------
-    reg jal16_target_phase_q;
 
     // ------------------------------------------------------------------
     // Register file: 16 regs x 16 bits in one synchronous RAM (one EBR),
@@ -294,14 +269,11 @@ module riscc #(
     wire [3:0] rf_dst_reg = {trap_active | dst_system_bank, rf_dst_low};
 
     wire rf_read_rb =
-        (needs_rb_pass &
-         (in_decode | (init2_operand_pass & ~last_slice))) |
-        (multiply_op & ((in_init2 & last_slice) |
-                        (in_init & ~last_slice)));
-    wire rf_read_rd = (in_init & last_slice & (store_op | multiply_op)) |
+        needs_rb_pass &
+        (in_decode | (init2_operand_pass & ~last_slice));
+    wire rf_read_rd = (in_init & last_slice & store_op) |
                       store_data_init2_pass |
-                      store_data_mem_pass |
-                      (in_execute & multiply_op);
+                      store_data_mem_pass;
     wire [3:0] rf_read_reg = rf_read_rb ?
                                  {1'b0, source_is_rd ? aaa : bbb} :
                                  rf_read_rd ? {1'b0, ddd} : rf_src_reg;
@@ -321,7 +293,7 @@ module riscc #(
 
     wire writes_rd = immediate_alu_op | register_execute_plane |
                      load_writeback_op |
-                     ((W == 1) ? variable_shift_op : shift_writeback_op) |
+                     ((W == 1) ? right_shift_op : shift_writeback_op) |
                      system_move_op |
                      (link_dest_nonzero & link_context);
 `ifdef RISCC_ECP5
@@ -419,12 +391,11 @@ module riscc #(
     wire slt_execute = slt_op & in_execute;
 
     wire [W-1:0] alu_a =
-        rf_rdata & {W{alu_a_enable & ~slt_execute & ~mul_clear_product}};
+        rf_rdata & {W{alu_a_enable & ~slt_execute}};
     wire [W-1:0] alu_b_raw =
-        ((needs_operand_pass | multiply_op | direct_store_stream_base) ?
+        ((needs_operand_pass | direct_store_stream_base) ?
          data_stream_q[W-1:0] : imm_slice) &
-                       {W{~(alu_b_zero | slt_execute) &
-                          (~multiply_op | (in_execute & mul_bit))}};
+                       {W{~(alu_b_zero | slt_execute)}};
     wire [W-1:0] alu_b = alu_b_raw ^ {W{alu_subtract & ~slt_execute}};
 
     reg  alu_carry_q;
@@ -499,24 +470,18 @@ module riscc #(
     wire [W-1:0] right_shift_slice =
         (data_stream_q[W-1:0] >> 1) |
         ({{(W-1){1'b0}}, right_shift_input} << (W - 1));
-    // A left shift appends the previous slice's delayed MSB and inserts zero
-    // in the first result slice.
-    wire left_shift_input = left_shift_carry_q & ~first_slice;
-    wire [W-1:0] shift_result_slice = use_left_shift_path ?
-        ((data_stream_q[W-1:0] << 1) |
-         {{(W-1){1'b0}}, left_shift_input}) :
-        right_shift_slice;
+    wire [W-1:0] shift_result_slice = right_shift_slice;
 
     // ------------------------------------------------------------------
-    // Data stream: operands, stores, loads, and JAL16 targets
+    // Data stream: operands, stores, loads, one-step shifts, and JALL targets
     // ------------------------------------------------------------------
     reg [15:0] data_stream_q;
     reg load_fill_q;
     reg memory_lane_q;
-    // The stream shifts on every counted cycle, including MEM_XFER.  Loads and
-    // JAL16 targets enter in W-bit slices, leaving the lower 16-W bits as a
-    // pure shift with no input muxing.  INIT2 fills and consumers shift too;
-    // idle passes rotate don't-care data that the next fill/load overwrites.
+    // The stream shifts on every counted cycle, including MEM_XFER.  Loads
+    // enter in W-bit slices, leaving the lower 16-W bits as a pure shift with
+    // no input muxing. INIT2 fills and consumers shift too; idle passes rotate
+    // don't-care data that the next fill/load overwrites.
     wire [W-1:0] memory_read_slice =
         mem_rdata[slice_idx_q * W +: W];
     // W=1 can select the requested byte directly while the word is streamed.
@@ -534,12 +499,11 @@ module riscc #(
     wire [W-1:0] load_stream_slice = (W == 1) ?
         {{(W-1){1'b0}}, w1_load_stream_bit} : memory_read_slice;
     always @(posedge clk) begin
-        // MUL holds A in data_stream_q during INIT.
-        if (slice_count_en & ~(in_init & multiply_op))
-            // Repeated shift/MUL passes recycle the stream's shifted output.
+        if (slice_count_en)
+            // A one-step shift replaces its source stream with the result.
             data_stream_q <= {
                 memory_stream_pass ? load_stream_slice :
-                (in_execute & (variable_shift_op | multiply_op)) ?
+                (in_execute & right_shift_op) ?
                     shift_result_slice : rf_rdata,
                 data_stream_q[15:W]};
         if (in_mem_xfer) begin
@@ -550,11 +514,6 @@ module riscc #(
         end
         if (in_init & first_slice)
             funnel_bit_q <= data_stream_q[0];
-        left_shift_carry_q <= data_stream_q[W-1];
-        if (in_decode)
-            repeat_pass_idx_q <= ~bbb;  // count to 7: bbb+1 passes
-        else if (in_execute & last_slice & repeat_exec)
-            repeat_pass_idx_q <= repeat_pass_idx_q + 1'b1;
     end
 
 
@@ -597,7 +556,7 @@ module riscc #(
 
     // ------------------------------------------------------------------
     // PC stream and serial adder (byte PC + offset + two-byte step).
-    // The adder output is also every link/EPC value: PC+2 for JALR/JAL16;
+    // The adder output is also every link/EPC value: PC+2 for JALR/JALL;
     // for IRQ entry the parked carry is forced to 0 (and the
     // offset gated off) so the same adder yields the raw preempted pc_q.
     // ------------------------------------------------------------------
@@ -628,13 +587,10 @@ module riscc #(
                             {{W{1'b0}}, pc_carry_q};
     wire [W-1:0] pc_sum = pc_sum_ext[W-1:0];
 
-    // Park at one through repeated shift/MUL passes.
     always @(posedge clk)
-        pc_carry_q <= (in_execute & ~repeat_exec) ? pc_sum_ext[W]
-                                                   : ~(in_decode & take_irq);
+        pc_carry_q <= in_execute ? pc_sum_ext[W] : ~(in_decode & take_irq);
 
-    // Register jumps stream rs1 into data_stream_q during INIT2, sharing the
-    // same PC path used by a JAL16 target word.
+    // Register jumps and JALL targets both use data_stream_q.
     wire pc_from_register = register_target_op;
     wire pc_from_stream = pc_from_register | jal16_target_phase;
     wire [15:0] irq_pc_word = 16'h0004 >> (slice_idx_q * W);
@@ -648,7 +604,7 @@ module riscc #(
     always @(posedge clk)
         if (rst)
             pc_q <= RESET_PC;
-        else if (in_execute & ~repeat_exec)
+        else if (in_execute)
             pc_q <= {next_pc_slice, pc_q[15:W]};
 
     // rd write data; EPC uses the same link path.
@@ -662,7 +618,7 @@ module riscc #(
             link_slice :
         load_writeback_op ? load_slice :
         shift_writeback_op ? shift_result_slice :
-        alu_result;  // MUL passes write the sum
+        alu_result;
 
     // ------------------------------------------------------------------
     // System profile state
@@ -716,7 +672,7 @@ module riscc #(
                     (needs_operand_pass |
                      direct_store_stream_base |
                      pc_from_register |
-                     variable_shift_op | multiply_op) ? ST_INIT2 :
+                     right_shift_op) ? ST_INIT2 :
                     needs_init_pass ? ST_INIT : ST_EXECUTE;
             ST_INIT2:
                 if (last_slice)
@@ -727,19 +683,16 @@ module riscc #(
                                (STORE_DATA_IN_SECOND_INIT2 ? ST_INIT2 :
                                                              ST_MEM_XFER) :
                                mem_op   ? ST_MEM_WAIT : ST_EXECUTE;
-            // Loads and JAL16 target words observe one memory-wait cycle.
+            // Loads observe one memory-wait cycle.
             ST_MEM_WAIT:
                 state_q <= ST_MEM_XFER;
             ST_MEM_XFER:
                 if (last_slice)
                     state_q <= ST_EXECUTE;
             ST_EXECUTE:
-                if (last_slice & ~repeat_exec)
-                    // A first-word JAL16 fetches its target through
-                    // MEM_WAIT/MEM_XFER; address_stream_q already holds pc_q.
+                if (last_slice)
                     state_q <= (long_form_op & ~jal16_target_phase_q &
-                                ~trap_active) ?
-                               ST_MEM_WAIT : ST_FETCH_WAIT;
+                                ~trap_active) ? ST_MEM_WAIT : ST_FETCH_WAIT;
         endcase
         if (rst)
             state_q <= ST_FETCH_WAIT;
@@ -787,8 +740,8 @@ module riscc #(
 
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
-    wire tr_commit_i = in_execute & last_slice & ~repeat_exec &
-                       ~(long_form_op & ~jal16_target_phase_q &
+    wire tr_commit_i = in_execute & last_slice &
+        ~(long_form_op & ~jal16_target_phase_q &
                          ~trap_active);
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};

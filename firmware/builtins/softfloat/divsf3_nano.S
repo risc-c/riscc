@@ -38,7 +38,7 @@
 
         .macro NANO_RETURN
         LD      r4, [r7 - 12]
-        RET     r6
+        JMP     r6
         .endm
 
         .section .text.__divsf3,"ax",@progbits
@@ -55,7 +55,7 @@ __divsf3:
         XOR     r0, r2, r4
         ST     r0, [r7 - 6]
 
-        LI      r5, 0x7f80
+        LDI16   r5, 0x7f80
         AND     r6, r2, r5
         MOV     r0, r6
         BNEZ    .Lnumerator_normal
@@ -72,7 +72,7 @@ __divsf3:
 
         /* Division by exponent-zero denominator. */
         LDI     r1, 0
-        LI      r2, 0x7f80
+        LDI16   r2, 0x7f80
 .Learly_sign:
         LD     r0, [r7 - 6]
         BGEZ    .Learly_return
@@ -87,7 +87,7 @@ __divsf3:
         /* Biased result exponent: a_exp - b_exp + 127. */
         LD     r6, [r7 - 4]
         SUB     r6, r6, r0
-        LI      r5, 0x3f80
+        LDI16   r5, 0x3f80
         ADD     r6, r6, r5
         ST     r6, [r7 - 4]
 

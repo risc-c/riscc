@@ -142,7 +142,7 @@ and indirectly called functions always use the public `S7` convention. A
 private convention is internal to one object and does not change its ABI.
 
 Nano calls use `JALR r6, register`; direct calls materialize the instruction
-address in `r0`. A Nano return uses `JALR r0, register`.
+address in `r0`. A Nano return uses `JMP register`.
 The return-address operand may be any GPR holding the saved incoming link;
 `r0` as the destination suppresses creation of a new link.
 
@@ -248,8 +248,8 @@ itself uses `R_RISCC_ABS16` or `R_RISCC_ABS32` when it contains an address.
 After loading a function address, a call uses `JALR`. There is no PIC code
 model.
 
-The `sys` and `full` profiles may use `JALL` for aligned absolute targets
-that fit its field. Min has no direct long call. RC32X may additionally
+The `sys` and `full` profiles may use `JALL` for aligned absolute targets that
+fit its field. Min has no direct long call. RC32X may additionally
 materialize constants with its I16 operations and PC-relative targets with
 `AUIPC` plus long `JALR`.
 

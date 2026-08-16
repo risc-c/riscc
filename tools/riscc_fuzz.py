@@ -12,12 +12,11 @@ checked item.
 
 Program shape (per seed): random straight-line ALU/imm/memory ops over
 r1..r6 with a high-RAM data window,
-forward-branch blocks, bounded counted loops, CALL/RETS subroutines,
+forward-branch blocks, bounded counted loops, explicit-link subroutines,
 MTS/MFS spills, and -- in sys
 configs -- STI/CLI and testbench-IRQ triggers (counted in S1) with a
-save/restore handler.  Vector layout follows the current exception
-model: reset enters at word 0 (JMPL slot), IRQ at word 2; min images
-have no vector table.
+save/restore handler. Vector layout follows the exception model: reset
+enters at word 0 and IRQ at word 2; min images have no vector table.
 
 Usage:
   riscc_fuzz.py --seed 42 --config sys
@@ -63,7 +62,8 @@ def parse_config(config):
         raise ValueError("unknown config: %s" % config)
     return {
         "sys": config != "min",
-        "shifts": config != "min",
+        "shifts": config == "full",
+        "long_calls": config in ("sys", "full"),
         "full": config == "full",
     }
 
@@ -88,6 +88,7 @@ class Gen:
         self.config = config
         self.sys = cfg["sys"]
         self.shifts = cfg["shifts"]
+        self.long_calls = cfg["long_calls"]
         self.full = cfg["full"]
         self.label = 0
 
@@ -176,12 +177,12 @@ class Gen:
         body = []
         for _ in range(self.rng.randint(1, 3)):
             body += self.simple_op()
-        subs.append(("%s:" % lab, body + ["    RETS"]))
-        if self.sys and self.rng.random() < 0.5:
-            return ["    CALL16 %s" % lab]
+        subs.append(("%s:" % lab, body + ["    RET S7"]))
+        if self.long_calls and self.rng.random() < 0.5:
+            return ["    JALL S7, %s" % lab]
         r = self.reg()
         return ["    LDI16 %s, %s" % (r, lab),
-                "    CALL  %s" % r]
+                "    JALR S7, %s" % r]
 
     def op_irq(self):
         return ["    STI",
@@ -241,11 +242,18 @@ class Gen:
             ".vectors",
         ]
         if self.sys:
-            head += [
-                "    JMPL reset_tramp",
-                "    JMPL irq_h",
-                "    JMPL brk_h",
-            ]
+            if self.long_calls:
+                head += [
+                    "    JMPL reset_tramp",
+                    "    JMPL irq_h",
+                    "    JMPL brk_h",
+                ]
+            else:
+                head += [
+                    "    JMP8 reset_tramp",
+                    "    LDI   r0, 0",
+                    "    JMP8 irq_h",
+                ]
         head += [
             ".text",
             "reset_tramp:",
@@ -267,14 +275,14 @@ class Gen:
                 "    LDI16 r1, 0x%04X" % TEST_IRQ,
                 "    LD   r1, [r1+0]",
                 "    MFS   r1, S2",
-                "    ERET",
+                "    RETI S0",
                 "brk_h:",                       # count in S3, resume
                 "    MTS   S2, r1",
                 "    MFS   r1, S3",
                 "    ADDI  r1, 1",
                 "    MTS   S3, r1",
                 "    MFS   r1, S2",
-                "    ERET",
+                "    RETI S0",
             ]
         self.rng = random.Random(self.seed)     # regenerate identically
         self.label = 0
@@ -429,7 +437,7 @@ class NanoGen:
             body += self.simple_op(exclude="r7")
         subs.append(("%s:" % lab, body + ["    JMP   r7"]))
         return ["    LDI16 r1, %s" % lab,
-                "    CALL  r7, r1"]
+                "    JALR  r7, r1"]
 
     def body(self):
         subs = []

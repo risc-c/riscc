@@ -7,6 +7,9 @@ u16 __mulhi3(u16, u16);
 s16 __divhi3(s16, s16);
 s16 __modhi3(s16, s16);
 s16 __divmodhi4(s16, s16, s16 *);
+u16 __riscc_shlhi(u16, u16);
+u16 __riscc_lshrhi(u16, u16);
+s16 __riscc_ashrhi(s16, u16);
 
 u32 __mulsi3(u32, u32);
 s32 __ashlsi3(s32, int);
@@ -36,6 +39,7 @@ int __cmpdi2(s64, s64);
 
 static volatile u16 builtin_u16 = 1000;
 static volatile s16 builtin_s16 = -1000;
+static volatile u16 builtin_shift_u16 = 4;
 static volatile u32 builtin_u32 = 0x12345678ul;
 static volatile s32 builtin_s32 = -100000l;
 static volatile u64 builtin_u64 = 0x123456789abcdef0ull;
@@ -53,6 +57,7 @@ u16 feature_test_builtins(void)
     s64 signed_remainder64;
     u16 value16 = builtin_u16;
     s16 signed16 = builtin_s16;
+    u16 shift16 = builtin_shift_u16;
     u32 value32 = builtin_u32;
     s32 signed32 = builtin_s32;
     u64 value64 = builtin_u64;
@@ -77,6 +82,10 @@ u16 feature_test_builtins(void)
         __divmodhi4(signed16, 37, &signed_remainder16) != -27 ||
         signed_remainder16 != -1)
         return 2;
+    if (__riscc_shlhi(0x8123u, shift16) != 0x1230u ||
+        __riscc_lshrhi(0x8123u, shift16) != 0x0812u ||
+        (u16)__riscc_ashrhi((s16)0x8123u, shift16) != 0xf812u)
+        return 12;
 
     if (__mulsi3(value32, 37) != 0xa1907f58ul ||
         __mulsi3(0xfffffffful, 0xfffffffful) != 1 ||

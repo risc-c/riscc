@@ -44,7 +44,7 @@ __riscc_irq_stack_top:
 riscc_irq_set_handler:
         LDI16   r0, __riscc_irq_handler_ptr
         ST     r1, [r0+0]
-        RETS
+        RET     S7
         .size riscc_irq_set_handler, . - riscc_irq_set_handler
 
         .section .text.__riscc_irq_entry,"ax",@progbits
@@ -55,7 +55,9 @@ riscc_irq_set_handler:
         .type __riscc_irq_entry,@function
 __riscc_irq_vector:
 __riscc_irq_entry:
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
         MTS     S1, r0
+#endif
 
         MFS     r0, S2
         ST     r1, [r0-10]
@@ -79,7 +81,8 @@ __riscc_irq_entry:
         LDI16   r0, __riscc_irq_handler_ptr
         LD     r0, [r0+0]
         BNEZ    .Lhandler_set
-        JMPL    __default_irq
+        LDI16   r0, __default_irq
+        JMP     r0
 .Lhandler_set:
         LDI16   r7, __riscc_irq_stack_top
         JALR    S7, r0

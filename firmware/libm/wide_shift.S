@@ -7,9 +7,9 @@
  */
 
 #ifdef __RISCC_NANO__
-#define MATH_RETURN RET r6
+#define MATH_RETURN JMP r6
 #else
-#define MATH_RETURN RETS
+#define MATH_RETURN RET S7
 #endif
 
         .macro SAVE_R4

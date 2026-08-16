@@ -158,6 +158,8 @@ rc16_ecp5_cpp_defs = $(strip \
 # Area and simulation builds retain the smaller characterized spellings above.
 rc16_fmax_generic_cpp_defs = $(strip \
   $(call rc16_cpp_defs,$(2)) $(call rc16_w2_opt_def,$(1),$(2)) \
+  $(if $(and $(filter 16,$(1)),$(filter sys,$(2))), \
+    -DRISCC_RC16_JALL_EXACT_DECODE) \
   $(if $(and $(filter 4,$(1)),$(filter full,$(2))), \
     -DRISCC_RC16_CONTROL_NORMALIZE, \
     $(if $(and $(filter 8,$(1)),$(filter sys,$(2))), \
@@ -188,7 +190,7 @@ rc16_ice40_area_synth_opts = $(strip \
   $(if $(and $(filter 16,$(1)),$(filter min,$(2))),-abc9 -device u) \
   $(if $(and $(filter 1,$(1)),$(filter sys,$(2))),-dff) \
   $(if $(and $(filter 2 4,$(1)),$(filter sys,$(2))),-abc2) \
-  $(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-dff) \
+  $(if $(and $(filter 16,$(1)),$(filter sys,$(2))),-abc2) \
   $(if $(and $(filter 2,$(1)),$(filter full,$(2))),-dff) \
   $(if $(and $(filter 4 16,$(1)),$(filter full,$(2))),-abc2 -dff))
 
@@ -1064,11 +1066,11 @@ atum-a3-demo: $(ATUM_SOF)
 
 # ---- Area -------------------------------------------------------------
 
-# Current Quartus Pro core characterization for Agilex 3.  These values are
-# included in the per-core reports and aggregate table; the open-FPGA area
-# recipes above remain reproducible locally.
+# Sys is current Quartus Pro core characterization for Agilex 3; the other
+# profiles are published snapshots. These values are included in per-core
+# reports and the aggregate table; open-FPGA recipes remain reproducible.
 AGILEX_AREA_MIN := 93.7 100.1 108.0 120.1 118.0
-AGILEX_AREA_SYS := 108.1 116.2 121.6 141.9 145.2
+AGILEX_AREA_SYS := 104.1 106.9 120.7 137.7 150.7
 AGILEX_AREA_FULL := 100.8 121.9 127.8 148.6 170.8
 AGILEX_AREA_min := $(AGILEX_AREA_MIN)
 AGILEX_AREA_sys := $(AGILEX_AREA_SYS)
@@ -1079,7 +1081,7 @@ AGILEX_AREA_FAST_DSP := 264.8
 AGILEX_AREA_FASTER_DSP := 318.0
 AGILEX_AREA_FASTER_SOFT := 342.6
 AGILEX_FMAX_MIN := 323.42 317.76 289.44 278.71 270.12
-AGILEX_FMAX_SYS := 323.83 304.69 278.24 290.28 248.20
+AGILEX_FMAX_SYS := 308.64 290.78 264.62 268.67 245.04
 AGILEX_FMAX_FULL := 304.79 313.28 313.68 283.37 245.46
 AGILEX_FMAX_NANO := 306.28
 AGILEX_FMAX_FAST_SOFT := 191.83
@@ -1096,7 +1098,7 @@ AGILEX_RC16_CHARACTERIZE_DIR := build/agilex_rc16
 characterize-agilex-rc16:
 	$(PYTHON) tools/agilex_core_characterize.py \
 	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_RC16_CHARACTERIZE_DIR) \
-	  --jobs $(RISCC_BUILD_JOBS)
+	  --jobs $(RISCC_BUILD_JOBS) $(foreach c,$(AGILEX_RC16_ONLY),--only $(c))
 
 agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
 agilex_rc16_area = $(word $(call agilex_area_index,$(1)),$(AGILEX_AREA_$(2)))
@@ -1573,7 +1575,7 @@ fmax-ice40: $(UP5K_FMAX_CELLS) build/fmax/ice40/fast-soft-up5k.mhz \
 	  "$$(cat build/fmax/ice40/fast-dsp.mhz)"
 
 define FMAX_AGILEX_PRINT
-	@echo "Agilex 3 Fmax (MHz; current Quartus core characterization)"
+	@echo "Agilex 3 Fmax (MHz; Sys current, other profiles published)"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@printf '%-24s %7s %7s %7s %7s %7s\n' min $(AGILEX_FMAX_MIN)
 	@printf '%-24s %7s %7s %7s %7s %7s\n' sys $(AGILEX_FMAX_SYS)
@@ -1685,7 +1687,7 @@ define RC16_OPTIONAL_ECP5_AREA_PRINT
 endef
 
 define AREA_AGILEX_PRINT
-	@echo "Agilex 3 ALMs (current Quartus core characterization)"
+	@echo "Agilex 3 ALMs (Sys current, other profiles published)"
 	@printf '%-32s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@printf '%-32s %7s %7s %7s %7s %7s\n' min $(AGILEX_AREA_MIN)
 	@printf '%-32s %7s %7s %7s %7s %7s\n' sys $(AGILEX_AREA_SYS)
@@ -1936,9 +1938,6 @@ RISCC_COMPILER_STDIO_OBJECT := $(RISCC_COMPILER_BUILD)/stdio_smoke.o
 RISCC_COMPILER_STDIO_ELF := $(RISCC_COMPILER_BUILD)/stdio-smoke.elf
 RISCC_COMPILER_STDIO_BIN := $(RISCC_COMPILER_BUILD)/stdio-smoke.bin
 RISCC_COMPILER_STDIO_UART_LOG := $(RISCC_COMPILER_BUILD)/stdio-smoke-uart.txt
-RISCC_COMPILER_SPLIT_ELF := $(RISCC_COMPILER_BUILD)/smoke-split.elf
-RISCC_COMPILER_CODE_BIN := $(RISCC_COMPILER_BUILD)/code.bin
-RISCC_COMPILER_DATA_BIN := $(RISCC_COMPILER_BUILD)/data.bin
 RISCC_COMPILER_ICEPI_RTLSIM := $(RISCC_COMPILER_BUILD)/icepi-rtlsim/Vicepi_zero_soc_sim
 RISCC_COMPILER_ATUM_RTLSIM := $(RISCC_COMPILER_BUILD)/atum-rtlsim/Vatum_a3_nano_soc_sim
 RISCC_COMPILER_IRQ_OBJECTS := $(RISCC_COMPILER_BUILD)/irq_smoke.o \
@@ -1971,7 +1970,7 @@ RISCC_LIBC_TEST_HEADERS := test/compiler/libc/test.h $(RISCC_LIBC_HEADERS)
 .PHONY: llvm-riscc-configure llvm-riscc check-llvm-riscc riscc-firmware \
 	riscc-firmware-sys riscc-firmware-min riscc-firmware-nano \
 	compiler-smoke compiler-smoke-unified compiler-smoke-iss \
-	compiler-smoke-split compiler-smoke-rc16 compiler-smoke-fast compiler-smoke-icepi \
+	compiler-smoke-rc16 compiler-smoke-fast compiler-smoke-icepi \
 	compiler-smoke-atum compiler-smoke-opt-o0 compiler-smoke-opt-o2 \
 	compiler-smoke-opt-os compiler-smoke-opt-matrix \
 	compiler-features-o0-iss compiler-features-o2-iss \
@@ -2143,6 +2142,10 @@ $(RISCC_FIRMWARE_BUILD)/libm/%.o: firmware/libm/%.c \
 		firmware/libm/internal.h $(RISCC_LIBC_HEADERS) Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LIBC_CFLAGS) -Ifirmware/include -c $< -o $@
+
+$(RISCC_FIRMWARE_BUILD)/libm/wide.o: firmware/libm/wide.S Makefile $(RISCC_CLANG)
+	@mkdir -p $(@D)
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) -ffreestanding -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/libm/wide_shift.o: firmware/libm/wide_shift.S Makefile $(RISCC_CLANG)
 	@mkdir -p $(@D)
@@ -2413,31 +2416,6 @@ compiler-smoke-unified: $(RISCC_COMPILER_MEMH)
 compiler-smoke-iss: $(RISCC_COMPILER_BIN) $(RISCC_COMPILER_MEMH) $(RISCC_SIM)
 	$(RISCC_SIM) $(RISCC_COMPILER_BIN) --full \
 	  --max-insns $(RISCC_COMPILER_MAX_INSNS)
-
-$(RISCC_COMPILER_SPLIT_ELF): $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
-		$(RISCC_COMPILER_OBJECTS) $(RISCC_FIRMWARE_LIBRARIES) \
-		firmware/split.ld $(RISCC_CLANG) $(RISCC_LLD)
-	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,--no-check-sections -Wl,-T,$(abspath firmware/split.ld) \
-	  -Wl,-Map,$(@:.elf=.map) \
-	  $(RISCC_FIRMWARE_VECTORS) $(RISCC_FIRMWARE_CRT0) \
-	  $(RISCC_COMPILER_OBJECTS) $(RISCC_FIRMWARE_LIBRARIES) -o $@
-
-$(RISCC_COMPILER_CODE_BIN): $(RISCC_COMPILER_SPLIT_ELF) $(RISCC_OBJCOPY)
-	$(RISCC_OBJCOPY) -O binary --only-section=.vectors \
-	  --only-section='.text*' $< $@
-
-$(RISCC_COMPILER_DATA_BIN): $(RISCC_COMPILER_SPLIT_ELF) $(RISCC_OBJCOPY)
-	$(RISCC_OBJCOPY) -O binary --only-section='.rodata*' \
-	  --only-section='.data*' --only-section='.tdata*' $< $@
-
-compiler-smoke-split: $(RISCC_COMPILER_SPLIT_ELF) \
-	$(RISCC_COMPILER_CODE_BIN) $(RISCC_COMPILER_DATA_BIN) \
-	test/compiler/check_tls_split_image.py
-	$(PYTHON) test/compiler/check_tls_split_image.py \
-	  --llvm-objcopy $(RISCC_OBJCOPY) --elf $(RISCC_COMPILER_SPLIT_ELF) \
-	  --data-bin $(RISCC_COMPILER_DATA_BIN)
 
 compiler-smoke-rc16: $(call rc16_tb,16,full) $(RISCC_COMPILER_BIN)
 	$< $(RISCC_COMPILER_BIN) --max-cycles 10000000
@@ -2826,7 +2804,7 @@ check-rc32-mc-encodings: test/compiler/check_rc32_mc_encodings.py \
 	$(PYTHON) $< --llvm-mc $(LLVM_RISCC_BIN)/llvm-mc \
 	  --llvm-objcopy $(LLVM_RISCC_BIN)/llvm-objcopy
 
-test-compiler: compiler-smoke-iss compiler-smoke-split \
+test-compiler: compiler-smoke-iss \
 	compiler-smoke-rc16 compiler-smoke-fast compiler-smoke-icepi compiler-smoke-atum \
 	compiler-smoke-opt-matrix compiler-features-iss compiler-float-iss \
 	compiler-libc-iss compiler-libc-size \

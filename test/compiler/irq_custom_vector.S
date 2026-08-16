@@ -6,7 +6,12 @@
         .global main
         .type main,@function
 main:
-        CALL16  riscc_irq_enable
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        JALL    S7, riscc_irq_enable
+#else
+        LDI16   r0, riscc_irq_enable
+        JALR    S7, r0
+#endif
         LDI16   r0, 1
         LDI16   r1, 0xfffa
         ST     r0, [r1+0]        // Testbench IRQ raise register.

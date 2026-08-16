@@ -8,7 +8,7 @@
         .type riscc_irq_enable,@function
 riscc_irq_enable:
         STI
-        RETS
+        RET     S7
         .size riscc_irq_enable, . - riscc_irq_enable
 
         .section .text.riscc_irq_disable,"ax",@progbits
@@ -17,5 +17,5 @@ riscc_irq_enable:
         .type riscc_irq_disable,@function
 riscc_irq_disable:
         CLI
-        RETS
+        RET     S7
         .size riscc_irq_disable, . - riscc_irq_disable

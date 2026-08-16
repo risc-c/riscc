@@ -11,13 +11,13 @@
         .extern __tls_start
         .extern __stack_top
 _start:
-        LI      r7, __stack_top
+        LDI16   r7, __stack_top
 #ifndef __RISCC_NANO__
-        LI      r0, __tls_start
+        LDI16   r0, __tls_start
         MTS     s2, r0
 #endif
-        LI      r1, __zero_start
-        LI      r2, __zero_end
+        LDI16   r1, __zero_start
+        LDI16   r2, __zero_end
         LDI     r3, 0
 
 .Lclear_zero:
@@ -29,13 +29,13 @@ _start:
 
 .Lzero_done:
 #ifdef __RISCC_NANO__
-        LI      r0, main
+        LDI16   r0, main
         JALR    r6, r0
 #elif defined(__RISCC_MIN__)
-        LI      r0, main
-        CALL    r0
+        LDI16   r0, main
+        JALR    S7, r0
 #else
-        CALL16  main
+        JALL    S7, main
 #endif
         HALT
         .size _start, . - _start

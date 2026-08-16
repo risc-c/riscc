@@ -115,6 +115,8 @@ def main():
     parser.add_argument("--quartus", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument("--only", action="append", default=[], metavar="NAME",
+                        help="characterize only this configuration (repeatable)")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
 
@@ -126,8 +128,17 @@ def main():
     quartus_sta = quartus_dir / "quartus_sta"
     if not all(tool.is_file() for tool in (quartus_syn, quartus_fit, quartus_sta)):
         raise RuntimeError(f"could not find Quartus tools beside {args.quartus}")
+    specs = project_specs(root)
+    if args.only:
+        requested = set(args.only)
+        known = {name for name, *_ in specs}
+        unknown = requested - known
+        if unknown:
+            parser.error("unknown configuration(s): " + ", ".join(sorted(unknown)))
+        specs = [spec for spec in specs if spec[0] in requested]
+
     results = []
-    for name, profile, width, rtl, macros, top in project_specs(root):
+    for name, profile, width, rtl, macros, top in specs:
         directory = output_dir / name
         write_project(directory, name, root, rtl, macros, top, args.jobs)
         if args.prepare_only:

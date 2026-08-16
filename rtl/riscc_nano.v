@@ -2,7 +2,7 @@
 //
 // Nano keeps the RC16 /1 serial datapath shape but removes the expensive
 // architectural conveniences: no S-bank, no system/interrupt profile,
-// no CMPI, no signed SLT, and CALL writes its link to rd.
+// no CMPI, no signed SLT, and JALR writes its link to rd.
 
 `default_nettype none
 

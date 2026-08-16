@@ -3,9 +3,8 @@
 
 The test enumerates every operand bit-pattern accepted by each canonical
 instruction format, including every signed short-branch displacement and all
-aligned 16-bit JALL byte targets. It also exhausts LI and the direct-call
-pseudos because
-they are emitted by the compiler, then samples the spelling-only aliases.
+aligned 16-bit JALL byte targets. It also exhausts the explicit-width LDI16
+pseudo, then samples the spelling-only aliases.
 
 LLVM MC is run once over the generated assembly.  Its raw .text bytes are
 compared to calls to riscc_asm.encode_insn(), so the comparison does not let
@@ -222,20 +221,15 @@ def main() -> int:
             emit("cli", "CLI", [])
             emit("sti", "STI", [])
 
-            # Compiler-emitted pseudos.  LI is exhaustive because its paired
-            # Exercise the high/low fixup boundary.
+            # LDI16 is exhaustive because its paired instructions exercise
+            # the high/low fixup boundary.
             for rd in range(8):
                 for imm in range(1 << 16):
                     operands = [f"r{rd}", str(imm)]
-                    emit(f"li {', '.join(operands)}", "LI", operands)
-            for ra in range(8):
-                operands = [f"r{ra}"]
-                emit(f"call {operands[0]}", "CALL", operands)
-            for op, spelling in (("CALL16", "call16"), ("JMP16", "jmpl")):
-                for target in range(0, 1 << 16, 2):
-                    operands = [str(target)]
-                    emit(f"{spelling} {operands[0]}", op, operands)
-            emit("rets", "RETS", [])
+                    emit(f"ldi16 {', '.join(operands)}", "LDI16", operands)
+            for target in range(0, 1 << 16, 2):
+                operands = [str(target)]
+                emit(f"jmpl {operands[0]}", "JMP16", operands)
             for rd in range(8):
                 for ra in range(8):
                     operands = [f"r{rd}", f"r{ra}"]
@@ -246,7 +240,7 @@ def main() -> int:
             # Spelling-only aliases share encodings with the canonical forms
             # above; one boundary-oriented sample each is sufficient.
             aliases = (
-                ("ldi16 r7, 65535", "LI", ["r7", "65535"]),
+                ("ldi16 r7, 65535", "LDI16", ["r7", "65535"]),
                 ("ldi8 r7, 255", "LDI", ["r7", "255"]),
                 ("lui8 r0, 0", "LUI", ["r0", "0"]),
                 ("addi8 r1, -128", "ADDI", ["r1", "-128"]),
