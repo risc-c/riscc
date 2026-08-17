@@ -109,12 +109,22 @@ controller; they are area/latency trade-offs rather than separate
 high-throughput execution units. Their architectural definition is in the
 [ISA specification](RISC-C-ISA.md#appendix-b-multiply-divide-instructions-mdu-extension).
 
-### FPGA targets and build names
+### FPGA build selection
 
-The reference targets are iCE40, ECP5, and Agilex 3. RC16 target names follow
-`<verb>-<width>-<profile>`; Nano uses `<verb>-nano`. The optional RC16 Full
-cores use the `mulh` and `muldiv` suffixes. Examples: `make test-16-sys`,
-`make test-16-muldiv`, `make area-2-min`, and `make fmax-8-full`.
+The reference targets are iCE40, ECP5, and Agilex 3. A single-case build uses
+named axes instead of a separate target for every combination. For example:
+
+Run `make help` for the complete list of user targets and selection variables.
+
+```sh
+make test-core PROFILE=sys WIDTH=16 MODE=native
+make test-extension EXTENSION=muldiv MODE=ecp5-lutram
+make trace PROFILE=min WIDTH=2
+make test-fast MEMORY=ice40 MULTIPLIER=dsp
+```
+
+Aggregate targets such as `test-cores`, `test-extensions`, `area-lattice`, and
+`fmax-lattice` iterate the profile, width, memory, and multiplier lists.
 
 ## 2. Measurements
 
@@ -123,8 +133,11 @@ cores use the `mulh` and `muldiv` suffixes. Examples: `make test-16-sys`,
 The resource figures are **core-only**: they count the register file but
 exclude instruction/data memory, peripherals, and board logic. Agilex values
 are Quartus post-fit measurements, and Agilex Fmax is a restricted-Fmax
-estimate, not timing closure at every listed clock. RC32 Fmax results use one
-seed.
+estimate, not timing closure at every listed clock. Lattice tables select the
+smallest area recipe and the fastest recipe/seed from the recorded tuning
+matrix. Agilex runs use seed 1 and a 4 ns target; Quartus uses Aggressive Area
+for the Full family, including MulH and MulDiv, and High Performance Effort for
+the other cores.
 
 Reproduce the tables with:
 
@@ -132,58 +145,75 @@ Reproduce the tables with:
 make -j16 tables-lattice
 ```
 
+This searches 10 routing seeds by default. Set `TUNE_SEEDS=128` for a larger
+search; selected recipes, options, and seeds are recorded in
+`build/tune/{ice40,ecp5}/best.tsv`.
+
 Include Agilex 3 by providing Quartus Pro:
 
 ```sh
 make -j16 QUARTUS_SH=/path/to/quartus/bin/quartus_sh tables
 ```
 
+Run a focused or whole-matrix tuning search directly with:
+
+```sh
+python3 tools/lattice_tune.py ice40 full --width 4 --seeds 128 -j 16
+python3 tools/lattice_tune.py ecp5 sys --width 8 --seeds 128 -j 16
+python3 tools/lattice_tune.py ice40 all --seeds 128 -j 16
+```
+
+Each mapper recipe is synthesized once, its seeds are routed in parallel, and
+the script reports the best seed per recipe plus the smallest, fastest, and
+best-MHz-per-LUT choices. All results are written under `build/tune/` as TSV;
+add `--resume` to continue an interrupted whole-matrix run.
+
 ### Area
 
 | iCE40 LUT4 (+ 1 RF EBR) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 119 | 133 | 161 | 216 | 258 |
-| `sys` | 145 | 157 | 186 | 243 | 278 |
-| `full` | 171 | 188 | 232 | 297 | 335 |
-| RC32 `min` | 145 | 154 | 179 | 222 | 305 |
-| RC32 `sys` | 170 | 179 | 207 | 265 | 338 |
+| `sys` | 144 | 159 | 189 | 246 | 278 |
+| `full` | 173 | 190 | 230 | 297 | 334 |
+| RC32 `min` | 145 | 153 | 181 | 222 | 305 |
+| RC32 `sys` | 170 | 179 | 209 | 264 | 338 |
 
 | ECP5 LUT sites (LUTRAM RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 164 | 180 | 201 | 252 | 286 |
-| `sys` | 182 | 198 | 226 | 279 | 305 |
-| `full` | 209 | 231 | 270 | 333 | 360 |
-| RC32 `min` | 229 | 242 | 264 | 293 | 373 |
-| RC32 `sys` | 257 | 270 | 286 | 338 | 404 |
+| `min` | 162 | 177 | 201 | 252 | 285 |
+| `sys` | 182 | 201 | 228 | 281 | 305 |
+| `full` | 210 | 232 | 268 | 333 | 360 |
+| RC32 `min` | 228 | 241 | 260 | 293 | 373 |
+| RC32 `sys` | 254 | 270 | 286 | 338 | 404 |
 
 | ECP5 LUT4 (+ 1 RF EBR) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 121 | 140 | 165 | 220 | 261 |
-| `sys` | 140 | 158 | 190 | 245 | 281 |
-| `full` | 166 | 190 | 234 | 300 | 336 |
-| RC32 `min` | 149 | 162 | 189 | 234 | 307 |
-| RC32 `sys` | 174 | 189 | 210 | 269 | 338 |
+| `min` | 121 | 137 | 165 | 220 | 263 |
+| `sys` | 140 | 161 | 192 | 248 | 281 |
+| `full` | 167 | 191 | 232 | 300 | 336 |
+| RC32 `min` | 149 | 161 | 186 | 228 | 307 |
+| RC32 `sys` | 174 | 189 | 210 | 268 | 338 |
 
 On iCE40, RC32 Min uses 3–22% more LUT4 than RC16 Min at the same width.
-RC32 Sys uses 25–43 more LUT4 than RC32 Min.
+RC32 Sys uses 25–42 more LUT4 than RC32 Min.
 
 | Agilex 3 ALMs (MLAB RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 93.7 | 100.1 | 108.0 | 120.1 | 118.0 |
-| `sys` | 104.1 | 106.9 | 120.7 | 137.7 | 150.7 |
-| `full` | 100.8 | 121.9 | 127.8 | 148.6 | 170.8 |
+| `min` | 95.1 | 101.4 | 109.6 | 128.6 | 125.5 |
+| `sys` | 101.8 | 106.5 | 120.7 | 137.7 | 136.5 |
+| `full` | 106.5 | 118.8 | 124.9 | 152.6 | 169.8 |
 | RC32 `min` | 115.7 | 127.5 | 137.1 | 144.3 | 188.5 |
-| RC32 `sys` | 134.1 | 132.5 | 150.1 | 167.9 | 198.7 |
+| RC32 `sys` | 135.1 | 132.9 | 150.1 | 167.7 | 199.2 |
 
 | Other implementation area | UP5K LUT4, RF EBR separate | ECP5 LUT sites, RF included | Agilex 3 ALM, RF included |
 |---|---:|---:|---:|
-| nano | 94 | 115 | 88.4 |
-| Full paired MulH `/16` | 346 | 370 | 179.6 |
+| nano | 94 | 115 | 90.2 |
+| Full paired MulH `/16` | 344 | 370 | 179.6 |
 | Full paired MulDiv `/16` | 374 | 401 | 202.6 |
-| Fast soft | 486 | 536 | 271.3 |
-| Fast DSP | 454 | 488 | 262.4 |
-| Faster DSP | 668 | 734 | 318.5 |
-| Faster soft | 726 | 812 | 342.6 |
+| Fast soft | 486 | 517 | 271.3 |
+| Fast DSP | 454 | 488 | 262.2 |
+| Faster DSP | 664 | 721 | 318.5 |
+| Faster soft | 703 | 790 | 342.6 |
 
 The table headings state whether LUT/ALM values include the register file. On
 iCE40, Nano and paired Full use one RF EBR, while Fast and Faster use two.
@@ -194,37 +224,37 @@ excluded.
 
 | UP5K Fmax (MHz, EBR RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 36.39 | 34.95 | 32.01 | 29.34 | 27.77 |
-| `sys` | 35.63 | 32.19 | 32.17 | 28.86 | 29.25 |
-| `full` | 34.19 | 30.73 | 30.50 | 28.13 | 27.52 |
-| RC32 `min` | 36.61 | 29.11 | 25.70 | 28.00 | 25.04 |
-| RC32 `sys` | 34.60 | 29.34 | 27.84 | 27.12 | 26.16 |
+| `min` | 36.70 | 35.11 | 35.09 | 29.93 | 30.41 |
+| `sys` | 36.26 | 34.18 | 33.26 | 29.39 | 30.44 |
+| `full` | 34.25 | 32.95 | 29.06 | 28.52 | 28.62 |
+| RC32 `min` | 37.76 | 31.27 | 28.15 | 28.88 | 26.07 |
+| RC32 `sys` | 34.95 | 29.91 | 29.36 | 29.30 | 26.16 |
 
 | ECP5 Fmax (MHz, LUTRAM RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 104.44 | 104.94 | 88.72 | 76.07 | 89.18 |
-| `sys` | 107.87 | 106.88 | 93.53 | 86.60 | 87.23 |
-| `full` | 94.93 | 95.16 | 84.76 | 76.75 | 84.23 |
-| RC32 `min` | 99.22 | 92.34 | 81.68 | 78.64 | 76.86 |
-| RC32 `sys` | 94.84 | 94.56 | 88.12 | 81.48 | 79.96 |
+| `min` | 113.40 | 111.93 | 98.14 | 89.08 | 92.58 |
+| `sys` | 111.96 | 109.55 | 99.08 | 90.66 | 93.77 |
+| `full` | 106.16 | 105.91 | 91.07 | 83.96 | 91.63 |
+| RC32 `min` | 101.96 | 99.86 | 93.14 | 87.97 | 83.57 |
+| RC32 `sys` | 102.76 | 101.48 | 93.48 | 86.33 | 82.07 |
 
 | Agilex 3 Fmax (MHz, MLAB RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
-| `min` | 323.42 | 317.76 | 289.44 | 278.71 | 270.12 |
-| `sys` | 308.64 | 290.78 | 264.62 | 268.67 | 245.04 |
-| `full` | 304.79 | 313.28 | 313.68 | 283.37 | 245.46 |
+| `min` | 326.05 | 317.06 | 289.77 | 264.90 | 269.03 |
+| `sys` | 300.12 | 313.87 | 264.62 | 276.78 | 251.51 |
+| `full` | 266.10 | 276.09 | 285.39 | 268.60 | 248.88 |
 | RC32 `min` | 300.39 | 290.53 | 268.67 | 255.36 | 244.80 |
-| RC32 `sys` | 269.11 | 284.90 | 269.91 | 254.13 | 235.79 |
+| RC32 `sys` | 283.61 | 282.01 | 269.91 | 274.42 | 255.23 |
 
 | Other implementation routed Fmax (MHz) | UP5K, EBR RF | ECP5, LUTRAM RF | Agilex 3, MLAB RF |
 |---|---:|---:|---:|
-| nano | 34.27 | 99.73 | 306.28 |
-| Full paired MulH `/16` | 26.94 | 84.90 | 246.67 |
-| Full paired MulDiv `/16` | 23.38 | 82.64 | 244.80 |
-| Fast soft | 24.67 | 70.86 | 191.83 |
-| Fast DSP | 24.25 | 68.68 | 145.94 |
-| Faster DSP | 22.84 | 66.03 | 236.24 |
-| Faster soft | 23.69 | 74.60 | 247.34 |
+| nano | 35.21 | 124.25 | 336.25 |
+| Full paired MulH `/16` | 27.58 | 87.33 | 246.67 |
+| Full paired MulDiv `/16` | 24.79 | 84.94 | 244.80 |
+| Fast soft | 26.00 | 76.20 | 191.83 |
+| Fast DSP | 24.75 | 76.48 | 145.03 |
+| Faster DSP | 22.84 | 75.76 | 236.24 |
+| Faster soft | 23.99 | 79.78 | 247.34 |
 
 Each throughput entry combines the listed Fmax with the measured cycles of a
 common benchmark. The serial columns use the `sys` area/Fmax point. Fast uses
@@ -233,15 +263,20 @@ and Agilex; Faster uses its common pipeline cycle count on all three families.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K | 1.01 | 1.68 | 2.87 | 4.02 | 7.02 | 1.10 | 11.04 | 12.51 | 13.47 | 12.01 |
-| ECP5 | 3.06 | 5.56 | 8.35 | 12.08 | 20.93 | 3.21 | 39.76 | 46.85 | 38.94 | 37.82 |
-| Agilex 3 | 8.75 | 15.14 | 23.62 | 37.47 | 58.80 | 9.86 | 107.63 | 99.55 | 139.31 | 125.39 |
+| iCE40 UP5K | 1.03 | 1.78 | 2.97 | 4.10 | 7.30 | 1.13 | 11.63 | 12.77 | 13.47 | 12.16 |
+| ECP5 | 3.17 | 5.70 | 8.84 | 12.64 | 22.50 | 4.00 | 42.75 | 52.17 | 44.68 | 40.45 |
+| Agilex 3 | 8.51 | 16.34 | 23.62 | 38.60 | 60.35 | 10.83 | 107.63 | 98.93 | 139.31 | 125.39 |
+
+The Lattice area and Fmax tables are independent optima and can select
+different synthesis parameters. Each Lattice efficiency entry instead uses a
+single recipe and seed selected for maximum routed Fmax divided by that same
+recipe's area; it does not divide the separately fastest and smallest results.
 
 | Benchmark MIPS per thousand logic units | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iCE40 UP5K, LUT4 | 7.0 | 10.7 | 15.4 | 16.6 | 25.2 | 11.7 | 22.7 | 27.6 | 20.2 | 16.5 |
-| ECP5, LUTRAM RF sites | 16.8 | 28.1 | 36.9 | 43.3 | 68.6 | 27.9 | 74.2 | 96.0 | 53.0 | 46.6 |
-| Agilex 3, ALM | 84.0 | 141.6 | 195.7 | 272.1 | 390.1 | 111.6 | 396.7 | 379.4 | 437.4 | 366.0 |
+| iCE40 UP5K, LUT4 | 6.9 | 10.2 | 14.0 | 15.6 | 25.0 | 10.5 | 22.9 | 27.1 | 20.3 | 16.5 |
+| ECP5, LUTRAM RF sites | 17.3 | 27.9 | 37.5 | 41.8 | 71.4 | 31.5 | 80.8 | 106.9 | 59.8 | 49.9 |
+| Agilex 3, ALM | 83.6 | 153.4 | 195.7 | 280.3 | 442.1 | 120.0 | 396.7 | 377.3 | 437.4 | 366.0 |
 
 The common benchmark retires 3238 instructions; Nano's software-multiply
 version retires 8491. For versions with different dynamic instruction counts,
@@ -306,15 +341,16 @@ make fuzz-all
 make -j16 QUARTUS_SH=/opt/intelFPGA_pro/26.1/quartus/bin/quartus_sh tables
 ```
 
-`test-all` runs the serial RC16 matrix, Nano, optional MulH/MulDiv cores, RC32
-Min at every width, every Fast target variant, and both Faster variants.
+`test-all` runs the RC16 matrix, Nano, optional MulH/MulDiv cores, RC32
+Min and Sys at every width, every Fast target variant, and both Faster variants.
 `test-compiler` adds compiler, libc, Nano compiler/RTL, and encoding tests.
 `fuzz-all` differentially compares self-checking generated programs between
 the ISS and trace-enabled RTL, reporting a replay command for any failure.
 
-Trace targets (`trace-nano`, `trace-<width>-<profile>`, and `trace-fast`)
-record architectural state and written memory after every instruction. Use
-them to locate the first divergent instruction when a differential test fails.
+Trace targets (`trace PROFILE=<profile> WIDTH=<width>`, `trace-nano`, and
+`trace-fast`) record architectural state and written memory after every
+instruction. Use them to locate the first divergent instruction when a
+differential test fails.
 
 ## 5. Board builds and demos
 
@@ -365,9 +401,9 @@ make icepi-zero-demo-bit
 
 The default shared source is
 [`demo.cpp`](../boards/shared/sw/demo.cpp), compiled as freestanding C++
-without a C++ standard library, exceptions, RTTI, or constructors. For an
-alternate C++ or assembly image on both boards, set `DEMO_PROGRAM`. Set
-`ICEPI_PROGRAM` or `ATUM_PROGRAM` to override only that board.
+without a C++ standard library, exceptions, RTTI, or constructors. Set
+`DEMO_PROGRAM` to use another C++ source on both boards, or `ICEPI_PROGRAM`
+or `ATUM_PROGRAM` to override one board.
 
 The bit target only builds a bitstream. Load it temporarily through SRAM with:
 

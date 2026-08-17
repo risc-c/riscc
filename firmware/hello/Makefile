@@ -11,15 +11,16 @@ BUILD ?= $(RISCC_ROOT)/build/$(APP)
 ASM := $(BUILD)/$(APP).s
 APP_OBJ := $(BUILD)/$(APP).o
 ELF := $(BUILD)/$(APP).elf
+RISCC_CONFIG := $(RISCC_ROOT)/firmware/riscc.mk
 
 .PHONY: all clean
 all: $(BUILD)/$(APP).bin $(ASM)
 
-$(APP_OBJ): $(APP_SRC)
+$(APP_OBJ): $(APP_SRC) $(RISCC_CONFIG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -c $< -o $@
 
-$(ASM): $(APP_SRC)
+$(ASM): $(APP_SRC) $(RISCC_CONFIG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -S $< -o $@
 

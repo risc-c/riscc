@@ -56,7 +56,7 @@ cd riscc
 Build the RISC-C LLVM/Clang toolchain, firmware libraries, and C++ ISS:
 
 ```sh
-make -j16 riscc-firmware build/tools/riscc_sim
+make -j16 firmware build/tools/riscc_sim
 ```
 
 The first build compiles the local toolchain under `build/llvm-riscc` and can
@@ -90,8 +90,8 @@ are placed in `build/hello`.
 Run the same binary on the Verilated RC16 Full RTL implementation with:
 
 ```sh
-make -j16 build/tb/rc16-16-full/tb
-build/tb/rc16-16-full/tb build/hello/hello.bin --max-cycles 1000000 \
+make -j16 build/test/rc16/native/full/16/tb
+build/test/rc16/native/full/16/tb build/hello/hello.bin --max-cycles 1000000 \
   --uart-expect-line 'Hello, RISC-C!'
 ```
 
@@ -156,27 +156,30 @@ commands.
 | `rtl/` | processor implementations and shared RTL logic |
 | `boards/` | FPGA board system-on-chip (SoC) designs and demonstration firmware |
 | `tools/` | assembler, ISS implementations, fuzzing, and image helpers |
+| `mk/` | one-level Makefile fragments for toolchain, firmware, RTL tests, boards, and measurements |
 | `firmware/` | startup, linker layouts, minimal runtime libraries, and application Makefile support |
 | `external/llvm-project/` | LLVM/Clang compiler source submodule; development branch `riscc-backend` |
 | `test/` | ISA, RTL, and compiler tests |
 
 ## Common commands
 
+Run `make help` for the complete list of user targets and selection variables.
+
 The usual complete non-interactive check is:
 
 ```sh
-make -j16 QUARTUS_SH=/path/to/quartus_sh all
+make -j16 all
 make -j16 test-compiler
 ```
 
 | Command | Purpose |
 |---|---|
-| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min at every serial width, all Fast target variants, and Faster DSP/soft. |
+| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min/Sys at every width, all Fast target variants, and Faster DSP/soft. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
-| `make -j16 QUARTUS_SH=/path/to/quartus_sh all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports for all FPGA families. It requires Quartus Pro for Agilex 3 and does not include the compiler suite. |
+| `make -j16 all` | Deterministic RTL regression and architecture benchmarks; it does not require Quartus or include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
-| `make -j16 tables-lattice` | Regenerates iCE40 and ECP5 area/Fmax tables and benchmarks without Quartus. |
+| `make -j16 tables-lattice` | Tunes and regenerates iCE40/ECP5 area/Fmax tables and benchmarks without Quartus. |
 | `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |
 | `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast digital signal processing (DSP) multiplier ISS model with its display window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |

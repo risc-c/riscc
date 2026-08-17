@@ -17,26 +17,26 @@
 
 Run the narrowest functional test after each edit:
 
-- RC16 serial: `make test-<width>-<profile>`; RC16 wide: `make test-16-<profile>`
-- Nano: `make test-nano`; Fast: `make test-fast`; Faster: `make test-faster`
+- RC16: `make test-core PROFILE=<profile> WIDTH=<width>`
+- Nano: `make test-nano`; Fast: `make test-fast-all`; Faster: `make test-faster`
 - Shared RF, assembler, test, or profile changes: `make test-all`
 - Atum RTL/demo: `make atum-a3-demo-rtlsim`
 
 Every RTL change also needs its relevant fuzz target:
 
-- RC16 serial/wide: `make fuzz-min`, `make fuzz-sys`, or `make fuzz-full`
-- Nano: `make fuzz-nano`; RC32: `make fuzz-rc32`
-- Fast: `make fuzz-fast`; add `make fuzz-fast-ice` for synchronous-RF or
-  iCE40-specific changes
+- RC16 and Nano: `make fuzz`; RC32: `make fuzz-rc32`
+- Fast, including synchronous-RF/iCE40 cases: `make fuzz-fast`
 - Faster has no trace-differential fuzzer: run focused tests and benchmarks.
 
 Before every commit or release, run `make test-all` and all applicable fuzz
 targets; report the commands and results. For CPI changes run `make bench`;
 use Verilator RTL cycle counts for MIPS/efficiency.
 
-Check RTL changes for LUT/site and Fmax regressions with the narrowest affected
-area/Fmax targets. For shared logic, multiple configurations, or published PPA,
-run `make -j16 tables` and compare prior recorded results.
+Check RTL changes with the narrowest generated result, for example
+`make build/area/ice40/rc16/sys/4.lut` or
+`make build/fmax/ecp5/rc32/min/8.mhz`. For shared logic, multiple
+configurations, or published PPA, run `make -j16 tables` and compare prior
+recorded results.
 
 ## Optimization gates
 

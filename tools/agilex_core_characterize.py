@@ -15,26 +15,11 @@ from pathlib import Path
 
 
 DEVICE = "A3CZ135BB18AE7S"
+FIT_SEED = 1
 TARGET_NS = 4.0
-TARGET_NS_BY_NAME = {
-    "full1": 3.5,
-    "full4": 3.6,
-    "full8": 3.8,
-}
-FIT_SEEDS = {
-    "full1": 2,
-    "sys1": 3,
-    "sys2": 2,
-    "sys8": 3,
-    "sys16": 1,
-    "full4": 5,
-    "full8": 2,
-    "full16": 4,
-    "rc32sys1": 3,
-    "rc32sys2": 2,
-    "rc32sys8": 3,
-    "fast_dsp": 3,
-}
+AREA_OPTIMIZATION = "AGGRESSIVE AREA"
+PERFORMANCE_OPTIMIZATION = "HIGH PERFORMANCE EFFORT"
+AREA_PROFILES = {"full", "mulh", "muldiv"}
 
 
 def project_specs(root: Path, family: str):
@@ -48,8 +33,6 @@ def project_specs(root: Path, family: str):
         ):
             for width in (1, 2, 4, 8):
                 macros = ["RISCC_FMAX_RC16", f"RISCC_FMAX_WIDTH={width}"]
-                if profile == "full" and width == 4:
-                    macros.append("RISCC_RC16_CONTROL_NORMALIZE")
                 if profile_macro:
                     macros.append(profile_macro)
                 specs.append(
@@ -59,9 +42,9 @@ def project_specs(root: Path, family: str):
                 ("min16", "min", 16, root / "rtl/riscc16_min.v",
                  ["RISCC_FMAX_RC16_MIN"], top),
                 ("sys16", "sys", 16, root / "rtl/riscc16_sys.v",
-                 ["RISCC_RC16_CONTROL_BBB_NORMALIZE"], top),
+                 [], top),
                 ("full16", "full", 16, root / "rtl/riscc16_full.v",
-                 ["RISCC_RC16_CONTROL_BBB_NORMALIZE"], top),
+                 [], top),
                 ("nano", "nano", 1, root / "rtl/riscc_nano.v",
                  ["RISCC_FMAX_NANO"], top),
             )
@@ -96,18 +79,13 @@ def project_specs(root: Path, family: str):
     return specs
 
 
-def write_project(directory: Path, name: str, root: Path, rtl: Path,
-                  macros, top: Path, jobs: int):
+def write_project(directory: Path, name: str, profile: str, root: Path,
+                  rtl: Path, macros, top: Path, jobs: int):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{name}.qpf").write_text(
         f'QUARTUS_VERSION = "26.1"\nPROJECT_REVISION = "{name}"\n')
-    optimization_mode = (
-        "AGGRESSIVE AREA" if name in (
-            "sys16", "full1", "full4", "full8", "full16", "rc32sys16",
-            "mulh16", "muldiv16",
-        )
-        else "HIGH PERFORMANCE EFFORT"
-    )
+    optimization = (AREA_OPTIMIZATION if profile in AREA_PROFILES
+                    else PERFORMANCE_OPTIMIZATION)
     qsf = [
         'set_global_assignment -name FAMILY "Agilex 3"',
         f"set_global_assignment -name DEVICE {DEVICE}",
@@ -118,16 +96,15 @@ def write_project(directory: Path, name: str, root: Path, rtl: Path,
         "set_global_assignment -name VERILOG_MACRO RISCC_INFERRED_SYNC_RF",
         f"set_global_assignment -name SDC_FILE {directory / (name + '.sdc')}",
         f"set_global_assignment -name NUM_PARALLEL_PROCESSORS {jobs}",
-        f"set_global_assignment -name SEED {FIT_SEEDS.get(name, 1)}",
-        f'set_global_assignment -name OPTIMIZATION_MODE "{optimization_mode}"',
+        f"set_global_assignment -name SEED {FIT_SEED}",
+        f'set_global_assignment -name OPTIMIZATION_MODE "{optimization}"',
         'set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"',
     ]
     qsf.extend(f"set_global_assignment -name VERILOG_MACRO {macro}"
                for macro in macros)
     (directory / f"{name}.qsf").write_text("\n".join(qsf) + "\n")
-    target_ns = TARGET_NS_BY_NAME.get(name, TARGET_NS)
     (directory / f"{name}.sdc").write_text(
-        f"create_clock -name clk -period {target_ns:.3f} [get_ports {{clk}}]\n")
+        f"create_clock -name clk -period {TARGET_NS:.3f} [get_ports {{clk}}]\n")
 
 
 def parse_results(directory: Path, name: str):
@@ -205,7 +182,8 @@ def main():
     )
     for name, profile, width, rtl, macros, top in specs:
         directory = output_dir / name
-        write_project(directory, name, root, rtl, macros, top, args.jobs)
+        write_project(directory, name, profile, root, rtl, macros, top,
+                      args.jobs)
         if args.prepare_only:
             continue
         subprocess.run([quartus_syn, name, "-c", name],

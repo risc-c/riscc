@@ -138,7 +138,7 @@ The complete source is in [`firmware/hello`](../firmware/hello):
 SDK and ISS once, then build the unified image and run it with UART output:
 
 ```sh
-make -j16 riscc-firmware build/tools/riscc_sim
+make -j16 firmware build/tools/riscc_sim
 make -C firmware/hello
 build/tools/riscc_sim build/hello/hello.bin --full --uart
 ```
@@ -147,8 +147,8 @@ Run the resulting image on the RC16 Full RTL implementation with the
 Verilator memory/UART harness:
 
 ```sh
-make -j16 build/tb/rc16-16-full/tb
-build/tb/rc16-16-full/tb build/hello/hello.bin --max-cycles 1000000 \
+make -j16 build/test/rc16/native/full/16/tb
+build/test/rc16/native/full/16/tb build/hello/hello.bin --max-cycles 1000000 \
   --uart-expect-line 'Hello, RISC-C!'
 ```
 
@@ -191,7 +191,7 @@ reusable local toolchain and the shared firmware objects with:
 
 ```sh
 make -j16 llvm-riscc
-make -j16 riscc-firmware
+make -j16 firmware
 ```
 
 The build directory is `build/llvm-riscc`. It contains the RISCC backend,
@@ -294,24 +294,24 @@ checkout. Its default unified build emits `build/hello/hello.elf` and
 Applications that need a different startup, linker layout, or image-conversion
 policy can replace the visible rules in their own Makefile.
 
-Set `RISCC_CPU := sys` or `RISCC_CPU := min` before including `riscc.mk` to
+Set `PROFILE := sys` or `PROFILE := min` before including `riscc.mk` to
 select a smaller mainline profile. Build its matching runtime first with
-`make -j16 riscc-firmware-sys` or `make -j16 riscc-firmware-min`. The Min
+`make -j16 PROFILE=sys firmware` or
+`make -j16 PROFILE=min firmware`. The Min
 runtime omits interrupt support because that profile has no system extension.
 The compiler and top-level build also provide `-mcpu=nano` and
-`make -j16 riscc-firmware-nano`; Nano applications use the archives under
+`make -j16 PROFILE=nano firmware`; Nano applications use the archives under
 `build/firmware/nano` without the mainline interrupt library, TLS, or the
-interrupt-driven `time()` service. Nano packaging in the application
-`riscc.mk` fragment remains to be completed.
+interrupt-driven `time()` service.
 
-To build the MDU runtime, retain `RISCC_CPU := full` and add
+To build the MDU runtime, retain `PROFILE := full` and add
 `RISCC_TARGET_FEATURES := mdu`; the top-level Makefile maps that value to
 `-mmdu` and enables the matching ISS capability. Use a separate runtime output
 directory, for example:
 
 ```sh
-make -j16 RISCC_CPU=full RISCC_TARGET_FEATURES=mdu \
-  RISCC_FIRMWARE_BUILD=build/firmware/mdu riscc-firmware
+make -j16 PROFILE=full RISCC_TARGET_FEATURES=mdu \
+  RISCC_FIRMWARE_BUILD=build/firmware/full-mdu firmware
 ```
 
 The essentials of the direct invocation are:
@@ -322,9 +322,10 @@ build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
   -Ifirmware/include -c hello.c -o hello.o
 build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
   -fuse-ld=lld -nostdlib -Wl,--gc-sections -Wl,-T,firmware/unified.ld \
-  build/firmware/vectors.o build/firmware/crt0.o hello.o \
-  build/firmware/libc.a build/firmware/libm.a build/firmware/libbsp.a \
-  build/firmware/libirq.a build/firmware/libbuiltins.a -o hello.elf
+  build/firmware/full/vectors.o build/firmware/full/crt0.o hello.o \
+  build/firmware/full/libc.a build/firmware/full/libm.a \
+  build/firmware/full/libbsp.a build/firmware/full/libirq.a \
+  build/firmware/full/libbuiltins.a -o hello.elf
 ```
 
 `-ffunction-sections -fdata-sections` and `--gc-sections` are deliberate:
@@ -338,10 +339,12 @@ The runtime is an intentionally small freestanding SDK, not a port of
 picolibc. Build the archives that match the selected compiler profile:
 
 ```sh
-make -j16 riscc-firmware        # Full, under build/firmware/
-make -j16 riscc-firmware-sys    # Sys,  under build/firmware/sys/
-make -j16 riscc-firmware-min    # Min,  under build/firmware/min/
-make -j16 riscc-firmware-nano   # Nano, under build/firmware/nano/
+make -j16 PROFILE=full firmware  # build/firmware/full/
+make -j16 PROFILE=sys firmware   # build/firmware/sys/
+make -j16 PROFILE=min firmware   # build/firmware/min/
+make -j16 PROFILE=nano firmware  # build/firmware/nano/
+# Or build every profile:
+make -j16 firmware-all
 ```
 
 ### 3.1 Archives and link order
@@ -672,45 +675,42 @@ exhaustively checks Full-profile LLVM MC encoding against the in-tree
 assembler, and runs the multi-file C smoke suite in the ISS, RC16/full RTL,
 Fast RTL, Icepi Zero UART simulation, and Atum UART simulation. Nano-specific
 MC encodings and profile restrictions have focused LLVM `lit` coverage but are
-not yet part of that exhaustive oracle. `make compiler-smoke` uses the Icepi
-Zero RTL run as its default target.
+not yet part of that exhaustive oracle. `make compiler-smoke` runs the smoke
+program on the ISS, both core RTL models, and both board RTL models.
 
 The smoke program covers globals, constants, BSS, TLS, calls, recursion,
 aggregates, function pointers, and 16/32/64-bit integer arithmetic.  The
-`compiler-features-iss` matrix adds focused C11 language, control-flow,
+`compiler-features` matrix adds focused C11 language, control-flow,
 promotion, layout, bit-field, pointer, memory, aggregate-call, hidden-result,
 callee-save, sibling-tail-call, and complete integer-runtime-helper checks. It
 also executes `memcpy`, `memmove`, and `memset`, including overlap and
 zero-length cases. Both programs run at `-O0`, `-O2`, and `-Os` on the ISS.
-The separate `compiler-float-iss` matrix covers binary32/binary64 arithmetic,
+The separate `compiler-float` matrix covers binary32/binary64 arithmetic,
 comparisons and NaNs, signed and unsigned 32-/64-bit conversions, cross-file
 scalar and aggregate calls, `long double`, stack arguments, and variadic
 promotion. Mainline binary32 cases include signed zero, overflow, subnormal
 boundaries, and ties-to-even rounding; Nano instead exercises its documented
 finite-normal arithmetic and signed flush-to-zero contract.
-`compiler-libm-iss` runs two separately linked images that check archive
+`compiler-libm` runs two separately linked images that check archive
 extraction, classification, signed zero, NaNs and infinities, subnormal
 boundaries, and the public
 float/double/long-double functions at the same three optimization levels. The
 focused LLVM regression also checks the backend lowering for each supported
 math intrinsic.
-`test-compiler-profiles-iss` runs all three matrices for `full`, `sys`, `min`,
-and `nano`; the individual
-integer feature targets are
-`compiler-features-sys-iss`, `compiler-features-min-iss`, and
-`compiler-features-nano-iss`. The corresponding focused floating-point targets
-are `compiler-float-sys-iss`, `compiler-float-min-iss`, and
-`compiler-float-nano-iss`.
-`compiler-features-nano-rtl` runs the same Nano binaries at all three
-optimization levels on the Nano RTL model.
+`compiler-profiles` runs all three matrices for `full`, `sys`, `min`,
+and `nano`. For one profile, set `PROFILE` on the ordinary target, for
+example `make PROFILE=sys compiler-features` or
+`make PROFILE=min compiler-float`. `make compiler-nano` also runs
+the Nano feature binaries at all three optimization levels on the Nano RTL
+model.
 
-`compiler-benchmarks-iss` runs small, deterministic workloads at `-O2` and
+`compiler-benchmarks` runs small, deterministic workloads at `-O2` and
 `-Os`: 32-bit arithmetic, soft-float/libm, float matrix multiplication with
 LU, Cholesky, and QR decompositions, and linked-list, tree, and graph
 algorithms. These are intended for before/after code-size and cycle
 comparisons; the focused suites above remain the correctness baseline.
 
-`compiler-libc-iss` separately links each compact-runtime probe through the
+`compiler-libc` separately links each compact-runtime probe through the
 runtime archives at the same three optimization levels. It covers string and
 ctype boundaries,
 integer conversion and search utilities, UART stream and every formatter entry
@@ -724,11 +724,11 @@ exact byte streams. `compiler-libc-size` checks the all-features image remains
 within 4 KiB of `.text` and 32 bytes of combined `.data`/`.bss`;
 `test-compiler` runs both targets.
 
-`compiler-libc-nano-iss` runs the portable libc probes on Nano at the same
-three optimization levels. It excludes only `time()` and the timer probe,
-which require the S-register interrupt facility that Nano does not have.
-`test-compiler-nano` combines this libc matrix with the Nano feature tests on
-both the ISS and RTL model.
+With `PROFILE=nano`, `compiler-libc` runs the portable libc probes on
+Nano at the same three optimization levels. It excludes only `time()` and the
+timer probe, which require the S-register interrupt facility that Nano does
+not have. `compiler-nano` combines this libc matrix with the Nano feature
+tests on both the ISS and RTL model.
 
 The remaining compiler suite exercises C-wrapper and assembly-owned IRQ
 vectors. The split-image check verifies that `.tdata` appears in the data image

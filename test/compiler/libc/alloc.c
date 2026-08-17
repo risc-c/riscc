@@ -12,7 +12,7 @@ int main(void)
     unsigned char *split;
     unsigned char *grown;
     unsigned int count = 0;
-    void *blocks[40];
+    void *blocks[80];
 
     errno = 0;
     CHECK(malloc(0) == 0 && errno == 0, 1);
