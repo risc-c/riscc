@@ -11,6 +11,8 @@ module riscc_fmax_top (
     wire rst = ~reset_q[3];
 `ifdef RISCC_FMAX_RC32_MIN
     wire [31:0] mem_addr;
+`elsif RISCC_FMAX_RC32_SYS
+    wire [31:0] mem_addr;
 `else
     wire [14:0] mem_addr;
 `endif
@@ -23,6 +25,8 @@ module riscc_fmax_top (
         irq_q <= irq_q ^ mem_addr[0] ^ mem_we;
         mem_rdata_q <= {mem_rdata_q[14:0], mem_rdata_q[15] ^ mem_rdata_q[13]} ^
 `ifdef RISCC_FMAX_RC32_MIN
+                       mem_addr[15:0] ^ mem_addr[31:16];
+`elsif RISCC_FMAX_RC32_SYS
                        mem_addr[15:0] ^ mem_addr[31:16];
 `else
                        {1'b0, mem_addr};
@@ -42,6 +46,10 @@ module riscc_fmax_top (
     riscc16_min cpu (
 `elsif RISCC_FMAX_RC32_MIN
     riscc32_min #(
+        .W(`RISCC_FMAX_WIDTH)
+    ) cpu (
+`elsif RISCC_FMAX_RC32_SYS
+    riscc32_sys #(
         .W(`RISCC_FMAX_WIDTH)
     ) cpu (
 `elsif RISCC_FMAX_RC16

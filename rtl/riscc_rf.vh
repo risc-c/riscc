@@ -1,8 +1,8 @@
 `ifndef RISCC_RF_VH
 `define RISCC_RF_VH
 
-// Shared synchronous register file.  WIDTH selects bits per cycle and
-// ADDR_WIDTH selects the slice count: mainline cores hold 256 bits, nano 128.
+// Shared synchronous register file. WIDTH selects bits per cycle and
+// ADDR_WIDTH selects the slice count: RC16 holds 256 bits, RC32 512, Nano 128.
 module riscc_rf #(
     parameter integer WIDTH = 1,
     parameter integer ADDR_WIDTH = 8
@@ -95,16 +95,59 @@ module riscc_rf #(
 `endif
 `elsif RISCC_INFERRED_SYNC_RF
     generate
-        if (WIDTH < 8) begin : g_byte_packed
+        localparam integer RF_BITS = WIDTH * DEPTH;
+        if ((RF_BITS > 256) && (WIDTH < 16)) begin : g_word_packed
+            // RC32 contains 512 bits. Pack it into the MLAB's 32x16 shape
+            // instead of preserving a 64x8 shape that needs two blocks.
+            localparam integer RAM_WORD_WIDTH = 16;
+            localparam integer SUBWORDS = RAM_WORD_WIDTH / WIDTH;
+            localparam integer SUB_BITS = $clog2(SUBWORDS);
+            localparam integer WORD_ADDR_WIDTH = ADDR_WIDTH - SUB_BITS;
+            localparam integer WORD_DEPTH = 1 << WORD_ADDR_WIDTH;
+            localparam integer BYTE_SUB_BITS = $clog2(8 / WIDTH);
+            localparam [ADDR_WIDTH-1:0] BYTE_LAST =
+                {ADDR_WIDTH{1'b1}} >> (ADDR_WIDTH - BYTE_SUB_BITS);
+
+            (* ramstyle = "MLAB, no_rw_check" *)
+            reg [RAM_WORD_WIDTH-1:0] mem [0:WORD_DEPTH-1];
+            reg [RAM_WORD_WIDTH-1:0] read_word_q;
+            reg [SUB_BITS-1:0] read_subword_q;
+            reg [7:0] write_accum_q;
+            wire [7:0] extended_wdata = {{(8-WIDTH){1'b0}}, wdata};
+            wire [7:0] completed_write_byte =
+                (write_accum_q >> WIDTH) |
+                (extended_wdata << (8-WIDTH));
+            wire byte_complete = (waddr & BYTE_LAST) == BYTE_LAST;
+
+            // Commit one byte at a time. This directly follows byte-load lane
+            // rotation and avoids both a 16-bit accumulator and a byte swap.
+            // Quartus maps the two fixed byte lanes into one 32x16 MLAB.
+
+            assign rdata = read_word_q[read_subword_q * WIDTH +: WIDTH];
+
+            always @(posedge clk) begin
+                read_word_q <= mem[raddr[ADDR_WIDTH-1:SUB_BITS]];
+                read_subword_q <= raddr[SUB_BITS-1:0];
+                if (we) begin
+                    write_accum_q <= completed_write_byte;
+                    if (byte_complete) begin
+                        if (waddr[SUB_BITS-1])
+                            mem[waddr[ADDR_WIDTH-1:SUB_BITS]][15:8] <=
+                                completed_write_byte;
+                        else
+                            mem[waddr[ADDR_WIDTH-1:SUB_BITS]][7:0] <=
+                                completed_write_byte;
+                    end
+                end
+            end
+        end else if (WIDTH < 8) begin : g_byte_packed
             localparam integer SUBWORDS = 8 / WIDTH;
             localparam integer SUB_BITS = $clog2(SUBWORDS);
             localparam integer WORD_ADDR_WIDTH = ADDR_WIDTH - SUB_BITS;
             localparam integer WORD_DEPTH = 1 << WORD_ADDR_WIDTH;
 
-            // MLABs are 32 words deep. Packing serial slices into bytes avoids
-            // wasting one physical MLAB for every 32 narrow logical words. RF
-            // writes cover each byte from low slice upward; high-byte rotation
-            // changes the word address, not this subword order.
+            // RC16 and Nano fit one MLAB as 32x8 or smaller. Their byte-lane
+            // rotation changes the word address, not the subword order.
             (* ramstyle = "MLAB, no_rw_check" *) reg [7:0] mem [0:WORD_DEPTH-1];
             reg [7:0] read_word_q;
             reg [SUB_BITS-1:0] read_subword_q;

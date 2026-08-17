@@ -668,8 +668,51 @@ module riscc16_faster_rf (
     input  wire [15:0] wdata,
     input  wire        we
 );
+`ifdef RISCC_FASTER_ICE40
+    wire [10:0] raddr_a_phys = {7'b0000000, raddr_a};
+    wire [10:0] raddr_b_phys = {7'b0000000, raddr_b};
+    wire [10:0] waddr_phys = {7'b0000000, waddr};
+    wire [15:0] ram_rdata_a;
+    wire [15:0] ram_rdata_b;
+    reg         bypass_a_q;
+    reg         bypass_b_q;
+    reg  [15:0] bypass_data_q;
+
+    // The iCE40 EBR cannot implement the inferred transparent write/read
+    // collision.  Keep the two native synchronous RAM copies and register
+    // the same new-data bypass alongside their outputs.
+    SB_RAM40_4K #(.READ_MODE(0), .WRITE_MODE(0)) ram_a (
+        .RDATA(ram_rdata_a), .RADDR(raddr_a_phys),
+        .RCLK(clk), .RCLKE(read_en), .RE(1'b1),
+        .WADDR(waddr_phys), .WCLK(clk), .WCLKE(1'b1), .WE(we),
+        .MASK(16'h0000), .WDATA(wdata)
+    );
+    SB_RAM40_4K #(.READ_MODE(0), .WRITE_MODE(0)) ram_b (
+        .RDATA(ram_rdata_b), .RADDR(raddr_b_phys),
+        .RCLK(clk), .RCLKE(read_en), .RE(1'b1),
+        .WADDR(waddr_phys), .WCLK(clk), .WCLKE(1'b1), .WE(we),
+        .MASK(16'h0000), .WDATA(wdata)
+    );
+
+    assign rdata_a = bypass_a_q ? bypass_data_q : ram_rdata_a;
+    assign rdata_b = bypass_b_q ? bypass_data_q : ram_rdata_b;
+
+    always @(posedge clk) begin
+        if (read_en) begin
+            bypass_a_q <= we && (waddr == raddr_a);
+            bypass_b_q <= we && (waddr == raddr_b);
+            if (we && ((waddr == raddr_a) || (waddr == raddr_b)))
+                bypass_data_q <= wdata;
+        end
+    end
+`else
+`ifdef RISCC_ECP5
+    (* ram_style = "distributed" *) reg [15:0] mem_a [0:15];
+    (* ram_style = "distributed" *) reg [15:0] mem_b [0:15];
+`else
     (* ramstyle = "MLAB, no_rw_check" *) reg [15:0] mem_a [0:15];
     (* ramstyle = "MLAB, no_rw_check" *) reg [15:0] mem_b [0:15];
+`endif
     reg [15:0] rdata_a_q;
     reg [15:0] rdata_b_q;
 
@@ -686,6 +729,7 @@ module riscc16_faster_rf (
             mem_b[waddr] <= wdata;
         end
     end
+`endif
 endmodule
 
 `default_nettype wire

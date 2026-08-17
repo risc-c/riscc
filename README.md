@@ -165,7 +165,7 @@ commands.
 The usual complete non-interactive check is:
 
 ```sh
-make -j16 all
+make -j16 QUARTUS_SH=/path/to/quartus_sh all
 make -j16 test-compiler
 ```
 
@@ -174,9 +174,10 @@ make -j16 test-compiler
 | `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min at every serial width, all Fast target variants, and Faster DSP/soft. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
-| `make -j16 all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports. It does not include the compiler suite. |
+| `make -j16 QUARTUS_SH=/path/to/quartus_sh all` | Hardware aggregate: RTL regression, ISS runs, benchmarks, and area reports for all FPGA families. It requires Quartus Pro for Agilex 3 and does not include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
-| `make -j16 tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables; substantially slower. |
+| `make -j16 tables-lattice` | Regenerates iCE40 and ECP5 area/Fmax tables and benchmarks without Quartus. |
+| `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |
 | `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast digital signal processing (DSP) multiplier ISS model with its display window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |
 | `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Faster DSP multiplier ISS model with its display window. |

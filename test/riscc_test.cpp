@@ -16,8 +16,9 @@
 //   0xFFFE (word 0x7FFF)  result word: 0x600D pass, anything else fail
 // Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N]
 //           [--trace] [--dump-written] [--uart-expect-line TEXT]
-// --irq-at asserts the irq line from cycle N (deterministic IRQ tests
-// without the store-to-0xFFFA trigger). Exit status follows the result word.
+// --irq-at raises one IRQ at cycle N (deterministic IRQ tests without the
+// store-to-0xFFFA trigger). A read from 0xFFFA acknowledges it. Exit status
+// follows the result word.
 // --uart-expect-line supplies an always-ready TX UART and succeeds when the
 // emitted line matches TEXT.
 // --trace requires a RISCC_TRACE/RISCC_TB_TRACE build and prints one
@@ -112,6 +113,7 @@ int main(int argc, char **argv)
 
     uint64_t max_cycles = 2000000;
     int64_t irq_at = -1;
+    int irq_at_fired = 0;
     int trace = 0;
     int dump_written = 0;
     const char *uart_expect_line = nullptr;
@@ -170,12 +172,20 @@ int main(int argc, char **argv)
 
         // Sample the core's memory request during the current (pre-edge) cycle
         uint16_t addr  = top->mem_addr;
+#ifdef RISCC_TB_RC32
+        // The generic fixture owns a 64 KiB physical RAM window.  RC32's
+        // architectural address can be wider, so alias its low window before
+        // testing the common result and IRQ MMIO locations.
+        addr &= 0x7fff;
+#endif
         int      we    = top->mem_we;
         uint16_t wdata = top->mem_wdata;
         int      wmask = top->mem_wmask;
 
-        if (irq_at >= 0 && cyc >= (uint64_t)irq_at)
+        if (!irq_at_fired && irq_at >= 0 && cyc >= (uint64_t)irq_at) {
             irq = 1;
+            irq_at_fired = 1;
+        }
         top->irq = irq;
 
         top->clk = 1;
@@ -183,7 +193,7 @@ int main(int argc, char **argv)
 
         // Synchronous memory commits at the posedge
         const int test_irq_read = !we && !top->rst && addr == 0x7FFD;
-        const uint16_t test_irq_cause = irq ? 1 : 0;
+        const uint16_t test_irq_cause = top->irq ? 1 : 0;
         if (test_irq_read)
             irq = 0;
 

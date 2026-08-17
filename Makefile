@@ -86,6 +86,7 @@ area_cell = build/area/$(1)/rc16-$(2)/$(3).lut
 ecp5_rf_area_cell = build/area/ecp5-$(1)/rc16-$(2)/$(3).lut
 ecp5_rf_nano_area_cell = build/area/ecp5-$(1)/nano/nano.lut
 rc32_area_cell = build/area/$(1)/rc32min/$(2).lut
+rc32_sys_area_cell = build/area/$(1)/rc32sys/$(2).lut
 
 RC16_CONFIGS := min sys full
 
@@ -110,6 +111,8 @@ fast_defs = $(strip \
   $(if $(findstring ecp5,$(1)),-DRISCC_ECP5) \
   $(if $(findstring agilex,$(1)),-DRISCC_FAST_AGILEX))
 fast_area_cell = build/area/$(1)/fast/$(2).cells
+faster_area_cell = build/area/$(1)/faster/$(2).cells
+faster_fmax_cell = build/fmax/$(1)/faster-$(2).mhz
 faster_tb = build/tb/faster/tb
 RC16_OPTIONAL_CORES := mulh muldiv
 ECP5_RF_MODES := lutram block
@@ -127,6 +130,8 @@ up5k_fmax_cell = build/fmax/ice40/up5k/rc16-$(1)-$(2).mhz
 up5k_nano_fmax_cell = build/fmax/ice40/up5k/nano.mhz
 up5k_rc32_fmax_cell = build/fmax/ice40/up5k/rc32min$(1).mhz
 ecp5_rc32_fmax_cell = build/fmax/ecp5/rc32min$(1).mhz
+up5k_rc32_sys_fmax_cell = build/fmax/ice40/up5k/rc32sys$(1).mhz
+ecp5_rc32_sys_fmax_cell = build/fmax/ecp5/rc32sys$(1).mhz
 
 rc16_cpp_defs = $(strip \
   $(if $(filter min,$(1)),-DRISCC_MIN))
@@ -242,11 +247,13 @@ NANO_AREA_TARGETS := $(foreach c,$(NANO_CONFIGS),$(call nano_area_target,$(c)))
 ECP5_FMAX_CELLS := $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(call ecp5_fmax_cell,$(w),$(c)))) \
                    $(ecp5_nano_fmax_cell) \
                    $(foreach w,$(RC16_WIDTHS),$(call ecp5_rc32_fmax_cell,$(w))) \
+                   $(foreach w,$(RC16_WIDTHS),$(call ecp5_rc32_sys_fmax_cell,$(w))) \
                    $(foreach c,$(RC16_OPTIONAL_CORES),$(call rc16_optional_ecp5_fmax_cell,$(c)))
 UP5K_FMAX_CELLS := $(foreach w,$(RC16_WIDTHS), \
                       $(foreach c,$(RC16_CONFIGS),$(call up5k_fmax_cell,$(w),$(c)))) \
                     $(up5k_nano_fmax_cell) \
                     $(foreach w,$(RC16_WIDTHS),$(call up5k_rc32_fmax_cell,$(w))) \
+                    $(foreach w,$(RC16_WIDTHS),$(call up5k_rc32_sys_fmax_cell,$(w))) \
                     $(foreach c,$(RC16_OPTIONAL_CORES),$(call rc16_optional_up5k_fmax_cell,$(c)))
 ECP5_MAINLINE_RF_SITES := 24
 ECP5_NANO_RF_SITES := 12
@@ -255,7 +262,7 @@ ECP5_NANO_RF_SITES := 12
 # and fmax-<width>-<profile> for RC16 serial widths,
 # plus the fixed Nano, Fast, and Faster targets.  The aggregate area/Fmax
 # targets below are the supported way to regenerate published matrices.
-.PHONY: all test-all test-rc32 test-peripherals test-funnel clean FORCE version check-version asm asm-rc16 asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
+.PHONY: all test-all test-rc32 test-rc32-sys test-peripherals test-funnel clean FORCE version check-version asm asm-rc16 asm-nano sim sim-all sim-cpp fuzz fuzz-all bench \
         icepi-zero-demo-bin icepi-zero-demo-iss icepi-zero-demo-iss-test icepi-zero-demo-rtlsim \
         icepi-zero-demo-json icepi-zero-demo-bit icepi-zero-video-test-bit \
         atum-a3-demo-bin atum-a3-demo-iss atum-a3-demo-rtlsim atum-a3-demo \
@@ -275,9 +282,10 @@ ECP5_NANO_RF_SITES := 12
         sim-fast sim-fast-dsp trace-fast trace-fast-dsp trace-fast-ice trace-fast-ice-dsp \
         fuzz-fast fuzz-fast-ice bench-nano bench-fast bench-fast-dsp bench-fast-ice bench-fast-ice-dsp bench-faster bench-faster-soft \
         area-rc32 area-fast area-agilex check-fast-dsp check-fast-ice \
-        fmax-rc32 fmax-fast fmax-ice40 fmax-ecp5 fmax-agilex fmax-table fmax-all tables \
-        characterize-agilex-rc16 \
-        area area-all area-table area-ecp5
+        fmax-rc32 fmax-fast fmax-ice40 fmax-ecp5 fmax-agilex fmax-lattice fmax-table fmax-all tables tables-lattice \
+        characterize-agilex characterize-agilex-rc16 \
+        characterize-agilex-rc32 characterize-agilex-other \
+        area area-all area-lattice area-table area-ecp5
 
 all: test-all sim-all bench area-all
 
@@ -289,7 +297,7 @@ check-version:
 
 test-all: test-peripherals test-matrix $(RC16_OPTIONAL_TEST_TARGETS) \
           $(RC16_OPTIONAL_ECP5_TEST_TARGETS) \
-          test-funnel test-rc32 \
+          test-funnel test-rc32 test-rc32-sys \
           test-fast test-fast-dsp test-fast-ice test-fast-ice-dsp \
           test-fast-ecp5 test-fast-ecp5-dsp test-fast-agilex \
           test-fast-agilex-dsp test-faster test-faster-soft
@@ -347,6 +355,13 @@ $(call nano_bin,nano): test/test_riscc.asm test/flat.ld
 
 $(FUNNEL_BIN): test/test_funnel.asm test/flat.ld
 	$(call RISCC_ASM_IMAGE,test/test_funnel.asm,min,,$(riscc_asm_defs_min),test/flat.ld)
+
+RC32_SYS_BIN := build/bin/riscc32-sys.bin
+rc32_sys_tb = build/tb/rc32-sys-$(1)/tb
+RC32_SYS_TBS := $(foreach w,$(RC16_WIDTHS),$(call rc32_sys_tb,$(w)))
+
+$(RC32_SYS_BIN): test/test_rc32_sys.asm test/flat.ld
+	$(call RISCC_ASM_IMAGE,test/test_rc32_sys.asm,sys,--mattr=+rc32,$(riscc_asm_defs_sys),test/flat.ld)
 
 $(call bench_bin): test/test_riscc_bench.asm test/flat.ld
 	$(call RISCC_ASM_IMAGE,test/test_riscc_bench.asm,full,,$(riscc_asm_defs_full),test/flat.ld)
@@ -408,6 +423,10 @@ fuzz-rc32: $(RISCC_SIM) llvm-riscc
 	  $(PYTHON) tools/riscc_fuzz.py --family rc32 --campaign $(FUZZ_SEEDS) \
 	  $(FUZZ_SEED_ARGS) --config min --cores $(RC32_FUZZ_CORE_ARG) \
 	  --outdir build/fuzz/rc32
+	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_RISCC_BIN)) \
+	  $(PYTHON) tools/riscc_fuzz.py --family rc32 --campaign $(FUZZ_SEEDS) \
+	  $(FUZZ_SEED_ARGS) --config sys --cores $(RC32_FUZZ_CORE_ARG) \
+	  --outdir build/fuzz/rc32
 
 # Keep one deterministic differential RC32 program in the normal regression
 # gate.  The longer random campaign remains available through fuzz-rc32.
@@ -415,6 +434,23 @@ test-rc32: $(RISCC_SIM) llvm-riscc
 	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_RISCC_BIN)) \
 	  $(PYTHON) tools/riscc_fuzz.py --family rc32 --campaign 1 --base-seed 1 \
 	  --config min --cores $(RC32_FUZZ_CORE_ARG) --outdir build/test/rc32
+
+define RC32_SYS_TB_RULE
+$(call rc32_sys_tb,$(1)): $(TB_SRC) rtl/riscc32_sys.v $(RISCC_RF_RTL) Makefile
+	@mkdir -p $$(@D)
+	$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) --top-module riscc32_sys \
+	  -GW=$(1) -DRISCC_INFERRED_SYNC_RF --prefix Vriscc -Mdir $$(@D) \
+	  -I$(abspath rtl) -I$(abspath rtl/test) \
+	  -CFLAGS "$(TB_CXXFLAGS) -DRISCC_TB_RC32" -o tb \
+	  $(abspath rtl/riscc32_sys.v) $(abspath $(TB_SRC))
+endef
+
+$(foreach w,$(RC16_WIDTHS),$(eval $(call RC32_SYS_TB_RULE,$(w))))
+
+test-rc32-sys: $(RC32_SYS_TBS) $(RC32_SYS_BIN)
+	@for tb in $(RC32_SYS_TBS); do \
+	  $$tb $(RC32_SYS_BIN) --irq-at 300 --max-cycles 100000 || exit; \
+	done
 
 fuzz-fast: $(RISCC_SIM)
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
@@ -1066,42 +1102,55 @@ atum-a3-demo: $(ATUM_SOF)
 
 # ---- Area -------------------------------------------------------------
 
-# Sys is current Quartus Pro core characterization for Agilex 3; the other
-# profiles are published snapshots. These values are included in per-core
-# reports and the aggregate table; open-FPGA recipes remain reproducible.
-AGILEX_AREA_MIN := 93.7 100.1 108.0 120.1 118.0
-AGILEX_AREA_SYS := 104.1 106.9 120.7 137.7 150.7
-AGILEX_AREA_FULL := 100.8 121.9 127.8 148.6 170.8
-AGILEX_AREA_min := $(AGILEX_AREA_MIN)
-AGILEX_AREA_sys := $(AGILEX_AREA_SYS)
-AGILEX_AREA_full := $(AGILEX_AREA_FULL)
-AGILEX_AREA_NANO := 88.4
-AGILEX_AREA_FAST_SOFT := 271.3
-AGILEX_AREA_FAST_DSP := 264.8
-AGILEX_AREA_FASTER_DSP := 318.0
-AGILEX_AREA_FASTER_SOFT := 342.6
-AGILEX_FMAX_MIN := 323.42 317.76 289.44 278.71 270.12
-AGILEX_FMAX_SYS := 308.64 290.78 264.62 268.67 245.04
-AGILEX_FMAX_FULL := 304.79 313.28 313.68 283.37 245.46
-AGILEX_FMAX_NANO := 306.28
-AGILEX_FMAX_FAST_SOFT := 191.83
-AGILEX_FMAX_FAST_DSP := 149.05
-AGILEX_FMAX_FASTER_DSP := 242.37
-AGILEX_FMAX_FASTER_SOFT := 247.34
+# Agilex tables consume only generated Quartus results. Published snapshots
+# belong in the hardware documentation, not in build logic.
+AGILEX_CHARACTERIZE_DIR := build/agilex
+AGILEX_RESULTS := $(AGILEX_CHARACTERIZE_DIR)/results.tsv
+AGILEX_REPORT := tools/agilex_results.py
+AGILEX_CHARACTERIZE := tools/agilex_core_characterize.py
+AGILEX_COMMON_RTL := $(RTL_TEST_DIR)/riscc_fmax_top.v \
+                     $(wildcard $(RTL_TEST_DIR)/riscc_trace*.vh) \
+                     rtl/riscc_rf.vh
+AGILEX_RC16_RTL := rtl/riscc_min.v rtl/riscc_sys.v rtl/riscc_full.v \
+                   rtl/riscc16_min.v rtl/riscc16_sys.v rtl/riscc16_full.v \
+                   rtl/riscc_nano.v $(AGILEX_COMMON_RTL)
+AGILEX_RC32_RTL := rtl/riscc32_min.v rtl/riscc32_sys.v $(AGILEX_COMMON_RTL)
+AGILEX_OTHER_RTL := rtl/riscc16_full_mulh.v rtl/riscc16_full_muldiv.v \
+                    rtl/riscc16_fast.v rtl/riscc16_faster.v \
+                    $(AGILEX_COMMON_RTL)
+AGILEX_RTL := $(sort $(AGILEX_RC16_RTL) $(AGILEX_RC32_RTL) \
+                      $(AGILEX_OTHER_RTL))
 
-# Rebuild the RC16/Nano Agilex figures with the same core-only harness and
-# explicit MLAB RF.  The generated projects and results stay under build/.
-AGILEX_RC16_CHARACTERIZE_DIR := build/agilex_rc16
+agilex_result = $(PYTHON) $(AGILEX_REPORT) --metric $(1) \
+  --profile $(2) --width $(3) $(AGILEX_RESULTS)
 
-.PHONY: characterize-agilex-rc16
+$(AGILEX_RESULTS): $(AGILEX_CHARACTERIZE) $(AGILEX_RTL) Makefile
+	$(PYTHON) $(AGILEX_CHARACTERIZE) \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_CHARACTERIZE_DIR) \
+	  --family all --jobs $(RISCC_BUILD_JOBS)
+
+characterize-agilex:
+	$(PYTHON) $(AGILEX_CHARACTERIZE) \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_CHARACTERIZE_DIR) \
+	  --family all --jobs $(RISCC_BUILD_JOBS)
 
 characterize-agilex-rc16:
 	$(PYTHON) tools/agilex_core_characterize.py \
-	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_RC16_CHARACTERIZE_DIR) \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_CHARACTERIZE_DIR) \
+	  --family rc16 \
 	  --jobs $(RISCC_BUILD_JOBS) $(foreach c,$(AGILEX_RC16_ONLY),--only $(c))
 
-agilex_area_index = $(if $(filter 1,$(1)),1,$(if $(filter 2,$(1)),2,$(if $(filter 4,$(1)),3,$(if $(filter 8,$(1)),4,5))))
-agilex_rc16_area = $(word $(call agilex_area_index,$(1)),$(AGILEX_AREA_$(2)))
+characterize-agilex-rc32:
+	$(PYTHON) tools/agilex_core_characterize.py \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_CHARACTERIZE_DIR) \
+	  --family rc32 \
+	  --jobs $(RISCC_BUILD_JOBS) $(foreach c,$(AGILEX_RC32_ONLY),--only $(c))
+
+characterize-agilex-other:
+	$(PYTHON) tools/agilex_core_characterize.py \
+	  --quartus "$(QUARTUS_SH)" --out $(AGILEX_CHARACTERIZE_DIR) \
+	  --family other \
+	  --jobs $(RISCC_BUILD_JOBS) $(foreach c,$(AGILEX_OTHER_ONLY),--only $(c))
 
 AREA_RTL := $(wildcard rtl/riscc*.v rtl/riscc*.vh)
 ICE40_CELLS := $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(call area_cell,ice40,$(w),$(c)))) \
@@ -1115,7 +1164,10 @@ ECP5_LUTRAM_CELLS := $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(ca
 RC32_AREA_CELLS := $(foreach w,$(RC16_WIDTHS), \
   $(call rc32_area_cell,ice40,$(w)) \
   $(call rc32_area_cell,ecp5-block,$(w)) \
-  $(call rc32_area_cell,ecp5-lutram,$(w)))
+  $(call rc32_area_cell,ecp5-lutram,$(w)) \
+  $(call rc32_sys_area_cell,ice40,$(w)) \
+  $(call rc32_sys_area_cell,ecp5-block,$(w)) \
+  $(call rc32_sys_area_cell,ecp5-lutram,$(w)))
 RC16_OPTIONAL_AREA_CELLS := $(foreach c,$(RC16_OPTIONAL_CORES), \
   $(call rc16_optional_area_cell,ice40,$(c)) \
   $(call rc16_optional_area_cell,ecp5-block,$(c)) \
@@ -1124,6 +1176,10 @@ FAST_AREA_CELLS := $(call fast_area_cell,ice40,soft) \
                    $(call fast_area_cell,ice40,dsp) \
                    $(call fast_area_cell,ecp5,soft) \
                    $(call fast_area_cell,ecp5,dsp)
+FASTER_AREA_CELLS := $(call faster_area_cell,ice40,soft) \
+                     $(call faster_area_cell,ice40,dsp) \
+                     $(call faster_area_cell,ecp5,soft) \
+                     $(call faster_area_cell,ecp5,dsp)
 
 ecp5_rf_def = $(if $(filter block,$(1)),-DRISCC_ECP5_BLOCK_RF)
 
@@ -1187,6 +1243,20 @@ $(call rc32_area_cell,ecp5-$(1),$(2)): $$(AREA_RTL) Makefile
 	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} $$$$1=="TRELLIS_DPR16X4"{r=$$$$2} END{print l+2*c+6*r}' > $$@
 endef
 
+define RC32_SYS_ICE40_AREA_RULE
+$(call rc32_sys_area_cell,ice40,$(1)): $$(AREA_RTL) Makefile
+	@mkdir -p $$(@D)
+	@$$(YOSYS) -p "read_verilog rtl/riscc32_sys.v; chparam -set W $(1) riscc32_sys; synth_ice40 $(call rc32_ice40_area_synth_opts,$(1)) -top riscc32_sys; stat" \
+	  2>/dev/null | awk '$$$$1=="SB_LUT4"{v=$$$$2} END{print v+0}' > $$@
+endef
+
+define RC32_SYS_ECP5_AREA_RULE
+$(call rc32_sys_area_cell,ecp5-$(1),$(2)): $$(AREA_RTL) Makefile
+	@mkdir -p $$(@D)
+	@$$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(call ecp5_rf_def,$(1)) rtl/riscc32_sys.v; chparam -set W $(2) riscc32_sys; synth_ecp5 -abc2 -top riscc32_sys -nowidelut; stat" \
+	  2>/dev/null | awk '$$$$1=="LUT4"{l=$$$$2} $$$$1=="CCU2C"{c=$$$$2} $$$$1=="TRELLIS_DPR16X4"{r=$$$$2} END{print l+2*c+6*r}' > $$@
+endef
+
 define RC16_OPTIONAL_ICE40_AREA_RULE
 $(call rc16_optional_area_cell,ice40,$(1)): $$(AREA_RTL) Makefile
 	@mkdir -p $$(@D)
@@ -1203,6 +1273,8 @@ endef
 
 $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(eval $(call ICE40_AREA_RULE,$(w),$(c)))))
 $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(eval $(call ECP5_AREA_RULE,$(w),$(c)))))
+$(foreach w,$(RC16_WIDTHS),$(eval $(call RC32_SYS_ICE40_AREA_RULE,$(w))))
+$(foreach w,$(RC16_WIDTHS),$(foreach m,$(ECP5_RF_MODES),$(eval $(call RC32_SYS_ECP5_AREA_RULE,$(m),$(w)))))
 $(foreach c,$(NANO_CONFIGS),$(eval $(call ICE40_NANO_AREA_RULE,$(c))))
 $(foreach c,$(NANO_CONFIGS),$(eval $(call ECP5_NANO_AREA_RULE,$(c))))
 $(foreach m,block lutram,$(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(eval $(call ECP5_RF_AREA_RULE,$(m),$(w),$(c))))))
@@ -1232,6 +1304,30 @@ $(call fast_area_cell,ecp5,soft): $(AREA_RTL) Makefile
 	@$(YOSYS) -p "read_verilog -DRISCC_ECP5 rtl/riscc16_fast.v; synth_ecp5 -nowidelut -abc2 -top riscc16_fast; stat" 2>/dev/null | \
 	  awk '$$1=="LUT4"{l=$$2} $$1=="CCU2C"{c=$$2} $$1=="MULT18X18D"{d=$$2} $$1=="TRELLIS_DPR16X4"{r=$$2} END{print l+2*c+6*r,l+0,2*c,4*r,2*r,d+0,r+0}' > $@
 
+$(call faster_area_cell,ice40,dsp): $(AREA_RTL) Makefile
+	@mkdir -p $(@D)
+	@$(YOSYS) -p "read_verilog -DRISCC_FASTER_ICE40 rtl/riscc16_faster.v; synth_ice40 -dsp -abc2 -dff -top riscc16_faster; stat" 2>/dev/null | \
+	  awk '$$1=="SB_LUT4"{l=$$2} $$1=="SB_MAC16"{d=$$2} $$1=="SB_RAM40_4K"{r=$$2} END{print l+0,d+0,r+0}' > $@
+	@set -- $$(cat $@); test "$$1" -gt 0 -a "$$2" = 1 -a "$$3" = 2
+
+$(call faster_area_cell,ice40,soft): $(AREA_RTL) Makefile
+	@mkdir -p $(@D)
+	@$(YOSYS) -p "read_verilog -DRISCC_FASTER_ICE40 -DRISCC_FASTER_SOFT_MUL rtl/riscc16_faster.v; synth_ice40 -abc2 -dff -top riscc16_faster; stat" 2>/dev/null | \
+	  awk '$$1=="SB_LUT4"{l=$$2} $$1=="SB_MAC16"{d=$$2} $$1=="SB_RAM40_4K"{r=$$2} END{print l+0,d+0,r+0}' > $@
+	@set -- $$(cat $@); test "$$1" -gt 0 -a "$$2" = 0 -a "$$3" = 2
+
+$(call faster_area_cell,ecp5,dsp): $(AREA_RTL) Makefile
+	@mkdir -p $(@D)
+	@$(YOSYS) -p "read_verilog -DRISCC_ECP5 rtl/riscc16_faster.v; synth_ecp5 -nowidelut -abc2 -dff -top riscc16_faster; stat" 2>/dev/null | \
+	  awk '$$1=="LUT4"{l=$$2} $$1=="CCU2C"{c=$$2} $$1=="MULT18X18D"{d=$$2} $$1=="TRELLIS_DPR16X4"{r=$$2} END{print l+2*c+6*r,l+0,2*c,4*r,2*r,d+0,r+0}' > $@
+	@set -- $$(cat $@); test "$$1" -gt 0 -a "$$6" = 1 -a "$$7" = 8
+
+$(call faster_area_cell,ecp5,soft): $(AREA_RTL) Makefile
+	@mkdir -p $(@D)
+	@$(YOSYS) -p "read_verilog -DRISCC_ECP5 -DRISCC_FASTER_SOFT_MUL rtl/riscc16_faster.v; synth_ecp5 -nowidelut -abc2 -dff -top riscc16_faster; stat" 2>/dev/null | \
+	  awk '$$1=="LUT4"{l=$$2} $$1=="CCU2C"{c=$$2} $$1=="MULT18X18D"{d=$$2} $$1=="TRELLIS_DPR16X4"{r=$$2} END{print l+2*c+6*r,l+0,2*c,4*r,2*r,d+0,r+0}' > $@
+	@set -- $$(cat $@); test "$$1" -gt 0 -a "$$6" = 0 -a "$$7" = 8
+
 
 define FAST_OPEN_AREA_PRINT
 	@set -- $$(cat $(call fast_area_cell,ice40,soft)); ilut=$$1; idsp=$$2; ieb=$$3; \
@@ -1244,12 +1340,35 @@ define FAST_OPEN_AREA_PRINT
 	    "$$ilut" "$$idsp" "$$ieb" "$$elut" "$$edsp"
 endef
 
-area-fast: $(FAST_AREA_CELLS)
+define FASTER_OPEN_AREA_PRINT
+	@set -- $$(cat $(call faster_area_cell,ice40,dsp)); ilut=$$1; idsp=$$2; ieb=$$3; \
+	  set -- $$(cat $(call faster_area_cell,ecp5,dsp)); elut=$$1; edsp=$$6; \
+	  printf 'faster DSP: iCE40 %s LUT4/%s DSP/%s EBR; ECP5 %s LUT sites/%s DSP\n' \
+	    "$$ilut" "$$idsp" "$$ieb" "$$elut" "$$edsp"
+	@set -- $$(cat $(call faster_area_cell,ice40,soft)); ilut=$$1; idsp=$$2; ieb=$$3; \
+	  set -- $$(cat $(call faster_area_cell,ecp5,soft)); elut=$$1; edsp=$$6; \
+	  printf 'faster soft: iCE40 %s LUT4/%s DSP/%s EBR; ECP5 %s LUT sites/%s DSP\n' \
+	    "$$ilut" "$$idsp" "$$ieb" "$$elut" "$$edsp"
+endef
+
+define FASTER_ECP5_AREA_PRINT
+	@set -- $$(cat $(call faster_area_cell,ecp5,dsp)); elut=$$1; edsp=$$6; \
+	  printf 'faster DSP: ECP5 %s LUT sites/%s DSP\n' "$$elut" "$$edsp"
+	@set -- $$(cat $(call faster_area_cell,ecp5,soft)); elut=$$1; edsp=$$6; \
+	  printf 'faster soft: ECP5 %s LUT sites/%s DSP\n' "$$elut" "$$edsp"
+endef
+
+area-fast: $(FAST_AREA_CELLS) $(FASTER_AREA_CELLS) $(AGILEX_RESULTS)
 	$(call FAST_OPEN_AREA_PRINT)
-	@printf 'fast soft: Agilex %s ALM/%s DSP\n' "$(AGILEX_AREA_FAST_SOFT)" 0
-	@printf 'fast DSP: Agilex %s ALM/%s DSP\n' "$(AGILEX_AREA_FAST_DSP)" 1
-	@printf 'faster DSP: Agilex %s ALM/%s DSP\n' "$(AGILEX_AREA_FASTER_DSP)" 1
-	@printf 'faster soft: Agilex %s ALM/%s DSP\n' "$(AGILEX_AREA_FASTER_SOFT)" 0
+	$(call FASTER_OPEN_AREA_PRINT)
+	@printf 'fast soft: Agilex %s ALM/%s DSP\n' \
+	  "$$($(call agilex_result,area,fast_soft,16))" 0
+	@printf 'fast DSP: Agilex %s ALM/%s DSP\n' \
+	  "$$($(call agilex_result,area,fast_dsp,16))" 1
+	@printf 'faster DSP: Agilex %s ALM/%s DSP\n' \
+	  "$$($(call agilex_result,area,faster_dsp,16))" 1
+	@printf 'faster soft: Agilex %s ALM/%s DSP\n' \
+	  "$$($(call agilex_result,area,faster_soft,16))" 0
 
 check-fast-dsp: $(call fast_area_cell,ecp5,soft) $(call fast_area_cell,ecp5,dsp)
 	@set -- $$(cat $(call fast_area_cell,ecp5,soft)); test "$$1" -lt 537 -a "$$6" = 0 -a "$$7" = 8
@@ -1264,7 +1383,10 @@ check-fast-ice: $(call fast_area_cell,ice40,soft) $(call fast_area_cell,ice40,ds
 # ---- Routed core timing ----------------------------------------------
 
 FMAX_TOP := $(RTL_TEST_DIR)/riscc_fmax_top.v
-FMAX_RTL := $(FMAX_TOP) rtl/riscc16_fast.v rtl/riscc32_min.v rtl/riscc_sys.v rtl/riscc_full.v rtl/riscc_min.v \
+FMAX_RTL := $(FMAX_TOP) rtl/riscc16_fast.v rtl/riscc16_faster.v \
+            rtl/riscc16_full_mulh.v rtl/riscc16_full_muldiv.v \
+            rtl/riscc32_min.v rtl/riscc32_sys.v \
+            rtl/riscc_sys.v rtl/riscc_full.v rtl/riscc_min.v \
             rtl/riscc16_sys.v rtl/riscc16_full.v rtl/riscc16_min.v \
             rtl/riscc_nano.v rtl/riscc_rf.vh Makefile
 
@@ -1397,15 +1519,19 @@ build/fmax/ecp5/rc16-16-muldiv.mhz: $(MULDIV16_FMAX_RTL)
 
 .PHONY: fmax-16-mulh fmax-16-muldiv
 
-fmax-16-mulh: build/fmax/ice40/up5k/rc16-16-mulh.mhz build/fmax/ecp5/rc16-16-mulh.mhz
-	@printf 'rc16-16 MulH: UP5K %s MHz; ECP5 %s MHz\n' \
+fmax-16-mulh: build/fmax/ice40/up5k/rc16-16-mulh.mhz \
+               build/fmax/ecp5/rc16-16-mulh.mhz $(AGILEX_RESULTS)
+	@printf 'rc16-16 MulH: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
 	  "$$(cat build/fmax/ice40/up5k/rc16-16-mulh.mhz)" \
-	  "$$(cat build/fmax/ecp5/rc16-16-mulh.mhz)"
+	  "$$(cat build/fmax/ecp5/rc16-16-mulh.mhz)" \
+	  "$$($(call agilex_result,fmax,mulh,16))"
 
-fmax-16-muldiv: build/fmax/ice40/up5k/rc16-16-muldiv.mhz build/fmax/ecp5/rc16-16-muldiv.mhz
-	@printf 'rc16-16 MulDiv: UP5K %s MHz; ECP5 %s MHz\n' \
+fmax-16-muldiv: build/fmax/ice40/up5k/rc16-16-muldiv.mhz \
+                 build/fmax/ecp5/rc16-16-muldiv.mhz $(AGILEX_RESULTS)
+	@printf 'rc16-16 MulDiv: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
 	  "$$(cat build/fmax/ice40/up5k/rc16-16-muldiv.mhz)" \
-	  "$$(cat build/fmax/ecp5/rc16-16-muldiv.mhz)"
+	  "$$(cat build/fmax/ecp5/rc16-16-muldiv.mhz)" \
+	  "$$($(call agilex_result,fmax,muldiv,16))"
 
 define UP5K_FMAX_RULE
 $(call up5k_fmax_cell,$(1),$(2)): $$(FMAX_RTL)
@@ -1429,6 +1555,17 @@ endef
 
 $(foreach w,$(RC16_WIDTHS),$(eval $(call UP5K_RC32_FMAX_RULE,$(w))))
 
+define UP5K_RC32_SYS_FMAX_RULE
+$(call up5k_rc32_sys_fmax_cell,$(1)): $$(FMAX_RTL)
+	@mkdir -p $$(@D)
+	@$$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_RC32_SYS -DRISCC_FMAX_WIDTH=$(1) rtl/riscc32_sys.v $(FMAX_TOP); synth_ice40 -abc9 -device u -dff -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed $$(ICE40_FMAX_SEED) \
+	  --json $$(@:.mhz=.json) --asc $$(@:.mhz=.asc) >$$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
+endef
+
+$(foreach w,$(RC16_WIDTHS),$(eval $(call UP5K_RC32_SYS_FMAX_RULE,$(w))))
+
 $(up5k_nano_fmax_cell): $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_NANO rtl/riscc_nano.v $(FMAX_TOP); synth_ice40 -abc2 -retime -top riscc_fmax_top -json $(@:.mhz=.json)"
@@ -1450,6 +1587,20 @@ build/fmax/ice40/fast-soft-up5k.mhz: $(FMAX_RTL)
 	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
+$(call faster_fmax_cell,ice40,dsp): $(FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_FASTER -DRISCC_FASTER_ICE40 rtl/riscc16_faster.v $(FMAX_TOP); synth_ice40 -dsp -abc9 -device u -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed 1 \
+	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+$(call faster_fmax_cell,ice40,soft): $(FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_FMAX_FASTER -DRISCC_FASTER_ICE40 -DRISCC_FASTER_SOFT_MUL rtl/riscc16_faster.v $(FMAX_TOP); synth_ice40 -abc9 -device u -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ICE40) --up5k --package sg48 --pcf-allow-unconstrained --freq 10 --seed 1 \
+	  --json $(@:.mhz=.json) --asc $(@:.mhz=.asc) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
 build/fmax/ecp5/rc16-16.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 rtl/riscc16_full.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
@@ -1468,6 +1619,20 @@ build/fmax/ecp5/fast-soft.mhz: $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_FAST rtl/riscc16_fast.v $(FMAX_TOP); synth_ecp5 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
 	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 --seed $(call fast_ecp5_fmax_seed,soft) \
+	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+$(call faster_fmax_cell,ecp5,dsp): $(FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_FASTER rtl/riscc16_faster.v $(FMAX_TOP); synth_ecp5 -nowidelut -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 --seed 1 \
+	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
+
+$(call faster_fmax_cell,ecp5,soft): $(FMAX_RTL)
+	@mkdir -p $(@D)
+	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_FASTER -DRISCC_FASTER_SOFT_MUL rtl/riscc16_faster.v $(FMAX_TOP); synth_ecp5 -nowidelut -dff -top riscc_fmax_top -json $(@:.mhz=.json)"
+	@$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 50 --seed 1 \
 	  --json $(@:.mhz=.json) --textcfg $(@:.mhz=.config) >$(@:.mhz=.log) 2>&1
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
@@ -1498,6 +1663,17 @@ endef
 
 $(foreach w,$(RC16_WIDTHS),$(eval $(call ECP5_RC32_FMAX_RULE,$(w))))
 
+define ECP5_RC32_SYS_FMAX_RULE
+$(call ecp5_rc32_sys_fmax_cell,$(1)): $$(FMAX_RTL)
+	@mkdir -p $$(@D)
+	@$$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_RC32_SYS -DRISCC_FMAX_WIDTH=$(1) rtl/riscc32_sys.v $(FMAX_TOP); synth_ecp5 -abc9 -nowidelut -top riscc_fmax_top -json $$(@:.mhz=.json)"
+	@$$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 --lpf-allow-unconstrained --freq 40 --seed $$(ECP5_FMAX_SEED) \
+	  --json $$(@:.mhz=.json) --textcfg $$(@:.mhz=.config) >$$(@:.mhz=.log) 2>&1
+	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$$$(i+1)=="MHz") v=$$$$i} END{print v}' $$(@:.mhz=.log) > $$@
+endef
+
+$(foreach w,$(RC16_WIDTHS),$(eval $(call ECP5_RC32_SYS_FMAX_RULE,$(w))))
+
 $(ecp5_nano_fmax_cell): $(FMAX_RTL)
 	@mkdir -p $(@D)
 	@$(YOSYS) -q -p "read_verilog -DRISCC_ECP5 -DRISCC_FMAX_NANO rtl/riscc_nano.v $(FMAX_TOP); synth_ecp5 -abc2 -nowidelut -top riscc_fmax_top -json $(@:.mhz=.json)"
@@ -1506,30 +1682,45 @@ $(ecp5_nano_fmax_cell): $(FMAX_RTL)
 	@awk '/Max frequency for clock/{for(i=1;i<NF;i++) if($$(i+1)=="MHz") v=$$i} END{print v}' $(@:.mhz=.log) > $@
 
 fmax-fast: build/fmax/ice40/fast-soft-up5k.mhz build/fmax/ice40/fast-dsp.mhz \
-           build/fmax/ecp5/fast-soft.mhz build/fmax/ecp5/fast-dsp.mhz
+           build/fmax/ecp5/fast-soft.mhz build/fmax/ecp5/fast-dsp.mhz \
+           $(call faster_fmax_cell,ice40,dsp) \
+           $(call faster_fmax_cell,ice40,soft) \
+           $(call faster_fmax_cell,ecp5,dsp) \
+           $(call faster_fmax_cell,ecp5,soft) $(AGILEX_RESULTS)
 	@printf 'fast soft: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
 	  "$$(cat build/fmax/ice40/fast-soft-up5k.mhz)" \
 	  "$$(cat build/fmax/ecp5/fast-soft.mhz)" \
-	  "$(AGILEX_FMAX_FAST_SOFT)"
+	  "$$($(call agilex_result,fmax,fast_soft,16))"
 	@printf 'fast DSP:  UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
 	  "$$(cat build/fmax/ice40/fast-dsp.mhz)" \
 	  "$$(cat build/fmax/ecp5/fast-dsp.mhz)" \
-	  "$(AGILEX_FMAX_FAST_DSP)"
-	@printf 'faster DSP: Agilex %s MHz\n' "$(AGILEX_FMAX_FASTER_DSP)"
-	@printf 'faster soft: Agilex %s MHz\n' "$(AGILEX_FMAX_FASTER_SOFT)"
+	  "$$($(call agilex_result,fmax,fast_dsp,16))"
+	@printf 'faster DSP: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
+	  "$$(cat $(call faster_fmax_cell,ice40,dsp))" \
+	  "$$(cat $(call faster_fmax_cell,ecp5,dsp))" \
+	  "$$($(call agilex_result,fmax,faster_dsp,16))"
+	@printf 'faster soft: UP5K %s MHz; ECP5 %s MHz; Agilex %s MHz\n' \
+	  "$$(cat $(call faster_fmax_cell,ice40,soft))" \
+	  "$$(cat $(call faster_fmax_cell,ecp5,soft))" \
+	  "$$($(call agilex_result,fmax,faster_soft,16))"
 
-fmax-rc32: $(foreach w,$(RC16_WIDTHS),$(call up5k_rc32_fmax_cell,$(w)) $(call ecp5_rc32_fmax_cell,$(w)))
+fmax-rc32: $(foreach w,$(RC16_WIDTHS),$(call up5k_rc32_fmax_cell,$(w)) $(call ecp5_rc32_fmax_cell,$(w)) $(call up5k_rc32_sys_fmax_cell,$(w)) $(call ecp5_rc32_sys_fmax_cell,$(w)))
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@printf '%-24s' 'RC32 min UP5K'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/rc32min$$w.mhz)"; done; echo
 	@printf '%-24s' 'RC32 min ECP5'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ecp5/rc32min$$w.mhz)"; done; echo
+	@printf '%-24s' 'RC32 sys UP5K'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/rc32sys$$w.mhz)"; done; echo
+	@printf '%-24s' 'RC32 sys ECP5'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ecp5/rc32sys$$w.mhz)"; done; echo
 
 fmax-ecp5: $(ECP5_FMAX_CELLS) build/fmax/ecp5/fast-soft.mhz \
-           build/fmax/ecp5/fast-dsp.mhz
+           build/fmax/ecp5/fast-dsp.mhz \
+           $(call faster_fmax_cell,ecp5,dsp) \
+           $(call faster_fmax_cell,ecp5,soft)
 	@echo "ECP5 LFE5U-25F speed 6; default seed $(ECP5_FMAX_SEED), characterized points tuned"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@for t in $(RC16_CONFIGS); do printf '%-24s' $$t; \
 	  for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ecp5/rc16-$$w-$$t.mhz)"; done; echo; done
 	@printf '%-24s' 'RC32 min'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ecp5/rc32min$$w.mhz)"; done; echo
+	@printf '%-24s' 'RC32 sys'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ecp5/rc32sys$$w.mhz)"; done; echo
 	@printf '%-24s %7s\n' nano "$$(cat $(ecp5_nano_fmax_cell))"
 	@for c in $(RC16_OPTIONAL_CORES); do \
 	  printf '%-24s %7s %7s %7s %7s %7s\n' "full $$c" - - - - \
@@ -1539,6 +1730,10 @@ fmax-ecp5: $(ECP5_FMAX_CELLS) build/fmax/ecp5/fast-soft.mhz \
 	  "$$(cat build/fmax/ecp5/fast-soft.mhz)"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' 'fast DSP' - - - - \
 	  "$$(cat build/fmax/ecp5/fast-dsp.mhz)"
+	@printf '%-24s %7s %7s %7s %7s %7s\n' 'faster DSP' - - - - \
+	  "$$(cat $(call faster_fmax_cell,ecp5,dsp))"
+	@printf '%-24s %7s %7s %7s %7s %7s\n' 'faster soft' - - - - \
+	  "$$(cat $(call faster_fmax_cell,ecp5,soft))"
 
 define RC16_FMAX_TARGET_RULE
 fmax-$(1)-$(2): $(call up5k_fmax_cell,$(1),$(2)) \
@@ -1558,12 +1753,15 @@ fmax-nano: $(up5k_nano_fmax_cell) \
 	  "$$(cat $(ecp5_nano_fmax_cell))"
 
 fmax-ice40: $(UP5K_FMAX_CELLS) build/fmax/ice40/fast-soft-up5k.mhz \
-            build/fmax/ice40/fast-dsp.mhz
+            build/fmax/ice40/fast-dsp.mhz \
+            $(call faster_fmax_cell,ice40,dsp) \
+            $(call faster_fmax_cell,ice40,soft)
 	@echo "UP5K iCE40; default seed $(ICE40_FMAX_SEED), characterized points tuned"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
 	@for t in $(RC16_CONFIGS); do printf '%-24s' $$t; \
 	  for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/rc16-$$w-$$t.mhz)"; done; echo; done
 	@printf '%-24s' 'RC32 min'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/rc32min$$w.mhz)"; done; echo
+	@printf '%-24s' 'RC32 sys'; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/fmax/ice40/up5k/rc32sys$$w.mhz)"; done; echo
 	@printf '%-24s %7s\n' nano "$$(cat $(up5k_nano_fmax_cell))"
 	@for c in $(RC16_OPTIONAL_CORES); do \
 	  printf '%-24s %7s %7s %7s %7s %7s\n' "full $$c" - - - - \
@@ -1573,28 +1771,25 @@ fmax-ice40: $(UP5K_FMAX_CELLS) build/fmax/ice40/fast-soft-up5k.mhz \
 	  "$$(cat build/fmax/ice40/fast-soft-up5k.mhz)"
 	@printf '%-24s %7s %7s %7s %7s %7s\n' 'fast DSP' - - - - \
 	  "$$(cat build/fmax/ice40/fast-dsp.mhz)"
+	@printf '%-24s %7s %7s %7s %7s %7s\n' 'faster DSP' - - - - \
+	  "$$(cat $(call faster_fmax_cell,ice40,dsp))"
+	@printf '%-24s %7s %7s %7s %7s %7s\n' 'faster soft' - - - - \
+	  "$$(cat $(call faster_fmax_cell,ice40,soft))"
 
 define FMAX_AGILEX_PRINT
-	@echo "Agilex 3 Fmax (MHz; Sys current, other profiles published)"
-	@printf '%-24s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
-	@printf '%-24s %7s %7s %7s %7s %7s\n' min $(AGILEX_FMAX_MIN)
-	@printf '%-24s %7s %7s %7s %7s %7s\n' sys $(AGILEX_FMAX_SYS)
-	@printf '%-24s %7s %7s %7s %7s %7s\n' full $(AGILEX_FMAX_FULL)
-	@printf '%-24s %7s\n' nano $(AGILEX_FMAX_NANO)
-	@printf '%-24s %7s\n' 'fast soft' $(AGILEX_FMAX_FAST_SOFT)
-	@printf '%-24s %7s\n' 'fast DSP' $(AGILEX_FMAX_FAST_DSP)
-	@printf '%-24s %7s\n' 'faster DSP (default)' $(AGILEX_FMAX_FASTER_DSP)
-	@printf '%-24s %7s\n' 'faster soft' $(AGILEX_FMAX_FASTER_SOFT)
+	@$(PYTHON) $(AGILEX_REPORT) --metric fmax $(AGILEX_RESULTS)
 endef
 
-fmax-agilex:
+fmax-agilex: $(AGILEX_RESULTS)
 	$(call FMAX_AGILEX_PRINT)
 
 # Keep reports readable under a parallel top-level make.  Each recursive make
 # still receives the jobserver and can build its own timing cells in parallel.
-fmax-table:
+fmax-lattice:
 	+$(MAKE) --no-print-directory fmax-ice40
 	+$(MAKE) --no-print-directory fmax-ecp5
+
+fmax-table: fmax-lattice
 	+$(MAKE) --no-print-directory fmax-agilex
 
 fmax-all: fmax-table
@@ -1606,16 +1801,22 @@ tables:
 	+$(MAKE) --no-print-directory fmax-all
 	+$(MAKE) --no-print-directory bench
 
+tables-lattice:
+	+$(MAKE) --no-print-directory area-lattice
+	+$(MAKE) --no-print-directory fmax-lattice
+	+$(MAKE) --no-print-directory bench
+
 define RC16_AREA_TARGET_RULE
 area-$(1)-$(2): $(call area_cell,ice40,$(1),$(2)) \
                 $(call ecp5_rf_area_cell,block,$(1),$(2)) \
-                $(call ecp5_rf_area_cell,lutram,$(1),$(2))
+                $(call ecp5_rf_area_cell,lutram,$(1),$(2)) \
+                $$(AGILEX_RESULTS)
 	@printf 'rc16%-2s %-5s: iCE40 %s LUT4; ECP5 block %s; ECP5 RF %s; Agilex %s ALM\n' \
 	  $(1) $(2) \
 	  "$$$$(cat $(call area_cell,ice40,$(1),$(2)))" \
 	  "$$$$(cat $(call ecp5_rf_area_cell,block,$(1),$(2)))" \
 	  "$$$$(cat $(call ecp5_rf_area_cell,lutram,$(1),$(2)))" \
-	  "$(call agilex_rc16_area,$(1),$(2))"
+	  "$$$$($(call agilex_result,area,$(2),$(1)))"
 endef
 
 $(foreach w,$(RC16_WIDTHS),$(foreach c,$(RC16_CONFIGS),$(eval $(call RC16_AREA_TARGET_RULE,$(w),$(c)))))
@@ -1624,12 +1825,14 @@ $(foreach w,$(RC16_WIDTHS),$(eval area-$(w): area-$(w)-sys))
 define RC16_OPTIONAL_AREA_TARGET_RULE
 area-16-$(1): $(call rc16_optional_area_cell,ice40,$(1)) \
               $(call rc16_optional_area_cell,ecp5-block,$(1)) \
-              $(call rc16_optional_area_cell,ecp5-lutram,$(1))
-	@printf 'rc16-16 %-6s: iCE40 %s LUT4; ECP5 block %s; ECP5 RF %s\n' \
+              $(call rc16_optional_area_cell,ecp5-lutram,$(1)) \
+              $$(AGILEX_RESULTS)
+	@printf 'rc16-16 %-6s: iCE40 %s LUT4; ECP5 block %s; ECP5 RF %s; Agilex %s ALM\n' \
 	  $(1) \
 	  "$$$$(cat $(call rc16_optional_area_cell,ice40,$(1)))" \
 	  "$$$$(cat $(call rc16_optional_area_cell,ecp5-block,$(1)))" \
-	  "$$$$(cat $(call rc16_optional_area_cell,ecp5-lutram,$(1)))"
+	  "$$$$(cat $(call rc16_optional_area_cell,ecp5-lutram,$(1)))" \
+	  "$$$$($(call agilex_result,area,$(1),16))"
 endef
 
 $(foreach c,$(RC16_OPTIONAL_CORES),$(eval $(call RC16_OPTIONAL_AREA_TARGET_RULE,$(c))))
@@ -1637,12 +1840,13 @@ $(foreach c,$(RC16_OPTIONAL_CORES),$(eval $(call RC16_OPTIONAL_AREA_TARGET_RULE,
 define NANO_AREA_TARGET_RULE
 $(call nano_area_target,$(1)): $(call nano_area_cell,ice40,$(1)) \
                               $(call ecp5_rf_nano_area_cell,block,$(1)) \
-                              $(call ecp5_rf_nano_area_cell,lutram,$(1))
+                              $(call ecp5_rf_nano_area_cell,lutram,$(1)) \
+                              $$(AGILEX_RESULTS)
 	@printf 'nano: iCE40 %s LUT4; ECP5 block %s; ECP5 RF %s; Agilex %s ALM\n' \
 	  "$$$$(cat $(call nano_area_cell,ice40,$(1)))" \
 	  "$$$$(cat $(call ecp5_rf_nano_area_cell,block,$(1)))" \
 	  "$$$$(cat $(call ecp5_rf_nano_area_cell,lutram,$(1)))" \
-	  "$(AGILEX_AREA_NANO)"
+	  "$$$$($(call agilex_result,area,nano,1))"
 endef
 
 $(foreach c,$(NANO_CONFIGS),$(eval $(call NANO_AREA_TARGET_RULE,$(c))))
@@ -1656,6 +1860,7 @@ endef
 
 define RC32_AREA_PRINT
 	@printf '%-24s' 'RC32 min'; for w in $(RC16_WIDTHS); do printf ' %5s' "$$(cat build/area/$(1)/rc32min/$$w.lut)"; done; echo
+	@printf '%-24s' 'RC32 sys'; for w in $(RC16_WIDTHS); do printf ' %5s' "$$(cat build/area/$(1)/rc32sys/$$w.lut)"; done; echo
 endef
 
 define RC16_OPTIONAL_AREA_PRINT
@@ -1687,27 +1892,22 @@ define RC16_OPTIONAL_ECP5_AREA_PRINT
 endef
 
 define AREA_AGILEX_PRINT
-	@echo "Agilex 3 ALMs (Sys current, other profiles published)"
-	@printf '%-32s %7s %7s %7s %7s %7s\n' profile /1 /2 /4 /8 /16
-	@printf '%-32s %7s %7s %7s %7s %7s\n' min $(AGILEX_AREA_MIN)
-	@printf '%-32s %7s %7s %7s %7s %7s\n' sys $(AGILEX_AREA_SYS)
-	@printf '%-32s %7s %7s %7s %7s %7s\n' full $(AGILEX_AREA_FULL)
-	@printf '%-32s %7s\n' nano $(AGILEX_AREA_NANO)
-	@printf '%-32s %7s\n' 'fast soft' $(AGILEX_AREA_FAST_SOFT)
-	@printf '%-32s %7s\n' 'fast DSP' $(AGILEX_AREA_FAST_DSP)
-	@printf '%-32s %7s\n' 'faster DSP (default)' $(AGILEX_AREA_FASTER_DSP)
-	@printf '%-32s %7s\n' 'faster soft' $(AGILEX_AREA_FASTER_SOFT)
+	@$(PYTHON) $(AGILEX_REPORT) --metric area $(AGILEX_RESULTS)
 endef
 
-area-agilex:
+area-agilex: $(AGILEX_RESULTS)
 	$(call AREA_AGILEX_PRINT)
 
 area-rc32: $(RC32_AREA_CELLS)
 	@printf '%-24s %7s %7s %7s %7s %7s\n' target /1 /2 /4 /8 /16
-	@for t in ice40 ecp5-block ecp5-lutram; do printf '%-24s' $$t; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/area/$$t/rc32min/$$w.lut)"; done; echo; done
+	@for t in ice40 ecp5-block ecp5-lutram; do for c in min sys; do printf '%-24s' "$$t rc32$$c"; for w in $(RC16_WIDTHS); do printf ' %7s' "$$(cat build/area/$$t/rc32$$c/$$w.lut)"; done; echo; done; done
 
-area-table: $(ICE40_CELLS) $(ECP5_BLOCK_CELLS) $(ECP5_LUTRAM_CELLS) $(RC32_AREA_CELLS) \
-            $(RC16_OPTIONAL_AREA_CELLS) $(FAST_AREA_CELLS)
+AREA_LATTICE_CELLS := $(ICE40_CELLS) $(ECP5_BLOCK_CELLS) \
+                      $(ECP5_LUTRAM_CELLS) $(RC32_AREA_CELLS) \
+                      $(RC16_OPTIONAL_AREA_CELLS) $(FAST_AREA_CELLS) \
+                      $(FASTER_AREA_CELLS)
+
+define AREA_LATTICE_PRINT
 	@echo "iCE40 LUT4 (documented mapper recipes; RF in SB_RAM40_4K EBR)"
 	$(call AREA_PRINT,ice40)
 	$(call RC32_AREA_PRINT,ice40)
@@ -1719,6 +1919,14 @@ area-table: $(ICE40_CELLS) $(ECP5_BLOCK_CELLS) $(ECP5_LUTRAM_CELLS) $(RC32_AREA_
 	$(call RC32_AREA_PRINT,ecp5-lutram)
 	$(call RC16_OPTIONAL_AREA_PRINT)
 	$(call FAST_OPEN_AREA_PRINT)
+	$(call FASTER_OPEN_AREA_PRINT)
+endef
+
+area-lattice: $(AREA_LATTICE_CELLS)
+	$(call AREA_LATTICE_PRINT)
+
+area-table: $(AREA_LATTICE_CELLS) $(AGILEX_RESULTS)
+	$(call AREA_LATTICE_PRINT)
 	$(call AREA_AGILEX_PRINT)
 
 area: area-all
@@ -1727,10 +1935,14 @@ area-all: area-table
 area-ecp5: $(ECP5_BLOCK_CELLS) $(ECP5_LUTRAM_CELLS) \
            $(foreach w,$(RC16_WIDTHS), \
              $(call rc32_area_cell,ecp5-block,$(w)) \
-             $(call rc32_area_cell,ecp5-lutram,$(w))) \
+             $(call rc32_area_cell,ecp5-lutram,$(w)) \
+             $(call rc32_sys_area_cell,ecp5-block,$(w)) \
+             $(call rc32_sys_area_cell,ecp5-lutram,$(w))) \
            $(foreach c,$(RC16_OPTIONAL_CORES), \
              $(call rc16_optional_area_cell,ecp5-block,$(c)) \
-             $(call rc16_optional_area_cell,ecp5-lutram,$(c)))
+             $(call rc16_optional_area_cell,ecp5-lutram,$(c))) \
+           $(call faster_area_cell,ecp5,dsp) \
+           $(call faster_area_cell,ecp5,soft)
 	@echo "ECP5 LUTs, block RF"
 	$(call AREA_PRINT,ecp5-block)
 	$(call RC32_AREA_PRINT,ecp5-block)
@@ -1738,6 +1950,7 @@ area-ecp5: $(ECP5_BLOCK_CELLS) $(ECP5_LUTRAM_CELLS) \
 	$(call AREA_PRINT,ecp5-lutram)
 	$(call RC32_AREA_PRINT,ecp5-lutram)
 	$(call RC16_OPTIONAL_ECP5_AREA_PRINT)
+	$(call FASTER_ECP5_AREA_PRINT)
 
 .PHONY: clean distclean
 clean:

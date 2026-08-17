@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C serial multi-cycle datapath</title>
+  <desc id="desc">Common RC16 and RC32 serial multi-cycle datapath with unified memory, a register file, instruction and operand staging, program counter, and execute datapath.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#26364f"/>
+    </marker>
+    <style>
+      .page { fill: #fbfcfe; }
+      .panel { fill: #ffffff; stroke: #d5dde8; stroke-width: 1.5; rx: 14; }
+      .storage { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 2; rx: 10; }
+      .compute { fill: #edf8ef; stroke: #2f7d49; stroke-width: 2; rx: 10; }
+      .mem { fill: #f0edff; stroke: #6954a3; stroke-width: 2; rx: 10; }
+      .select { fill: #fff7e8; stroke: #a26318; stroke-width: 1.8; rx: 8; }
+      .arrow { fill: none; stroke: #26364f; stroke-width: 2.1; stroke-linecap: round; marker-end: url(#arrow); }
+      .thin { fill: none; stroke: #667084; stroke-width: 1.5; stroke-linecap: round; marker-end: url(#arrow); }
+      .title { font-family: sans-serif; font-size: 24px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: sans-serif; font-size: 14px; fill: #4a5568; }
+      .label { font-family: sans-serif; font-size: 16px; font-weight: 700; fill: #172033; }
+      .text { font-family: sans-serif; font-size: 13px; fill: #2d3748; }
+      .small { font-family: sans-serif; font-size: 12px; fill: #4a5568; }
+    </style>
+  </defs>
+
+  <rect class="page" width="1000" height="540"/>
+  <text class="title" x="34" y="42">RISC-C serial multi-cycle datapath</text>
+  <text class="subtitle" x="34" y="66">Common multi-cycle datapath for RC16 and RC32 serial cores.</text>
+
+  <rect class="panel" x="28" y="90" width="944" height="430"/>
+  <rect class="select" x="90" y="145" width="150" height="45"/>
+  <text class="label" x="112" y="166">address select</text>
+  <text class="small" x="117" y="182">PC or data address</text>
+
+  <rect class="mem" x="60" y="220" width="180" height="120"/>
+  <text class="label" x="110" y="252">unified memory</text>
+  <text class="text" x="103" y="278">one address port</text>
+  <text class="text" x="88" y="302">16-bit read and write data</text>
+
+  <rect class="storage" x="325" y="445" width="205" height="40"/>
+  <text class="label" x="342" y="471">instruction register</text>
+
+  <rect class="storage" x="325" y="260" width="205" height="55"/>
+  <text class="label" x="350" y="294">operand / load staging</text>
+
+  <rect class="storage" x="325" y="350" width="205" height="55"/>
+  <text class="label" x="373" y="374">register file</text>
+  <text class="text" x="355" y="394">one read port, one write port</text>
+
+  <rect class="storage" x="675" y="130" width="220" height="55"/>
+  <text class="label" x="735" y="163">program counter</text>
+
+  <rect class="compute" x="675" y="255" width="240" height="80"/>
+  <text class="label" x="750" y="300">execute datapath</text>
+
+  <path class="arrow" d="M165,190 V220"/>
+
+  <path class="arrow" d="M430,260 V168 H240"/>
+
+  <path class="arrow" d="M240,280 H325"/>
+  <path class="arrow" d="M300,280 V465 H325"/>
+  <text class="small" x="250" y="272">mem_rdata</text>
+
+  <path class="arrow" d="M325,380 H275 V320 H240"/>
+  <text class="small" x="250" y="312">mem_wdata</text>
+
+  <path class="arrow" d="M430,350 V315"/>
+  <text class="small" x="442" y="342">source B</text>
+
+  <path class="arrow" d="M530,280 H675"/>
+  <text class="small" x="578" y="273">staged operand</text>
+
+  <path class="arrow" d="M530,380 H760 V335"/>
+  <text class="small" x="610" y="372">source A</text>
+
+  <path class="arrow" d="M675,335 H550 V350 H530"/>
+  <text class="small" x="575" y="328">writeback</text>
+
+  <path class="arrow" d="M785,130 V105 H165 V145"/>
+  <text class="small" x="430" y="101">PC address</text>
+
+  <path class="arrow" d="M810,185 V255"/>
+  <text class="small" x="821" y="224">PC to ALU</text>
+
+  <path class="arrow" d="M735,255 V185"/>
+  <text class="small" x="618" y="224">ALU to PC</text>
+
+</svg>
