@@ -13,24 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Keep the search combinationally equivalent to the RTL.  Yosys sequential
+# retiming is intentionally excluded: a retimed Fast netlist passed synthesis
+# but failed both the normal and wait-state gate-level regressions.
 RECIPES = {
-    "ice40": {
-        "default": "",
-        "abc2": "-abc2",
-        "abc2-dff": "-abc2 -dff",
-        "abc2-retime": "-abc2 -retime",
-        "abc9": "-abc9",
-        "abc9-dff": "-abc9 -dff",
-        "abc9-u": "-abc9 -device u",
-        "abc9-u-dff": "-abc9 -device u -dff",
-    },
     "ecp5": {
         "default": "",
         "dff": "-dff",
-        "retime": "-retime",
         "abc2": "-abc2",
         "abc2-dff": "-abc2 -dff",
-        "abc2-retime": "-abc2 -retime",
         "abc9": "-abc9",
         "abc9-dff": "-abc9 -dff",
         "noccu2": "-noccu2",
@@ -54,6 +45,7 @@ class CoreSpec:
     source: Path
     top: str
     defines: tuple[str, ...]
+    block_defines: tuple[str, ...]
     synth_options: tuple[str, ...] = ()
     width: int | None = None
 
@@ -108,29 +100,30 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
         source = rtl / "riscc16_fast.v"
         top = "riscc16_fast"
         defines.append("RISCC_FMAX_FAST")
-        if target == "ice40":
-            defines.append("RISCC_FAST_SYNC_RF")
         if core.endswith("dsp"):
             defines.append("RISCC_FAST_DSP")
-            if target == "ice40":
-                synth_options.append("-dsp")
     else:
         source = rtl / "riscc16_faster.v"
         top = "riscc16_faster"
         defines.append("RISCC_FMAX_FASTER")
-        if target == "ice40":
-            defines.append("RISCC_FASTER_ICE40")
         if core.endswith("soft"):
             defines.append("RISCC_FASTER_SOFT_MUL")
-        elif target == "ice40":
-            synth_options.append("-dsp")
 
     parameter_width = (
         width if core.startswith("rc32-") or
         (core in ("min", "sys", "full") and width != 16) else None
     )
-    return CoreSpec(source, top, tuple(defines), tuple(synth_options),
-                    parameter_width)
+    block_defines = list(defines)
+    if core.startswith("fast-"):
+        block_defines.remove("RISCC_ECP5")
+        block_defines.append("RISCC_FAST_SYNC_RF")
+    elif core.startswith("faster-"):
+        block_defines.remove("RISCC_ECP5")
+        block_defines.append("RISCC_FASTER_BLOCK_RF")
+    else:
+        block_defines.append("RISCC_ECP5_BLOCK_RF")
+    return CoreSpec(source, top, tuple(defines), tuple(block_defines),
+                    tuple(synth_options), parameter_width)
 
 
 def run(command, cwd: Path):
@@ -149,8 +142,6 @@ def cell_count(log: str, target: str) -> int:
         matches = re.findall(rf"^\s*{cell}\s+(\d+)\s*$", log, re.MULTILINE)
         return int(matches[-1]) if matches else 0
 
-    if target == "ice40":
-        return last("SB_LUT4")
     return last("LUT4") + 2 * last("CCU2C") + 6 * last("TRELLIS_DPR16X4")
 
 
@@ -160,42 +151,32 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
     directory.mkdir(parents=True, exist_ok=True)
     json = directory / "core.json"
     defines = [f"-D{define}" for define in spec.defines]
+    block_defines = [f"-D{define}" for define in spec.block_defines]
     synth_options = [*spec.synth_options, *shlex.split(options)]
-    timing_script = ["read_verilog", *defines, str(spec.source),
+    timing_script = ["read_verilog", *block_defines, str(spec.source),
                      str(root / "rtl/test/riscc_fmax_top.v"), ";"]
-    if target == "ice40":
-        timing_script.extend(("synth_ice40", *synth_options, "-top",
-                              "riscc_fmax_top", "-json", str(json)))
-    else:
-        timing_script.extend(("synth_ecp5", *synth_options, "-nowidelut",
-                              "-top", "riscc_fmax_top", "-json", str(json)))
+    timing_script.extend(("synth_ecp5", *synth_options, "-nowidelut",
+                          "-top", "riscc_fmax_top", "-json", str(json)))
     timing_log = run(["yosys", "-p", " ".join(timing_script)], root)
     (directory / "timing-synth.log").write_text(timing_log)
     check_synthesis(timing_log)
 
-    def measure_area(extra_defines=()):
-        script = ["read_verilog", *defines, *extra_defines,
-                  str(spec.source), ";"]
+    def measure_area(selected_defines):
+        script = ["read_verilog", *selected_defines, str(spec.source), ";"]
         if spec.width is not None:
             script.extend(("chparam", "-set", "W", str(spec.width),
                            spec.top, ";"))
-        if target == "ice40":
-            script.extend(("synth_ice40", *synth_options, "-top", spec.top,
-                           ";", "stat"))
-        else:
-            script.extend(("synth_ecp5", *synth_options, "-nowidelut",
-                           "-top", spec.top, ";", "stat"))
+        script.extend(("synth_ecp5", *synth_options, "-nowidelut",
+                       "-top", spec.top, ";", "stat"))
         return run(["yosys", "-p", " ".join(script)], root)
 
-    area_log = measure_area()
+    area_log = measure_area(defines)
     (directory / "area-synth.log").write_text(area_log)
     check_synthesis(area_log)
-    block_area = None
-    if target == "ecp5":
-        block_log = measure_area(("-DRISCC_ECP5_BLOCK_RF",))
-        (directory / "block-area-synth.log").write_text(block_log)
-        check_synthesis(block_log)
-        block_area = cell_count(block_log, target)
+    block_log = measure_area(block_defines)
+    (directory / "block-area-synth.log").write_text(block_log)
+    check_synthesis(block_log)
+    block_area = cell_count(block_log, target)
     return SynthResult(recipe, options, json, cell_count(area_log, target),
                        block_area)
 
@@ -204,21 +185,13 @@ def route(out: Path, target: str, synth: SynthResult, seed: int,
           frequency: int):
     directory = synth.json.parent
     log_path = directory / f"seed-{seed}.log"
-    if target == "ice40":
-        command = [
-            "nextpnr-ice40", "--up5k", "--package", "sg48",
-            "--pcf-allow-unconstrained", "--freq", str(frequency),
-            "--seed", str(seed), "--json", str(synth.json),
-            "--asc", str(directory / f"seed-{seed}.asc"),
-        ]
-    else:
-        command = [
-            "nextpnr-ecp5", "--25k", "--package", "CABGA256",
-            "--speed", "6", "--lpf-allow-unconstrained",
-            "--freq", str(frequency), "--seed", str(seed),
-            "--json", str(synth.json),
-            "--textcfg", str(directory / f"seed-{seed}.config"),
-        ]
+    command = [
+        "nextpnr-ecp5", "--25k", "--package", "CABGA256",
+        "--speed", "6", "--lpf-allow-unconstrained",
+        "--freq", str(frequency), "--seed", str(seed),
+        "--json", str(synth.json),
+        "--textcfg", str(directory / f"seed-{seed}.config"),
+    ]
     try:
         log = run(command, out)
         matches = re.findall(
@@ -254,12 +227,10 @@ def read_selection(path: Path, target: str, recipes, seeds):
     if not rows:
         raise RuntimeError(f"no successful routes in {path}")
     area = min(rows, key=lambda row: int(row["area"]))
-    block = None
-    if target == "ecp5":
-        block = min(rows, key=lambda row: int(row["block_area"]))
+    block = min(rows, key=lambda row: int(row["block_area"]))
     fastest = max(rows, key=lambda row: float(row["fmax_mhz"]))
     efficient = max(rows, key=lambda row:
-                    float(row["fmax_mhz"]) / int(row["area"]))
+                    float(row["fmax_mhz"]) / int(row["block_area"]))
     return area, block, fastest, efficient
 
 
@@ -278,13 +249,10 @@ def print_matrix(selections, target: str, output: Path):
             formatted = f"{float(value):.2f}" if decimals else str(value)
             print(f"{core:<16} {formatted:>8}")
 
-    if target == "ice40":
-        table("Tuned UP5K area (LUT4, smallest recipe)", "area")
-    else:
-        table("Tuned ECP5 area (LUTRAM RF included)", "area")
-        table("Tuned ECP5 area (block RAM RF)", "block_area")
+    table("Tuned ECP5 area (LUTRAM RF included)", "area")
+    table("Tuned ECP5 area (block RAM RF)", "block_area")
     table(f"Tuned {target} Fmax (MHz, fastest recipe and seed)", "fmax", 2)
-    table(f"Tuned {target} efficiency (MHz/kLUT, one recipe and seed)",
+    table(f"Tuned {target} block-RF efficiency (MHz/kLUT, one recipe and seed)",
           "mhz_per_klut", 2)
     print(f"selections: {output}")
 
@@ -367,7 +335,7 @@ def tune_matrix(args, root: Path):
                 "fmax": float(fastest["fmax_mhz"]),
                 "mhz_per_klut": (
                     1000 * float(efficient["fmax_mhz"]) /
-                    int(efficient["area"])
+                    int(efficient["block_area"])
                 ),
             }
             selections[(core, width)] = selected
@@ -383,11 +351,11 @@ def tune_matrix(args, root: Path):
                 "seed": fastest["seed"], "fmax_mhz": f"{selected['fmax']:.2f}",
                 "efficient_recipe": efficient["recipe"],
                 "efficient_options": efficient["synth_options"],
-                "efficient_area": efficient["area"],
+                "efficient_area": efficient["block_area"],
                 "efficient_seed": efficient["seed"],
                 "efficient_fmax_mhz": efficient["fmax_mhz"],
                 "mhz_per_klut": (
-                    f"{1000 * float(efficient['fmax_mhz']) / int(efficient['area']):.2f}"
+                    f"{1000 * float(efficient['fmax_mhz']) / int(efficient['block_area']):.2f}"
                 ),
             })
     print_matrix(selections, args.target, output)
@@ -451,8 +419,7 @@ def main():
     if not synths:
         raise SystemExit("all synthesis recipes failed")
 
-    frequency = 10 if args.target == "ice40" else (
-        50 if args.core.startswith(("fast-", "faster-")) else 40)
+    frequency = 40
     seeds = range(args.seed_start, args.seed_start + args.seeds)
     results = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -471,7 +438,7 @@ def main():
                              synth.block_area if synth.block_area is not None else "",
                              seed, f"{fmax:.2f}", status))
 
-    print(f"{'recipe':<14} {'area':>7} {'seed':>7} {'Fmax MHz':>10}")
+    print(f"{'recipe':<14} {'block':>7} {'seed':>7} {'Fmax MHz':>10}")
     best_rows = []
     for synth in sorted(synths, key=lambda item: item.recipe):
         routed = [row for row in results
@@ -480,18 +447,19 @@ def main():
             continue
         best = max(routed, key=lambda row: row[2])
         best_rows.append(best)
-        print(f"{synth.recipe:<14} {synth.area:>7} {best[1]:>7} {best[2]:>10.2f}")
+        print(f"{synth.recipe:<14} {synth.block_area:>7} "
+              f"{best[1]:>7} {best[2]:>10.2f}")
 
-    smallest = min(synths, key=lambda item: item.area)
+    smallest = min(synths, key=lambda item: item.block_area)
     if not best_rows:
         raise SystemExit("all place-and-route runs failed")
     fastest = max(best_rows, key=lambda row: row[2])
-    efficient = max(best_rows, key=lambda row: row[2] / row[0].area)
-    print(f"smallest: {smallest.recipe}, {smallest.area} LUT sites")
+    efficient = max(best_rows, key=lambda row: row[2] / row[0].block_area)
+    print(f"smallest: {smallest.recipe}, {smallest.block_area} LUT sites + EBR")
     print(f"fastest:  {fastest[0].recipe}, seed {fastest[1]}, "
           f"{fastest[2]:.2f} MHz")
     print(f"efficient:{efficient[0].recipe:>12}, seed {efficient[1]}, "
-          f"{1000 * efficient[2] / efficient[0].area:.2f} MHz/kLUT")
+          f"{1000 * efficient[2] / efficient[0].block_area:.2f} MHz/kLUT")
     print(f"results:  {out / 'results.tsv'}")
 
 

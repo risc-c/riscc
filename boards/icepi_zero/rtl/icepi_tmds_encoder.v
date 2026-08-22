@@ -1,6 +1,8 @@
+// icepi_tmds_encoder.v : single-channel TMDS encoder for IcePi Zero.
+
 `default_nettype none
 
-// Minimal TMDS encoder for the Icepi DVI output.  The first stage minimizes
+// Minimal TMDS encoder for the IcePi DVI output. The first stage minimizes
 // transitions; the running-disparity stage selects the polarity for DC balance.
 module icepi_tmds_encoder (
     input  wire       clk,

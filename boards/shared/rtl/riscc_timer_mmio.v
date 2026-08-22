@@ -1,3 +1,5 @@
+// riscc_timer_mmio.v : shared tick counter and one-shot timer.
+
 `timescale 10ns/10ns
 `default_nettype none
 

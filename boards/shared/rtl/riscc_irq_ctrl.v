@@ -1,7 +1,9 @@
+// riscc_irq_ctrl.v : shared two-source interrupt mask and aggregator.
+
 `timescale 10ns/10ns
 `default_nettype none
 
-// Two-source level interrupt mask.  Source state belongs to its peripheral:
+// Two-source level interrupt mask. Source state belongs to its peripheral:
 // UART RX is consumed by a read and the one-shot timer is rearmed by a write.
 module riscc_irq_ctrl #(
     parameter integer REGISTER_IRQ = 0,
@@ -17,7 +19,7 @@ module riscc_irq_ctrl #(
     output wire        irq
 );
     // Direction disambiguates the source state from its enable mask.
-    localparam [3:0] IRQ_STATE_W = 4'hb; // byte 0xfff6: read pending, write enables
+    localparam [3:0] IRQ_STATE_W = 4'hb; // byte 0xfff6: pending/enables
 
     reg [1:0] enable_q;
     wire write_fire;

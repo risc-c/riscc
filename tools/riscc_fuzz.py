@@ -924,8 +924,11 @@ def replay_command(args, config, seed, core=None):
 
 def trace_supported(family, core):
     return (family == "nano" and core == "nano") or (
-        family == "rc16" and core in ("rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16")) or (
-        family == "fast" and core in ("fast", "fast-dsp", "fast-ice", "fast-ice-dsp")) or (
+        family == "rc16" and core in (
+            "rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16")) or (
+        family == "fast" and core in (
+            "fast", "fast-dsp", "fast-ecp5", "fast-ecp5-dsp",
+            "fast-block", "fast-block-dsp")) or (
         family == "rc32" and core in
         tuple("rc32-%d" % width for width in RC32_WIDTHS))
 
@@ -1056,8 +1059,11 @@ def memory_lines(output):
 def compare_trace(core, family, config, seed, image, tb):
     iss_run = subprocess.run(sim_trace_args(family, config, image),
                              capture_output=True, text=True)
-    rtl_run = subprocess.run([tb, image, "--trace", "--dump-written",
-                              "--max-cycles", "400000"],
+    rtl_args = [tb, image, "--trace", "--dump-written",
+                "--max-cycles", "400000"]
+    if family in ("rc16", "rc32", "nano", "fast"):
+        rtl_args += ["--mem-stall-seed", str(seed)]
+    rtl_run = subprocess.run(rtl_args,
                              capture_output=True, text=True)
     iss_output = iss_run.stdout + iss_run.stderr
     iss_trace = trace_lines(iss_output)
@@ -1134,7 +1140,9 @@ def build_tb(core, family, config, outdir):
         defs = []
         if "dsp" in core:
             defs.append("-DRISCC_FAST_DSP")
-        if "ice" in core:
+        if "ecp5" in core:
+            defs.append("-DRISCC_ECP5")
+        if "block" in core:
             defs.append("-DRISCC_FAST_SYNC_RF")
     else:
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
@@ -1183,10 +1191,13 @@ def build_tb(core, family, config, outdir):
     ] + defs + [
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
         " -DRISCC_TB_TRACE" +
+        (" -DRISCC_TB_MEM_HANDSHAKE"
+         if family in ("rc16", "rc32", "fast") else "") +
+        (" -DRISCC_TB_MEM_OE_N" if family == "nano" else "") +
         (" -DRISCC_TB_RC32" if family == "rc32" else "") +
         (" -DRISCC_TB_TRACE_DRAIN=1" if family == "fast" else
          " -DRISCC_TB_TRACE_DRAIN=0"
-         if family == "rc16" and core == "rc16-16" else ""),
+        if family == "rc16" and core == "rc16-16" else ""),
         "-o", "tb",
         rtl,
         os.path.join(TEST, "riscc_test.cpp"),

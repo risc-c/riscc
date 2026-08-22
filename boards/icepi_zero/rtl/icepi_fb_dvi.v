@@ -1,3 +1,5 @@
+// icepi_fb_dvi.v : framebuffer scanout and DVI timing for IcePi Zero.
+
 `timescale 10ns/10ns
 `default_nettype none
 
@@ -25,7 +27,7 @@ module icepi_fb_dvi (
     localparam [9:0] V_BACK   = 10'd33;
     localparam [9:0] V_TOTAL  = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
 
-    // The Icepi/capture path samples the visible window a few pixels after
+    // The IcePi/capture path samples the visible window a few pixels after
     // the nominal sync-derived origin. Keep sync timings standard, but place
     // the DVI active island slightly later in the front porch.
     localparam [9:0] H_ACTIVE_START = 10'd8;
@@ -33,18 +35,18 @@ module icepi_fb_dvi (
     localparam [9:0] H_ACTIVE_END   = H_ACTIVE_START + H_ACTIVE;
     localparam [9:0] V_ACTIVE_END   = V_ACTIVE_START + V_ACTIVE;
 
-    reg [9:0] px;
-    reg [9:0] py;
+    reg [9:0] h_count_q;
+    reg [9:0] v_count_q;
 
-    wire active = (px >= H_ACTIVE_START) && (px < H_ACTIVE_END) &&
-                  (py >= V_ACTIVE_START) && (py < V_ACTIVE_END);
-    wire hsync = ~((px >= H_ACTIVE + H_FRONT) &&
-                   (px <  H_ACTIVE + H_FRONT + H_SYNC));
-    wire vsync = ~((py >= V_ACTIVE + V_FRONT) &&
-                   (py <  V_ACTIVE + V_FRONT + V_SYNC));
+    wire active = (h_count_q >= H_ACTIVE_START) && (h_count_q < H_ACTIVE_END) &&
+                  (v_count_q >= V_ACTIVE_START) && (v_count_q < V_ACTIVE_END);
+    wire hsync = ~((h_count_q >= H_ACTIVE + H_FRONT) &&
+                   (h_count_q <  H_ACTIVE + H_FRONT + H_SYNC));
+    wire vsync = ~((v_count_q >= V_ACTIVE + V_FRONT) &&
+                   (v_count_q <  V_ACTIVE + V_FRONT + V_SYNC));
 
-    wire [9:0] active_x = active ? (px - H_ACTIVE_START) : 10'd0;
-    wire [9:0] active_y = active ? (py - V_ACTIVE_START) : 10'd0;
+    wire [9:0] active_x = active ? (h_count_q - H_ACTIVE_START) : 10'd0;
+    wire [9:0] active_y = active ? (v_count_q - V_ACTIVE_START) : 10'd0;
     // Keep the 640x480 timing that the IcePi DVI path already supports.
     // The 320x180 framebuffer is doubled into a centered 640x360 image.
     localparam [9:0] FB_TOP = 10'd60;
@@ -72,8 +74,8 @@ module icepi_fb_dvi (
         .vid_rdata(fb_vid_word)
     );
 
-    reg [9:0] px_q;
-    reg [9:0] py_q;
+    reg [9:0] active_x_q;
+    reg [9:0] active_y_q;
     reg [1:0] pix_lane_q;
     reg active_q;
     reg fb_visible_q;
@@ -82,25 +84,25 @@ module icepi_fb_dvi (
 
     always @(posedge pix_clk) begin
         if (rst) begin
-            px <= 10'd0;
-            py <= 10'd0;
-            px_q <= 10'd0;
-            py_q <= 10'd0;
+            h_count_q <= 10'd0;
+            v_count_q <= 10'd0;
+            active_x_q <= 10'd0;
+            active_y_q <= 10'd0;
             pix_lane_q <= 2'd0;
             active_q <= 1'b0;
             fb_visible_q <= 1'b0;
             hsync_q <= 1'b1;
             vsync_q <= 1'b1;
         end else begin
-            if (px == H_TOTAL - 10'd1) begin
-                px <= 10'd0;
-                py <= (py == V_TOTAL - 10'd1) ? 10'd0 : (py + 10'd1);
+            if (h_count_q == H_TOTAL - 10'd1) begin
+                h_count_q <= 10'd0;
+                v_count_q <= (v_count_q == V_TOTAL - 10'd1) ? 10'd0 : (v_count_q + 10'd1);
             end else begin
-                px <= px + 10'd1;
+                h_count_q <= h_count_q + 10'd1;
             end
 
-            px_q <= active_x;
-            py_q <= active_y;
+            active_x_q <= active_x;
+            active_y_q <= active_y;
             pix_lane_q <= pix_lane;
             active_q <= active;
             fb_visible_q <= fb_visible;
@@ -119,24 +121,24 @@ module icepi_fb_dvi (
     function automatic [23:0] palette(input [3:0] idx);
         begin
             case (idx)
-            4'h0: palette = 24'h02040a;
-            // The blue-to-white ramp is spaced at approximately equal
-            // perceived lightness, preserving dark-band contrast.
-            4'h1: palette = 24'h071535;
-            4'h2: palette = 24'h0a2152;
-            4'h3: palette = 24'h0d2f6e;
-            4'h4: palette = 24'h0f3e88;
-            4'h5: palette = 24'h114da2;
-            4'h6: palette = 24'h135ebb;
-            4'h7: palette = 24'h166fd1;
-            4'h8: palette = 24'h1a82e6;
-            4'h9: palette = 24'h2096f5;
-            4'ha: palette = 24'h2daaff;
-            4'hb: palette = 24'h49bfff;
-            4'hc: palette = 24'h6dd3ff;
-            4'hd: palette = 24'h97e5ff;
-            4'he: palette = 24'hc7f4ff;
-            default: palette = 24'hffffff;
+                4'h0: palette = 24'h02040a;
+                // The blue-to-white ramp is spaced at approximately equal
+                // perceived lightness, preserving dark-band contrast.
+                4'h1: palette = 24'h071535;
+                4'h2: palette = 24'h0a2152;
+                4'h3: palette = 24'h0d2f6e;
+                4'h4: palette = 24'h0f3e88;
+                4'h5: palette = 24'h114da2;
+                4'h6: palette = 24'h135ebb;
+                4'h7: palette = 24'h166fd1;
+                4'h8: palette = 24'h1a82e6;
+                4'h9: palette = 24'h2096f5;
+                4'ha: palette = 24'h2daaff;
+                4'hb: palette = 24'h49bfff;
+                4'hc: palette = 24'h6dd3ff;
+                4'hd: palette = 24'h97e5ff;
+                4'he: palette = 24'hc7f4ff;
+                default: palette = 24'hffffff;
             endcase
         end
     endfunction
@@ -145,24 +147,24 @@ module icepi_fb_dvi (
 
 `ifdef ICEPI_VIDEO_TEST
     wire test_border = active_q &&
-        ((px_q < 10'd4) || (px_q >= H_ACTIVE - 10'd4) ||
-         (py_q < 10'd4) || (py_q >= V_ACTIVE - 10'd4));
+        ((active_x_q < 10'd4) || (active_x_q >= H_ACTIVE - 10'd4) ||
+         (active_y_q < 10'd4) || (active_y_q >= V_ACTIVE - 10'd4));
     wire test_center = active_q &&
-        (((px_q >= 10'd318) && (px_q < 10'd322)) ||
-         ((py_q >= 10'd238) && (py_q < 10'd242)));
+        (((active_x_q >= 10'd318) && (active_x_q < 10'd322)) ||
+         ((active_y_q >= 10'd238) && (active_y_q < 10'd242)));
     wire [23:0] test_bars =
-        (px_q < 10'd80)  ? 24'hff0000 :
-        (px_q < 10'd160) ? 24'hffff00 :
-        (px_q < 10'd240) ? 24'h00ff00 :
-        (px_q < 10'd320) ? 24'h00ffff :
-        (px_q < 10'd400) ? 24'h0000ff :
-        (px_q < 10'd480) ? 24'hff00ff :
-        (px_q < 10'd560) ? 24'hffffff :
+        (active_x_q < 10'd80)  ? 24'hff0000 :
+        (active_x_q < 10'd160) ? 24'hffff00 :
+        (active_x_q < 10'd240) ? 24'h00ff00 :
+        (active_x_q < 10'd320) ? 24'h00ffff :
+        (active_x_q < 10'd400) ? 24'h0000ff :
+        (active_x_q < 10'd480) ? 24'hff00ff :
+        (active_x_q < 10'd560) ? 24'hffffff :
                            24'h202020;
     wire [23:0] active_rgb =
         test_border ? 24'hffffff :
         test_center ? 24'hff00ff :
-        ((px_q[5:0] == 6'd0) || (py_q[5:0] == 6'd0)) ? 24'h404040 :
+        ((active_x_q[5:0] == 6'd0) || (active_y_q[5:0] == 6'd0)) ? 24'h404040 :
         test_bars;
 `else
     wire [23:0] active_rgb = palette(fb_nibble);

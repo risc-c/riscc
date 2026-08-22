@@ -1,14 +1,16 @@
+// atum_sys_pll.v : system and HDMI pixel-clock PLL wrappers for Atum.
+
 `default_nettype none
 
 // Agilex 3 IOPLL: 50 MHz board oscillator to 225 MHz SoC clock.
 //
 // This is a structural wrapper around the documented device primitive rather
-// than generated IP, so the board RTL remains self-contained.  The 1.8 GHz
+// than generated IP, so the board RTL remains self-contained. The 1.8 GHz
 // VCO and 50 MHz PFD use Quartus's recommended integer settings for this
 // output frequency.
 module atum_sys_pll (
-    input wire refclk,
-    input wire rst,
+    input  wire refclk,
+    input  wire rst,
     output wire outclk,
     output wire locked
 );
@@ -98,8 +100,8 @@ endmodule
 // Agilex 3 IOPLL: the board's 50 MHz HDMI oscillator to the approximately
 // 148.5 MHz pixel clock used by the 1920x1080p60 TFP410 video path.
 module atum_hdmi_pll (
-    input wire refclk,
-    input wire rst,
+    input  wire refclk,
+    input  wire rst,
     output wire outclk,
     output wire locked
 );

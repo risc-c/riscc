@@ -1,4 +1,5 @@
-// Minimal registered harness for routed core-only timing measurements.
+// riscc_fmax_top.v : registered harness for routed core-only timing.
+
 `default_nettype none
 
 module riscc_fmax_top (
@@ -19,6 +20,7 @@ module riscc_fmax_top (
     wire [15:0] mem_wdata;
     wire [1:0] mem_wmask;
     wire mem_we;
+    wire mem_request;
 
     always @(posedge clk) begin
         reset_q <= {reset_q[2:0], 1'b1};
@@ -38,10 +40,7 @@ module riscc_fmax_top (
 `elsif RISCC_FMAX_FAST
     riscc16_fast cpu (
 `elsif RISCC_FMAX_NANO
-    wire mem_valid;
-
     riscc_nano cpu (
-        .mem_valid(mem_valid),
 `elsif RISCC_FMAX_RC16_MIN
     riscc16_min cpu (
 `elsif RISCC_FMAX_RC32_MIN
@@ -70,16 +69,17 @@ module riscc_fmax_top (
         .mem_rdata(mem_rdata_q),
         .mem_wdata(mem_wdata),
         .mem_wmask(mem_wmask),
-        .mem_we(mem_we)
+        .mem_we(mem_we),
+`ifdef RISCC_FMAX_NANO
+        .mem_oe_n(mem_request)
+`else
+        .mem_valid(mem_request),
+        .mem_ready(mem_rdata_q[0])
+`endif
     );
 
-    assign keep = ^{mem_addr, mem_wdata, mem_wmask, mem_we, mem_rdata_q
-`ifndef RISCC_FMAX_FAST
-`ifdef RISCC_FMAX_NANO
-                    , mem_valid
-`endif
-`endif
-                   };
+    assign keep = ^{mem_addr, mem_wdata, mem_wmask, mem_we, mem_request,
+                    mem_rdata_q};
 endmodule
 
 `default_nettype wire

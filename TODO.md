@@ -15,16 +15,6 @@ Tasks marked *HIGH* are the near-term priorities.
   near `0xfffe`.
 - [ ] Add exhaustive LLVM MC encoding coverage for the Nano profile.
 
-## Common memory interface
-
-- [ ] *HIGH* Define a common memory transaction interface, using Wishbone B4
-  or a small directly compatible subset. Specify byte enables, request and
-  completion signaling, stalls, errors, reset behavior, and request stability,
-  while retaining a low-cost zero-wait-state path.
-- [ ] Convert one serial core and the shared SoC memory model first. Test
-  randomized stalls, back-to-back accesses, slow operations, and errors, then
-  measure area and Fmax before converting the other cores and boards.
-
 ## RC32
 
 - [ ] *HIGH* Run compiler-generated C and supported freestanding C++ programs

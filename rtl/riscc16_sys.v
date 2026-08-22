@@ -1,24 +1,26 @@
-// riscc16_sys.v : RISC-C/16 Sys (single-cycle datapath) core.
+// riscc16_sys.v : area-oriented full-width RC16 Sys core.
 //
 // The non-serial family member: doc/HARDWARE.md 'Implementation family' (one 17-bit
 // adder/result path, one memory-data staging register, no store staging,
 // constant-vector IRQ path, and a one-bit immediate-shift datapath).
-// Sys adds interrupt/IE control and the two-word JALL/JMPL form to Min.
+// Sys adds interrupt/IE control and the two-halfword JALL/JMPL form to Min.
 
 `default_nettype none
 
 module riscc16 #(
-    parameter [15:0] RESET_PC = 16'h0000           // word address
+    parameter [15:0] RESET_PC = 16'h0000  // halfword address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,        // level-sensitive, taken at fetch boundary
+    input  wire        irq,        // level-sensitive; sampled between instructions
 
-    output wire [14:0] mem_addr,   // word address
+    output wire [14:0] mem_addr,   // halfword address
     input  wire [15:0] mem_rdata,
     output wire [15:0] mem_wdata,
-    output wire [1:0]  mem_wmask,  // byte lanes
-    output wire        mem_we
+    output wire [1:0]  mem_wmask,  // byte-lane enables
+    output wire        mem_we,
+    output wire        mem_valid,  // request valid; held until mem_ready
+    input  wire        mem_ready   // request accepted; read data is valid
 `ifdef RISCC_TRACE
     ,
 `include "riscc_trace_ports.vh"
@@ -33,29 +35,18 @@ module riscc16 #(
     localparam ST_EXECUTE                   = 3;
     localparam ST_FETCH_REQUEST             = 4;
     localparam ST_MEMORY_ACCESS             = 5;  // read issue/store commit
-    localparam ST_LOAD_CAPTURE              = 6;
-    localparam ST_LINK_WRITEBACK            = 7;
-    localparam ST_JUMP_COMMIT               = 8;
-    localparam ST_COMPARE_WRITEBACK         = 9;
-    localparam ST_INSTRUCTION_CAPTURE       = 10;
-    localparam ST_IRQ_ENTRY                 = 11; // EPC <- PC, IE <- 0, PC <- 2
-
-    localparam ST_MDR_WRITEBACK              = 12; // load/funnel result through ALU
-    (* fsm_encoding = "none" *) reg [12:1] state_q;
+    localparam ST_LINK_WRITEBACK            = 6;
+    localparam ST_JUMP_COMMIT               = 7;
+    localparam ST_COMPARE_WRITEBACK         = 8;
+    localparam ST_IRQ_ENTRY                 = 9; // EPC <- PC, IE <- 0, PC <- 2
+    localparam ST_MDR_WRITEBACK             = 10; // load/funnel result through ALU
+    (* fsm_encoding = "none" *) reg [10:1] state_q;
 
     reg [15:0] instruction_q;
-    reg        register_format_q;
-`ifdef RISCC_RC16_CONTROL_BBB_NORMALIZE
-    wire fetch_packed_control = (&mem_rdata[15:14]) &
-                                (&mem_rdata[7:3]) & ~(|mem_rdata[2:0]);
-    wire [15:0] fetch_instruction = fetch_packed_control ?
-        {mem_rdata[15:3], mem_rdata[12], mem_rdata[12], 1'b0} :
-        mem_rdata;
 `ifdef RISCC_TRACE
-    reg [15:0] trace_instruction_q;
+    reg [15:0] irq_instruction_q;
 `endif
-`endif
-    reg [14:0] pc_q;        // 15-bit word address
+    reg [14:0] pc_q;  // internal halfword PC
     reg [15:0] mdr_q;
     // Byte-lane selection and the compare result have disjoint lifetimes.
     reg        captured_bit_q;
@@ -68,23 +59,20 @@ module riscc16 #(
     wire in_execute             = state_q[ST_EXECUTE];
     wire in_fetch_request       = state_q[ST_FETCH_REQUEST];
     wire in_memory_access       = state_q[ST_MEMORY_ACCESS];
-    wire in_load_capture        = state_q[ST_LOAD_CAPTURE];
     wire in_link_writeback      = state_q[ST_LINK_WRITEBACK];
     wire in_jump_commit         = state_q[ST_JUMP_COMMIT];
     wire in_compare_writeback   = state_q[ST_COMPARE_WRITEBACK];
-    wire in_instruction_capture = state_q[ST_INSTRUCTION_CAPTURE];
     wire in_irq_entry           = state_q[ST_IRQ_ENTRY];
     wire in_mdr_writeback       = state_q[ST_MDR_WRITEBACK];
 
     // ------------------------------------------------------------------
     // Instruction fields and immediate decode
     // ------------------------------------------------------------------
-    // ST_INSTRUCTION_CAPTURE latches the instruction; ST_DECODE consumes it.
-    // The extra state avoids a mem_rdata/instruction mux across the decoder.
-    wire immediate_memory = !instruction_q[15] && register_format_q;
+    // The acknowledged fetch edge loads instruction_q and enters Decode.
+    wire immediate_memory = !instruction_q[15] && instruction_q[14];
     wire immediate_store_word = immediate_memory && instruction_q[0];
-    wire immediate_class = instruction_q[15] && !register_format_q;
-    wire register_class  = instruction_q[15] && register_format_q;
+    wire immediate_class = instruction_q[15] && !instruction_q[14];
+    wire register_class  = instruction_q[15] && instruction_q[14];
 
     wire [2:0] rd = instruction_q[13:11];
     wire [2:0] ra = instruction_q[10:8];
@@ -92,6 +80,9 @@ module riscc16 #(
     wire [1:0] register_group  = instruction_q[7:6];
     wire [2:0] register_opcode = instruction_q[5:3];
     wire [2:0] rb = instruction_q[2:0];
+    wire [15:0] alu_result;
+    wire alu_carry_in;
+    wire branch_taken;
 
     wire immediate_load_group = immediate_class &&
                                 !immediate_opcode[2] && !immediate_opcode[1];
@@ -101,20 +92,7 @@ module riscc16 #(
                                 !immediate_opcode[2] && immediate_opcode[1];
     wire compare_immediate = immediate_arithmetic & immediate_opcode[0];
     // JALL occupies the 00 major space; spare long heads share its path.
-    wire jal16_op = !instruction_q[15] && !instruction_q[14];
-    // After Decode, normal load/funnel paths have bit 14 set. iCE40 maps that
-    // state-qualified form smaller; ECP5 and the timing build favor the exact
-    // two-bit decode. Both forms are equivalent in reachable states.
-`ifdef RISCC_ECP5
-`define RISCC_JAL16_AFTER_DECODE jal16_op
-`define RISCC_NOT_JAL16_AFTER_DECODE !jal16_op
-`elsif RISCC_RC16_JALL_EXACT_DECODE
-`define RISCC_JAL16_AFTER_DECODE jal16_op
-`define RISCC_NOT_JAL16_AFTER_DECODE !jal16_op
-`else
-`define RISCC_JAL16_AFTER_DECODE !instruction_q[14]
-`define RISCC_NOT_JAL16_AFTER_DECODE instruction_q[14]
-`endif
+    wire jall_op = !instruction_q[15] && !instruction_q[14];
     wire link_enabled = |rd;    // Sd == S0: no link written (plain jump)
     wire immediate_logic = immediate_class && immediate_opcode[2] &&
                            !(immediate_opcode[1] && immediate_opcode[0]);
@@ -154,31 +132,18 @@ module riscc16 #(
         register_class && register_group[1] && !register_group[0];
     wire funnel_right_op = funnel_op && rb[0];
     wire funnel_left_op = funnel_op && !rb[0];
-    // Reserved rb[2]=1 forms alias JALR.
-    wire jal_register_op = system_group && ~rb[1] && rb[0];
-
-    // RET/RETI and CLI/STI share bbb=000.  rd[1] selects a return versus a
+    // RET/RETI and CLI/STI share bbb=000. rd[1] selects a return versus a
     // direct IE operation; rd[2] and rd[0] duplicate the selected IE value.
     wire system_group = register_class && (&register_group);
-`ifdef RISCC_ECP5
-    wire control_ie_value = rd[2];
-`else
+    // Reserved rb[2]=1 forms alias JALR.
+    wire jal_register_op = system_group && ~rb[1] && rb[0];
     wire control_ie_value = rd[0];
-`endif
-`ifdef RISCC_RC16_CONTROL_BBB_NORMALIZE
-    wire interrupt_enable_op = system_group && rb[2] && rb[1];
-    wire return_op = system_group && register_opcode[1] &&
-                     ~rb[1] && ~rb[0];
-    wire mfs_op = system_group && ~rb[2] && rb[1] && ~rb[0];
-    wire mts_op = system_group && ~rb[2] && rb[1] && rb[0];
-`else
     wire control_plane = system_group && ~rb[1] && ~rb[0];
     wire interrupt_enable_op = control_plane && rd[1];
     wire return_op = control_plane && ~rd[1];
     // Reserved rb[2]=1 forms alias MFS/MTS in the architectural layout.
     wire mfs_op = system_group && rb[1] && ~rb[0];
     wire mts_op = system_group && rb[1] && rb[0];
-`endif
 
     wire register_logic_op = register_alu_group && register_opcode[2];
     // Sys has Min's count-one SRLI/SRAI; bbb aliases the one-step form.
@@ -218,32 +183,29 @@ module riscc16 #(
     wire funnel_left_execute = in_execute && funnel_left_op;
 
     // States that keep the external memory port pointed at PC can begin a
-    // fetch; ST_INSTRUCTION_CAPTURE then latches it before ST_DECODE.
+    // fetch; an acknowledged request enters Decode directly.
     wire execute_complete =
         (in_execute && !memory_op && !register_compare && !funnel_left_op) |
         // JALL's target pass redirects PC rather than completing a load.
-        (in_mdr_writeback && `RISCC_NOT_JAL16_AFTER_DECODE);
+        (in_mdr_writeback && !jall_op);
     wire start_fetch =
         in_fetch_request | execute_complete | in_compare_writeback;
     wire interrupt_pending = irq && interrupt_enable_q;
-    wire take_interrupt = start_fetch && interrupt_pending;
+    // Once a fetch request is visible externally it cannot be cancelled.
+    // A newly arriving IRQ waits for that transfer's acknowledgement; the
+    // response is then discarded by entering IRQ_ENTRY.
+    wire take_interrupt = start_fetch && interrupt_pending && mem_ready;
 
     // ------------------------------------------------------------------
     // Synchronous register-file schedule
     // ------------------------------------------------------------------
-    // A read issued in one state appears during the following state.  The
+    // A read issued in one state appears during the following state. The
     // selector priority is rd, then rb; ra is the default.
-`ifdef RISCC_ECP5
     wire select_read_rd = immediate_alu_op |
                           (memory_address_ready && store_op) |
+                          (in_memory_access && store_op) |
                           (register_group[1] &&
                            (in_operand_load | in_execute));
-`else
-    // Reading rd after every Execute is harmless when its result is dead and
-    // routes faster at the same iCE40 area than repeating the store decode.
-    wire select_read_rd = immediate_alu_op | in_execute |
-                          (in_operand_load && register_group[1]);
-`endif
     wire select_read_rb = in_decode && needs_rb_operand;
     wire [2:0] rf_read_register = select_read_rd ? rd :
                                   select_read_rb ? rb : ra;
@@ -258,7 +220,7 @@ module riscc16 #(
     // value and need not repeat the link-enable check.
     wire rf_write_system_bank = mts_op | in_irq_entry |
                                 (in_link_writeback &&
-                                 (jal_register_op | `RISCC_JAL16_AFTER_DECODE));
+                                 (jal_register_op | jall_op));
     wire rf_we =
         (in_link_writeback && link_enabled) |
         in_compare_writeback | in_irq_entry | execute_complete;
@@ -285,13 +247,13 @@ module riscc16 #(
     wire byte_lane_q = captured_bit_q;
     wire [7:0] selected_load_byte = byte_lane_q ?
                                     mem_rdata[15:8] : mem_rdata[7:0];
-    wire [15:0] load_result = `RISCC_JAL16_AFTER_DECODE ? mem_rdata :
+    wire [15:0] load_result = jall_op ? mem_rdata :
         byte_memory_op ?
         {{8{signed_byte_load && selected_load_byte[7]}}, selected_load_byte} :
         mem_rdata;
 
-    // One adder/result path.  Logical and shift results are formed as B with A
-    // forced to zero.  SLT/SLTU first reuse the subtract path and then write a
+    // One adder/result path. Logical and shift results are formed as B with A
+    // forced to zero. SLT/SLTU first reuse the subtract path and then write a
     // 0/1 result in ST_COMPARE_WRITEBACK.
     wire alu_a_is_pc = in_decode | in_link_writeback | in_irq_entry;
     wire alu_a_is_zero =
@@ -300,9 +262,9 @@ module riscc16 #(
         (in_mdr_writeback && !funnel_left_op) |
         in_compare_writeback;
     wire pc_step_phase = in_decode |
-                         (in_link_writeback && `RISCC_JAL16_AFTER_DECODE);
+                         (in_link_writeback && jall_op);
     // In every PC-source state, the carry endpoint is exactly the low bit of
-    // the byte-PC +2 step.  Reuse it here instead of adding the same control
+    // the byte-PC +2 step. Reuse it here instead of adding the same control
     // to the shared ALU-B mux.
     wire [15:0] alu_a =
         alu_a_is_pc ? {pc_q, alu_carry_in} :
@@ -315,24 +277,13 @@ module riscc16 #(
         (in_execute && (load_immediate | immediate_arithmetic | immediate_memory)) |
         (in_decode && branch_op && branch_taken);
     wire alu_b_is_upper_imm = in_execute && load_upper_immediate;
-    // These sources are mutually exclusive in reachable Sys states. An OR
-    // plane maps smaller than a priority chain without changing its result.
-`ifdef RISCC_INFERRED_SYNC_RF
-    // Compare writeback and funnel Execute are disjoint one-hot states. The
-    // inferred-MLAB build packs this endpoint into normal ALU-B more efficiently.
-    wire [15:0] normal_alu_b =
-        {15'h0000, in_compare_writeback ? captured_bit_q :
-                    (funnel_left_execute && mdr_q[15])} |
-        ({16{alu_b_is_mdr}} & mdr_q) |
-        ({16{alu_b_is_upper_imm}} & upper_immediate) |
-        ({16{alu_b_is_zero_extended_imm}} & zero_extended_imm8);
-`else
+    // These sources are mutually exclusive in reachable Sys states, so an OR
+    // plane expresses the result without a priority chain.
     wire [15:0] normal_alu_b =
         {15'h0000, in_compare_writeback && captured_bit_q} |
         ({16{alu_b_is_mdr}} & mdr_q) |
         ({16{alu_b_is_upper_imm}} & upper_immediate) |
         ({16{alu_b_is_zero_extended_imm}} & zero_extended_imm8);
-`endif
 
     wire [15:0] logic_rhs = register_logic_op ? mdr_q : zero_extended_imm8;
     wire [1:0] logic_function = register_logic_op ?
@@ -344,16 +295,9 @@ module riscc16 #(
     wire alu_b_is_shift_result = in_execute && single_step_shift_op;
     wire arithmetic_right_shift =
         in_execute && right_shift_slot && register_opcode[0];
-`ifdef RISCC_ECP5
-    // In active right-shift states, group 10 consumes the staged ra endpoint
-    // and group 01 consumes the optional arithmetic sign bit.
-    wire shift_right_input = register_group[0] ?
-        (arithmetic_right_shift && rf_read_data[15]) : mdr_q[0];
-`else
     wire shift_right_input =
         (in_execute && funnel_right_op) ? mdr_q[0] :
         (arithmetic_right_shift && rf_read_data[15]);
-`endif
     wire [15:0] right_shift_result =
         {shift_right_input, rf_read_data[15:1]};
     wire [15:0] alu_b =
@@ -373,31 +317,16 @@ module riscc16 #(
     wire fill_high_byte = sign_extend_immediate && immediate_sign_bit;
     // The same XOR stage performs subtraction and high-byte sign extension;
     // alu_carry_in supplies the matching +1 for subtraction and PC updates.
-`ifdef RISCC_ECP5
-    // ECP5 packs the funnel endpoint into ALU-B bit zero more efficiently than
-    // adding it to the global carry-input control cone.
-    wire funnel_left_lsb = funnel_left_execute && mdr_q[15];
-    wire [15:0] adjusted_alu_b =
-        {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
-         alu_b[7:1] ^ {7{subtract_enable}},
-         alu_b[0] ^ subtract_enable ^ funnel_left_lsb};
-    wire alu_carry_in = pc_step_phase | subtract_enable;
-`else
     wire [15:0] adjusted_alu_b =
         {alu_b[15:8] ^ {8{subtract_enable ^ fill_high_byte}},
          alu_b[7:0] ^ {8{subtract_enable}}};
-`ifdef RISCC_INFERRED_SYNC_RF
-    wire alu_carry_in = pc_step_phase | subtract_enable;
-`else
     // FSL1's Execute pass stores old rd + ra[15] in MDR. Writeback adds old
     // rd once more, producing (old rd << 1) | ra[15] without a carry register.
-    wire alu_carry_in = pc_step_phase | subtract_enable |
+    assign alu_carry_in = pc_step_phase | subtract_enable |
         (funnel_left_execute && mdr_q[15]);
-`endif
-`endif
     wire [16:0] alu_sum_ext = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                               {16'h0000, alu_carry_in};
-    wire [15:0] alu_result = alu_sum_ext[15:0];
+    assign alu_result = alu_sum_ext[15:0];
 
     wire subtract_overflow = (~(alu_a[15] ^ adjusted_alu_b[15])) &
                              (alu_a[15] ^ alu_result[15]);
@@ -407,27 +336,32 @@ module riscc16 #(
 
     // Reserved ccc=101..111 alias JMP8, matching the serial core's loose
     // branch decode and removing a needless equality check.
-    wire branch_taken = rd[2] |
+    assign branch_taken = rd[2] |
                        ((rd[1] ? r0_negative_q : r0_zero_q) ^ rd[0]);
 
     // ------------------------------------------------------------------
     // Unified external memory port
     // ------------------------------------------------------------------
-    wire memory_write_cycle = in_memory_access && store_op;
+    wire memory_write_request = in_memory_access && store_op;
+    wire memory_write_cycle = memory_write_request && mem_ready;
+    wire memory_read_cycle = in_memory_access && !store_op && mem_ready;
+    wire long_read_request = in_link_writeback &&
+                             jall_op;
+    wire long_read_cycle = long_read_request && mem_ready;
     assign mem_addr = in_memory_access ? mdr_q[15:1] : pc_q;
     assign mem_wdata = byte_memory_op ?
                        {rf_read_data[7:0], rf_read_data[7:0]} : rf_read_data;
-    assign mem_wmask = {2{memory_write_cycle}} &
-                       (byte_memory_op ?
-                        (byte_lane_q ? 2'b10 : 2'b01) : 2'b11);
-    assign mem_we = memory_write_cycle;
+    assign mem_wmask = (in_memory_access && byte_memory_op) ?
+                       (byte_lane_q ? 2'b10 : 2'b01) : 2'b11;
+    assign mem_valid = start_fetch | in_memory_access | long_read_request;
+    assign mem_we = memory_write_request;
 
     // ------------------------------------------------------------------
     // Sequential state and datapath updates
     // ------------------------------------------------------------------
     always @(posedge clk) begin
         if (rst) begin
-            state_q <= (11'b1 << (ST_FETCH_REQUEST - 1));
+            state_q <= (10'b1 << (ST_FETCH_REQUEST - 1));
             pc_q <= RESET_PC[14:0];
             r0_zero_q <= 1'b1;
             r0_negative_q <= 1'b0;
@@ -436,48 +370,43 @@ module riscc16 #(
             // One-hot next-state equations.
             // start_fetch already gates this equation, so testing the pending
             // IRQ directly removes a redundant level of Sys control logic.
-            state_q[ST_INSTRUCTION_CAPTURE] <=
-                start_fetch && !interrupt_pending;
-            state_q[ST_DECODE] <= in_instruction_capture;
+            state_q[ST_DECODE] <=
+                start_fetch && !take_interrupt && mem_ready;
             state_q[ST_OPERAND_LOAD] <= start_operand_load;
             state_q[ST_EXECUTE] <=
                 start_direct_execute | in_operand_load;
             state_q[ST_FETCH_REQUEST] <=
                 (in_decode && (branch_op | interrupt_enable_op)) |
                 memory_write_cycle | in_jump_commit | in_irq_entry |
-                (in_mdr_writeback && `RISCC_JAL16_AFTER_DECODE);
-            state_q[ST_MEMORY_ACCESS] <= memory_address_ready;
-            state_q[ST_LOAD_CAPTURE] <=
-                (in_memory_access && !store_op) |
-                (in_link_writeback && `RISCC_JAL16_AFTER_DECODE);
+                (in_mdr_writeback && jall_op) |
+                (start_fetch && !mem_ready);
+            state_q[ST_MEMORY_ACCESS] <= memory_address_ready |
+                (in_memory_access && !mem_ready);
             state_q[ST_LINK_WRITEBACK] <= start_register_call |
-                                             (in_decode && jal16_op);
+                (in_decode && jall_op) |
+                (long_read_request && !mem_ready);
             state_q[ST_JUMP_COMMIT] <=
-                (in_link_writeback && `RISCC_NOT_JAL16_AFTER_DECODE) |
+                (in_link_writeback && !jall_op) |
                 (in_decode && return_op);
             state_q[ST_COMPARE_WRITEBACK] <= in_execute && register_compare;
             state_q[ST_IRQ_ENTRY] <= take_interrupt;
             state_q[ST_MDR_WRITEBACK] <=
-                in_load_capture | funnel_left_execute;
+                memory_read_cycle | long_read_cycle | funnel_left_execute;
 
             // Capture the next instruction after its synchronous read.
-            if (in_instruction_capture) begin
-`ifdef RISCC_RC16_CONTROL_BBB_NORMALIZE
-                instruction_q <= fetch_instruction;
-`ifdef RISCC_TRACE
-                trace_instruction_q <= mem_rdata;
-`endif
-`else
+            if (start_fetch && !take_interrupt && mem_ready) begin
                 instruction_q <= mem_rdata;
-`endif
-                register_format_q <= mem_rdata[14];
             end
+`ifdef RISCC_TRACE
+            if (take_interrupt)
+                irq_instruction_q <= mem_rdata;
+`endif
 
             // PC updates are deliberately separate: IRQ entry has priority.
             if (in_decode | in_jump_commit) begin
                 pc_q <= alu_result[15:1];
             end
-            if (in_mdr_writeback && `RISCC_JAL16_AFTER_DECODE) begin
+            if (in_mdr_writeback && jall_op) begin
                 pc_q <= alu_result[15:1];
             end
             if (in_irq_entry) begin
@@ -486,9 +415,9 @@ module riscc16 #(
 
             // Loads preserve memory data through the writeback pass. Other
             // states may leave their ALU result in MDR when it is dead.
-            if (in_load_capture)
+            if (memory_read_cycle | long_read_cycle)
                 mdr_q <= load_result;
-            else
+            else if (!in_memory_access && !long_read_request)
                 mdr_q <= alu_result;
 
             // Save the byte-lane selection and the less-than result.
@@ -514,27 +443,25 @@ module riscc16 #(
                 interrupt_enable_q <= 1'b0;
             end
             // A RET writes back the old value; RETI ORs in its set selector.
-            // This feedback form costs one fewer LUT than a separate RETI
-            // enable in the area-first sys core.
+            // Both forms therefore share the same feedback assignment.
             if (in_jump_commit && return_op) begin
                 interrupt_enable_q <= interrupt_enable_q | control_ie_value;
             end
         end
     end
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 16;
     wire        tr_commit_i = execute_complete | in_compare_writeback |
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry |
-                              (in_mdr_writeback && `RISCC_JAL16_AFTER_DECODE);
+                              (in_mdr_writeback && jall_op);
     wire [14:0] tr_pc_i = pc_q;
-`ifdef RISCC_RC16_CONTROL_BBB_NORMALIZE
-    wire [15:0] tr_instruction = trace_instruction_q;
-`else
     wire [15:0] tr_instruction = instruction_q;
-`endif
-    wire [15:0] tr_ir_i = in_irq_entry ? mem_rdata : tr_instruction;
+    wire [15:0] tr_ir_i = in_irq_entry ? irq_instruction_q : tr_instruction;
     wire        tr_ie_i = interrupt_enable_q;
     wire        tr_rf_we_i = rf_we;
     wire        tr_rf_bank_i = rf_write_system_bank;
@@ -543,9 +470,6 @@ module riscc16 #(
     wire [RISCC_TRACE_W-1:0] tr_rf_data_i = rf_wdata;
 `include "riscc_trace_state.vh"
 `endif
-
-`undef RISCC_JAL16_AFTER_DECODE
-`undef RISCC_NOT_JAL16_AFTER_DECODE
 
 endmodule
 

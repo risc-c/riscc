@@ -1,3 +1,5 @@
+// icepi_zero_soc_sim.v : simulation wrapper for the IcePi demo SoC.
+
 `timescale 10ns/10ns
 `default_nettype none
 

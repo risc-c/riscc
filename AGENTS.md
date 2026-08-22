@@ -25,7 +25,7 @@ Run the narrowest functional test after each edit:
 Every RTL change also needs its relevant fuzz target:
 
 - RC16 and Nano: `make fuzz`; RC32: `make fuzz-rc32`
-- Fast, including synchronous-RF/iCE40 cases: `make fuzz-fast`
+- Fast, including synchronous ECP5 block-RF cases: `make fuzz-fast`
 - Faster has no trace-differential fuzzer: run focused tests and benchmarks.
 
 Before every commit or release, run `make test-all` and all applicable fuzz
@@ -33,7 +33,7 @@ targets; report the commands and results. For CPI changes run `make bench`;
 use Verilator RTL cycle counts for MIPS/efficiency.
 
 Check RTL changes with the narrowest generated result, for example
-`make build/area/ice40/rc16/sys/4.lut` or
+`make build/area/ecp5-block/rc16/sys/4.lut` or
 `make build/fmax/ecp5/rc32/min/8.mhz`. For shared logic, multiple
 configurations, or published PPA, run `make -j16 tables` and compare prior
 recorded results.
@@ -61,5 +61,5 @@ Before broad RTL commits also run `git diff --check` and `git status --short`.
 
 ## Tables
 
-- iCE40: LUT4; ECP5: label RF inclusion; Agilex: ALMs.
-- Efficiency: MIPS/kLUT4 for iCE40/ECP5; MIPS/kLE for Agilex (2.95 LE/ALM).
+- ECP5: LUT4 sites, with RF implementation labeled; Agilex: ALMs.
+- Efficiency: MIPS/kLUT4 for ECP5; MIPS/kLE for Agilex (2.95 LE/ALM).

@@ -7,6 +7,7 @@ build/ and are intentionally not source-controlled.
 """
 
 import argparse
+import concurrent.futures
 import csv
 import re
 import shutil
@@ -140,17 +141,46 @@ def write_results(path: Path, results):
         for (profile, width), (alms, fmax) in sorted(results.items())))
 
 
+def characterize(spec, output_dir: Path, root: Path, quartus_syn: Path,
+                 quartus_fit: Path, quartus_sta: Path, project_jobs: int,
+                 prepare_only: bool):
+    name, profile, width, rtl, macros, top = spec
+    directory = output_dir / name
+    write_project(directory, name, profile, root, rtl, macros, top,
+                  project_jobs)
+    if prepare_only:
+        return None
+    log_path = directory / f"{name}.build.log"
+    commands = (
+        [quartus_syn, name, "-c", name],
+        [quartus_fit, name, "-c", name, "--plan", "--place", "--route",
+         "--retime", "--finalize"],
+        [quartus_sta, name, "-c", name],
+    )
+    with log_path.open("w") as log:
+        for command in commands:
+            subprocess.run(command, cwd=directory, check=True,
+                           stdout=log, stderr=subprocess.STDOUT)
+    alms, fmax = parse_results(directory, name)
+    return name, profile, width, alms, fmax
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quartus", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument(
+        "--parallel-configs", type=int, default=1,
+        help="independent Quartus projects to compile concurrently")
     parser.add_argument("--family", choices=("rc16", "rc32", "other", "all"),
                         default="rc16")
     parser.add_argument("--only", action="append", default=[], metavar="NAME",
                         help="characterize only this configuration (repeatable)")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
+    if args.jobs < 1 or args.parallel_configs < 1:
+        parser.error("--jobs and --parallel-configs must be positive")
 
     root = Path(__file__).resolve().parents[1]
     output_dir = args.out.resolve()
@@ -180,22 +210,22 @@ def main():
         if args.only or args.family != "all"
         else {}
     )
-    for name, profile, width, rtl, macros, top in specs:
-        directory = output_dir / name
-        write_project(directory, name, profile, root, rtl, macros, top,
-                      args.jobs)
-        if args.prepare_only:
-            continue
-        subprocess.run([quartus_syn, name, "-c", name],
-                       cwd=directory, check=True)
-        subprocess.run([quartus_fit, name, "-c", name, "--plan", "--place",
-                        "--route", "--retime", "--finalize"],
-                       cwd=directory, check=True)
-        subprocess.run([quartus_sta, name, "-c", name],
-                       cwd=directory, check=True)
-        alms, fmax = parse_results(directory, name)
-        results[(profile, width)] = (alms, fmax)
-        print(f"{name}: {alms:.1f} ALMs, {fmax:.2f} MHz", flush=True)
+    project_jobs = max(1, args.jobs // args.parallel_configs)
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=args.parallel_configs) as executor:
+        pending = [
+            executor.submit(
+                characterize, spec, output_dir, root, quartus_syn,
+                quartus_fit, quartus_sta, project_jobs, args.prepare_only)
+            for spec in specs
+        ]
+        for future in concurrent.futures.as_completed(pending):
+            characterized = future.result()
+            if characterized is None:
+                continue
+            name, profile, width, alms, fmax = characterized
+            results[(profile, width)] = (alms, fmax)
+            print(f"{name}: {alms:.1f} ALMs, {fmax:.2f} MHz", flush=True)
 
     if args.prepare_only:
         return

@@ -3,18 +3,17 @@
 Author: Arto Vuori <avuori@iki.fi>
 
 RISC-C is an open processor architecture and FPGA soft-core family for compact
-systems. Its mainline instruction set architecture (ISA) has 16- and 32-bit
-configurations, with synthesizable Verilog implementations ranging from
-bit-serial cores for the smallest FPGAs to pipelined cores for higher
-throughput.
+systems. Its compact RISC-style instruction set is designed for compiled C and
+C++, and the family includes both 16- and 32-bit architectures. Implementations
+range from tiny bit-serial cores to faster pipelined designs.
 
-RISC-C Nano is the world's smallest practical C/C++-programmable FPGA soft
-CPU, using 94 iCE40 LUT4s. It retains a conventional register-based
-architecture with a compact general-purpose RISC-style instruction set for
-compiled C and C++. The ISA maps naturally to LLVM, and the family scales
-beyond minimal controllers to system-capable and pipelined cores with
-interrupts, basic operating-system support, hardware multiplication, and
-optional division.
+RISC-C Nano is the smallest practical C/C++-programmable FPGA soft
+CPU, using 94 ECP5 LUT4 sites plus one EBR. Despite its size, it is a
+conventional register-based CPU supported by LLVM/Clang. A version with
+interrupts, preemptive RTOS support, 32-bit registers, and a 32-bit
+address space still uses only 178 ECP5 LUT4 sites plus one EBR, while keeping
+the compact instruction set. Optional hardware multiplication and division
+are also available.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
@@ -37,12 +36,12 @@ routing, and demonstration dependencies with:
 ```sh
 sudo apt-get update
 sudo apt-get install build-essential cmake git ninja-build pkg-config \
-  python3 verilator yosys nextpnr-ice40 nextpnr-ecp5 \
+  python3 verilator yosys nextpnr-ecp5 \
   fpga-trellis openfpgaloader libsdl2-dev libstb-dev
 ```
 
-The two `nextpnr` packages are needed for routed timing measurements and
-open-source FPGA implementation flows. Simple DirectMedia Layer 2 (SDL2) and
+The `nextpnr` package is needed for routed timing measurements and the
+open-source ECP5 implementation flow. Simple DirectMedia Layer 2 (SDL2) and
 the STB image library support the interactive display and image output;
 the compiler, firmware, and command-line ISS can be built without them.
 
@@ -174,12 +173,12 @@ make -j16 test-compiler
 
 | Command | Purpose |
 |---|---|
-| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min/Sys at every width, all Fast target variants, and Faster DSP/soft. |
+| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min/Sys at every width, all Fast target variants, and ECP5/Agilex Faster DSP/soft. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
 | `make -j16 all` | Deterministic RTL regression and architecture benchmarks; it does not require Quartus or include the compiler suite. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
-| `make -j16 tables-lattice` | Tunes and regenerates iCE40/ECP5 area/Fmax tables and benchmarks without Quartus. |
+| `make -j16 tables-lattice` | Tunes and regenerates ECP5 area/Fmax tables and benchmarks without Quartus. |
 | `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |
 | `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast digital signal processing (DSP) multiplier ISS model with its display window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |

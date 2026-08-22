@@ -1,14 +1,16 @@
+// atum_fb_hdmi.v : dual-port framebuffer and TFP410 scanout pipeline.
+
 `timescale 1ns/1ps
 `default_nettype none
 
 module atum_fb_ram (
-    input wire cpu_clk,
-    input wire cpu_we,
-    input wire [14:0] cpu_addr,
-    input wire [1:0] cpu_wmask,
-    input wire [15:0] cpu_wdata,
-    input wire vid_clk,
-    input wire [14:0] vid_addr,
+    input  wire cpu_clk,
+    input  wire cpu_we,
+    input  wire [14:0] cpu_addr,
+    input  wire [1:0] cpu_wmask,
+    input  wire [15:0] cpu_wdata,
+    input  wire vid_clk,
+    input  wire [14:0] vid_addr,
     output reg [15:0] vid_rdata
 );
     // 320x180 pixels, four 4-bit pixels per 16-bit word (14,400 words).
@@ -16,8 +18,10 @@ module atum_fb_ram (
 
     always @(posedge cpu_clk) begin
         if (cpu_we) begin
-            if (cpu_wmask[0]) mem[cpu_addr][7:0] <= cpu_wdata[7:0];
-            if (cpu_wmask[1]) mem[cpu_addr][15:8] <= cpu_wdata[15:8];
+            if (cpu_wmask[0])
+                mem[cpu_addr][7:0] <= cpu_wdata[7:0];
+            if (cpu_wmask[1])
+                mem[cpu_addr][15:8] <= cpu_wdata[15:8];
         end
     end
 
@@ -25,17 +29,17 @@ module atum_fb_ram (
         vid_rdata <= mem[vid_addr];
 endmodule
 
-// 1920x1080p60 timing for the TFP410 parallel transmitter.  It scales the
+// 1920x1080p60 timing for the TFP410 parallel transmitter. It scales the
 // RISC-C 320x180 framebuffer by 6 in both directions, so no
 // resampling RAM or second framebuffer is required.
 module atum_fb_hdmi (
-    input wire cpu_clk,
-    input wire cpu_we,
-    input wire [14:0] cpu_addr,
-    input wire [1:0] cpu_wmask,
-    input wire [15:0] cpu_wdata,
-    input wire pix_clk,
-    input wire rst,
+    input  wire cpu_clk,
+    input  wire cpu_we,
+    input  wire [14:0] cpu_addr,
+    input  wire [1:0] cpu_wmask,
+    input  wire [15:0] cpu_wdata,
+    input  wire pix_clk,
+    input  wire rst,
     output wire pix_clk_out,
     output wire hdmi_hs,
     output wire hdmi_vs,
@@ -76,9 +80,14 @@ module atum_fb_hdmi (
     reg [1:0] pix_lane_q;
 
     atum_fb_ram framebuffer (
-        .cpu_clk(cpu_clk), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
-        .cpu_wmask(cpu_wmask), .cpu_wdata(cpu_wdata), .vid_clk(pix_clk),
-        .vid_addr(fb_vid_addr), .vid_rdata(fb_vid_word)
+        .cpu_clk(cpu_clk),
+        .cpu_we(cpu_we),
+        .cpu_addr(cpu_addr),
+        .cpu_wmask(cpu_wmask),
+        .cpu_wdata(cpu_wdata),
+        .vid_clk(pix_clk),
+        .vid_addr(fb_vid_addr),
+        .vid_rdata(fb_vid_word)
     );
 
     always @(posedge pix_clk) begin
@@ -140,24 +149,24 @@ module atum_fb_hdmi (
     function automatic [23:0] palette(input [3:0] idx);
         begin
             case (idx)
-            4'h0: palette = 24'h02040a;
-            // The blue-to-white ramp is spaced at approximately equal
-            // perceived lightness, preserving dark-band contrast.
-            4'h1: palette = 24'h071535;
-            4'h2: palette = 24'h0a2152;
-            4'h3: palette = 24'h0d2f6e;
-            4'h4: palette = 24'h0f3e88;
-            4'h5: palette = 24'h114da2;
-            4'h6: palette = 24'h135ebb;
-            4'h7: palette = 24'h166fd1;
-            4'h8: palette = 24'h1a82e6;
-            4'h9: palette = 24'h2096f5;
-            4'ha: palette = 24'h2daaff;
-            4'hb: palette = 24'h49bfff;
-            4'hc: palette = 24'h6dd3ff;
-            4'hd: palette = 24'h97e5ff;
-            4'he: palette = 24'hc7f4ff;
-            default: palette = 24'hffffff;
+                4'h0: palette = 24'h02040a;
+                // The blue-to-white ramp is spaced at approximately equal
+                // perceived lightness, preserving dark-band contrast.
+                4'h1: palette = 24'h071535;
+                4'h2: palette = 24'h0a2152;
+                4'h3: palette = 24'h0d2f6e;
+                4'h4: palette = 24'h0f3e88;
+                4'h5: palette = 24'h114da2;
+                4'h6: palette = 24'h135ebb;
+                4'h7: palette = 24'h166fd1;
+                4'h8: palette = 24'h1a82e6;
+                4'h9: palette = 24'h2096f5;
+                4'ha: palette = 24'h2daaff;
+                4'hb: palette = 24'h49bfff;
+                4'hc: palette = 24'h6dd3ff;
+                4'hd: palette = 24'h97e5ff;
+                4'he: palette = 24'hc7f4ff;
+                default: palette = 24'hffffff;
             endcase
         end
     endfunction

@@ -1,7 +1,9 @@
+// riscc_uart_mmio.v : shared 8N1 UART with a compact MMIO interface.
+
 `timescale 10ns/10ns
 `default_nettype none
 
-// Minimal 8N1 UART for the common demo MMIO map.  It intentionally has one
+// Minimal 8N1 UART for the common demo MMIO map. It intentionally has one
 // byte of receive storage and no transmit FIFO; software uses the ready bits.
 module riscc_uart_mmio #(
     parameter integer CLK_DIV = 434,
@@ -37,6 +39,7 @@ module riscc_uart_mmio #(
     localparam [DIV_BITS-1:0] CLK_DIV_LAST = div_value(CLK_DIV - 1);
     localparam [DIV_BITS-1:0] CLK_DIV_HALF = div_value(CLK_DIV / 2);
 
+    // Registered UART state.
     reg [7:0] rx_data;
     reg       rx_ready;
     reg       rx_overflow;
@@ -63,7 +66,7 @@ module riscc_uart_mmio #(
     assign dbg_rx_count = 32'd0;
 `endif
 
-    // Both UART registers occupy the adjacent 0x8/0x9 slots.  Factor their
+    // Both UART registers occupy the adjacent 0x8/0x9 slots. Factor their
     // common decode, and gate it with cpu_sel so ordinary RAM writes with the
     // same low address nibble cannot affect the peripheral.
     wire uart_sel = cpu_sel && (cpu_addr[3:1] == 3'b100);
@@ -111,6 +114,7 @@ module riscc_uart_mmio #(
             {13'h0000, rx_overflow, rx_ready, tx_ready} :
         16'h0000;
 
+    // Transmit and receive engines.
     always @(posedge clk) begin
         if (rst) begin
             uart_tx <= 1'b1;

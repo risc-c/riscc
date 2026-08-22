@@ -137,12 +137,14 @@ build/test/rc32/sys/$(1)/tb: $(TB_SRC) rtl/riscc32_sys.v $(RISCC_RF_RTL) $(RTL_R
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module riscc32_sys \
 	  -GW=$(1) -DRISCC_INFERRED_SYNC_RF --prefix Vriscc -Mdir $$(@D) \
 	  -I$$(abspath rtl) -I$$(abspath rtl/test) \
-	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_RC32" -o tb \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_RC32 \
+	    -DRISCC_TB_MEM_HANDSHAKE" -o tb \
 	  $$(abspath rtl/riscc32_sys.v) $$(abspath $(TB_SRC))
 
 build/test/rc32/sys/$(1).ok: build/test/rc32/sys/$(1)/tb $$(RC32_SYS_BIN) FORCE
 	@mkdir -p $$(@D)
-	$$< $$(RC32_SYS_BIN) --irq-at 300 --max-cycles 100000
+	$$< $$(RC32_SYS_BIN) --irq-at 300 --mem-stall-seed 777 \
+	  --max-cycles 100000
 	@touch $$@
 endef
 
@@ -151,15 +153,17 @@ $(foreach width,$(WIDTHS),$(eval $(call RC32_SYS_TEST,$(width))))
 fuzz-fast: $(RISCC_SIM)
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config full \
+	  --cores fast,fast-dsp,fast-ecp5,fast-ecp5-dsp \
 	  --outdir build/fuzz/fast
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config full \
-	  --cores fast-ice,fast-ice-dsp --outdir build/fuzz/fast-ice
+	  --cores fast-block,fast-block-dsp --outdir build/fuzz/fast-block
 
 # Architectural traces
 
 .PHONY: trace trace-fast trace-nano
 TRACE_CXXFLAGS = $(TB_CXXFLAGS) -DRISCC_TB_TRACE
+rc16_handshake_cflags = -DRISCC_TB_MEM_HANDSHAKE
 
 TRACE_TB := build/trace/rc16/$(PROFILE)/$(WIDTH)/tb
 FAST_TRACE_TB := build/trace/fast/$(MEMORY)/$(MULTIPLIER)/tb
@@ -170,7 +174,8 @@ $(TRACE_TB): $(TB_SRC) $(call rc16_source,$(WIDTH),$(PROFILE)) $(TRACE_RTL) $(RI
 	  --top-module $(call rc16_top,$(WIDTH),$(PROFILE)) \
 	  $(call rc16_verilator_width,$(WIDTH)) --prefix Vriscc -Mdir $(@D) \
 	  -I$(abspath rtl) -I$(abspath rtl/test) -DRISCC_TRACE \
-	  -CFLAGS "$(TRACE_CXXFLAGS)" -o tb \
+	  -CFLAGS "$(TRACE_CXXFLAGS) \
+	    $(call rc16_handshake_cflags,$(PROFILE),$(WIDTH))" -o tb \
 	  $(abspath $(call rc16_source,$(WIDTH),$(PROFILE))) $(abspath $(TB_SRC))
 
 trace: $(TRACE_TB) build/bin/$(PROFILE).bin
@@ -180,7 +185,7 @@ build/trace/nano/tb: $(TB_SRC) rtl/riscc_nano.v $(TRACE_RTL) $(RISCC_RF_RTL)
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) --top-module riscc_nano \
 	  --prefix Vriscc -Mdir $(@D) -I$(abspath rtl) -I$(abspath rtl/test) -DRISCC_TRACE \
-	  -CFLAGS "$(TRACE_CXXFLAGS)" -o tb \
+	  -CFLAGS "$(TRACE_CXXFLAGS) -DRISCC_TB_MEM_OE_N" -o tb \
 	  $(abspath rtl/riscc_nano.v) $(abspath $(TB_SRC))
 
 trace-nano: build/trace/nano/tb build/bin/nano.bin
@@ -192,7 +197,8 @@ $(FAST_TRACE_TB): $(TB_SRC) rtl/riscc16_fast.v $(TRACE_RTL)
 	  --top-module riscc16_fast --prefix Vriscc -Mdir $(@D) \
 	  -I$(abspath rtl) -I$(abspath rtl/test) -DRISCC_TRACE \
 	  $(call fast_defines,$(MEMORY),$(MULTIPLIER)) \
-	  -CFLAGS "$(TRACE_CXXFLAGS) -DRISCC_TB_TRACE_DRAIN=1" -o tb \
+	  -CFLAGS "$(TRACE_CXXFLAGS) -DRISCC_TB_TRACE_DRAIN=1 \
+	    -DRISCC_TB_MEM_HANDSHAKE" -o tb \
 	  $(abspath rtl/riscc16_fast.v) $(abspath $(TB_SRC))
 
 trace-fast: $(FAST_TRACE_TB) build/bin/full.bin
@@ -200,8 +206,8 @@ trace-fast: $(FAST_TRACE_TB) build/bin/full.bin
 
 # Verilator tests
 
-.PHONY: test-core test-cores test-extension test-extensions test-funnel \
-	test-nano test-fast test-fast-all test-faster
+.PHONY: test-core test-cores test-extension test-extensions \
+	test-funnel test-nano test-fast test-fast-all test-faster
 
 # RC16_TEST(mode, profile, width)
 define RC16_TEST
@@ -211,7 +217,8 @@ build/test/rc16/$(1)/$(2)/$(3)/tb: $(TB_SRC) \
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module $(call rc16_top,$(3),$(2)) $(call rc16_verilator_width,$(3)) \
 	  --prefix Vriscc -Mdir $$(@D) $$(RF_DEFINES_$(1)) \
-	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
+	  -CFLAGS "$$(TB_CXXFLAGS) \
+	    $(call rc16_handshake_cflags,$(2),$(3))" -o tb \
 	  $$(abspath $(call rc16_source,$(3),$(2))) $$(abspath $(TB_SRC))
 
 build/test/rc16/$(1)/$(2)/$(3).ok: build/test/rc16/$(1)/$(2)/$(3)/tb \
@@ -234,7 +241,7 @@ build/test/extension/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc16_full_$(2).v $(RISCC_RF_
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module riscc16 \
 	  --prefix Vriscc -Mdir $$(@D) -I$$(abspath rtl) $$(RF_DEFINES_$(1)) \
-	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_HANDSHAKE" -o tb \
 	  $$(abspath rtl/riscc16_full_$(2).v) $$(abspath $(TB_SRC))
 
 build/test/extension/$(1)/$(2).ok: build/test/extension/$(1)/$(2)/tb \
@@ -256,9 +263,10 @@ test-extensions: $(foreach mode,$(TEST_MODES),$(foreach extension,$(EXTENSIONS),
 test-funnel: \
 	$(foreach profile,$(RC16_PROFILES),$(foreach width,$(WIDTHS), \
 	  build/test/rc16/native/$(profile)/$(width)/tb)) \
-	$(foreach memory,async ice40,$(foreach multiplier,$(MULTIPLIERS), \
+	$(foreach memory,async ecp5-block,$(foreach multiplier,$(MULTIPLIERS), \
 	  build/test/fast/$(memory)/$(multiplier)/tb)) \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/faster/$(multiplier)/tb) \
+	$(foreach multiplier,$(MULTIPLIERS), \
+	  build/test/faster/ecp5-block/$(multiplier)/tb) \
 	$(FUNNEL_BIN) $(RISCC_SIM)
 	@for profile in $(RC16_PROFILES); do \
 	  for width in $(WIDTHS); do \
@@ -266,12 +274,12 @@ test-funnel: \
 	      $(FUNNEL_BIN) --max-cycles 5000 || exit; \
 	  done; \
 	done
-	@for memory in async ice40; do for multiplier in $(MULTIPLIERS); do \
+	@for memory in async ecp5-block; do for multiplier in $(MULTIPLIERS); do \
 	  build/test/fast/$$memory/$$multiplier/tb \
 	    $(FUNNEL_BIN) --max-cycles 5000 || exit; \
 	done; done
 	@for multiplier in $(MULTIPLIERS); do \
-	  build/test/faster/$$multiplier/tb \
+	  build/test/faster/ecp5-block/$$multiplier/tb \
 	    $(FUNNEL_BIN) --max-cycles 5000 || exit; \
 	done
 	@$(foreach profile,$(RC16_PROFILES),$(RISCC_SIM) $(FUNNEL_BIN) \
@@ -284,7 +292,8 @@ test-funnel: \
 build/test/nano/tb: $(TB_SRC) rtl/riscc_nano.v $(RISCC_RF_RTL)
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) --top-module riscc_nano \
-	  --prefix Vriscc -Mdir $(@D) -CFLAGS "$(TB_CXXFLAGS)" -o tb \
+	  --prefix Vriscc -Mdir $(@D) \
+	  -CFLAGS "$(TB_CXXFLAGS) -DRISCC_TB_MEM_OE_N" -o tb \
 	  $(abspath rtl/riscc_nano.v) $(abspath $(TB_SRC))
 
 build/test/nano.ok: build/test/nano/tb build/bin/nano.bin FORCE
@@ -299,12 +308,14 @@ build/test/fast/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc16_fast.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) --top-module riscc16_fast \
 	  --prefix Vriscc -Mdir $$(@D) -I$$(abspath rtl) $(call fast_defines,$(1),$(2)) \
-	  -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_HANDSHAKE" -o tb \
 	  $$(abspath rtl/riscc16_fast.v) $$(abspath $(TB_SRC))
 
 build/test/fast/$(1)/$(2).ok: build/test/fast/$(1)/$(2)/tb build/bin/full.bin FORCE
 	@mkdir -p $$(@D)
 	$$< build/bin/full.bin --max-cycles 1000000
+	$$< build/bin/full.bin --irq-at 300 --mem-stall-seed 777 \
+	  --max-cycles 1000000
 	@touch $$@
 endef
 
@@ -318,31 +329,37 @@ test-fast-all: $(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLI
 FASTER_DEFINES_dsp :=
 FASTER_DEFINES_soft := -DRISCC_FASTER_SOFT_MUL
 
-# FASTER_TEST(multiplier)
+# FASTER_TEST(memory, multiplier)
 define FASTER_TEST
-build/test/faster/$(1)/tb: $(TB_SRC) rtl/riscc16_faster.v $(RTL_RULES)
+build/test/faster/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc16_faster.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc16_faster --prefix Vriscc -Mdir $$(@D) \
-	  $$(FASTER_DEFINES_$(1)) -CFLAGS "$$(TB_CXXFLAGS)" -o tb \
+	  $$(FASTER_MEMORY_DEFINES_$(1)) $$(FASTER_DEFINES_$(2)) \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_HANDSHAKE" -o tb \
 	  $$(abspath rtl/riscc16_faster.v) $$(abspath $(TB_SRC))
 
-build/test/faster/$(1).ok: build/test/faster/$(1)/tb build/bin/full.bin FORCE
+build/test/faster/$(1)/$(2).ok: build/test/faster/$(1)/$(2)/tb build/bin/full.bin FORCE
 	@mkdir -p $$(@D)
 	$$< build/bin/full.bin --max-cycles 1000000
+	$$< build/bin/full.bin --irq-at 300 --mem-stall-seed 777 \
+	  --max-cycles 1000000
 	@touch $$@
 endef
 
-$(foreach multiplier,$(MULTIPLIERS),$(eval $(call FASTER_TEST,$(multiplier))))
+$(foreach memory,$(FASTER_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+	$(eval $(call FASTER_TEST,$(memory),$(multiplier)))))
 
-test-faster: $(foreach multiplier,$(MULTIPLIERS),build/test/faster/$(multiplier).ok)
+test-faster: $(foreach memory,$(FASTER_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+	build/test/faster/$(memory)/$(multiplier).ok))
 
 .PHONY: bench
 bench: $(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
 	build/test/nano/tb \
-	$(foreach memory,async ice40,$(foreach multiplier,$(MULTIPLIERS), \
+	$(foreach memory,async ecp5-block,$(foreach multiplier,$(MULTIPLIERS), \
 	  build/test/fast/$(memory)/$(multiplier)/tb)) \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/faster/$(multiplier)/tb) \
+	$(foreach multiplier,$(MULTIPLIERS), \
+	  build/test/faster/ecp5-block/$(multiplier)/tb) \
 	$(BENCH_BIN) $(NANO_BENCH_BIN)
 	@for width in $(WIDTHS); do \
 	  tb=build/test/rc16/native/full/$$width/tb; \
@@ -351,13 +368,13 @@ bench: $(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
 	done
 	@out="$$(build/test/nano/tb $(NANO_BENCH_BIN) \
 	  --max-cycles 2000000 2>&1 | tail -1)"; printf '%-8s %s\n' nano "$$out"
-	@for memory in async ice40; do for multiplier in $(MULTIPLIERS); do \
+	@for memory in async ecp5-block; do for multiplier in $(MULTIPLIERS); do \
 	  tb=build/test/fast/$$memory/$$multiplier/tb; \
 	  out="$$($$tb $(BENCH_BIN) --max-cycles 800000 2>&1 | tail -1)"; \
 	  printf 'fast/%s/%-4s %s\n' $$memory $$multiplier "$$out"; \
 	done; done
 	@for multiplier in $(MULTIPLIERS); do \
-	  tb=build/test/faster/$$multiplier/tb; \
+	  tb=build/test/faster/ecp5-block/$$multiplier/tb; \
 	  out="$$($$tb $(BENCH_BIN) --max-cycles 800000 2>&1 | tail -1)"; \
 	  printf 'faster/%-4s %s\n' $$multiplier "$$out"; \
 	done

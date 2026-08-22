@@ -104,9 +104,12 @@ module riscc_rf #(
             localparam integer SUB_BITS = $clog2(SUBWORDS);
             localparam integer WORD_ADDR_WIDTH = ADDR_WIDTH - SUB_BITS;
             localparam integer WORD_DEPTH = 1 << WORD_ADDR_WIDTH;
-            localparam integer BYTE_SUB_BITS = $clog2(8 / WIDTH);
+            localparam [2:0] BYTE_LAST_LOW =
+                (WIDTH == 1) ? 3'b111 :
+                (WIDTH == 2) ? 3'b011 :
+                (WIDTH == 4) ? 3'b001 : 3'b000;
             localparam [ADDR_WIDTH-1:0] BYTE_LAST =
-                {ADDR_WIDTH{1'b1}} >> (ADDR_WIDTH - BYTE_SUB_BITS);
+                {{(ADDR_WIDTH-3){1'b0}}, BYTE_LAST_LOW};
 
             (* ramstyle = "MLAB, no_rw_check" *)
             reg [RAM_WORD_WIDTH-1:0] mem [0:WORD_DEPTH-1];
@@ -114,8 +117,10 @@ module riscc_rf #(
             reg [SUB_BITS-1:0] read_subword_q;
             reg [7:0] write_accum_q;
             wire [7:0] extended_wdata = {{(8-WIDTH){1'b0}}, wdata};
+            wire [8:0] shifted_write_accum =
+                {1'b0, write_accum_q} >> WIDTH;
             wire [7:0] completed_write_byte =
-                (write_accum_q >> WIDTH) |
+                shifted_write_accum[7:0] |
                 (extended_wdata << (8-WIDTH));
             wire byte_complete = (waddr & BYTE_LAST) == BYTE_LAST;
 
@@ -169,90 +174,6 @@ module riscc_rf #(
             // The core either avoids a same-address collision or discards its
             // result before reissuing the read.
             (* ramstyle = "MLAB, no_rw_check" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
-            reg [WIDTH-1:0] rdata_q;
-
-            assign rdata = rdata_q;
-
-            always @(posedge clk) begin
-                if (we)
-                    mem[waddr] <= wdata;
-                rdata_q <= mem[raddr];
-            end
-        end
-    endgenerate
-`elsif SYNTHESIS
-    generate
-        if (WIDTH == 1) begin : g_ice40_w1
-            wire [15:0] ram_rdata;
-            wire [10:0] raddr_phys = {{(11-ADDR_WIDTH){1'b0}}, raddr};
-            wire [10:0] waddr_phys = {{(11-ADDR_WIDTH){1'b0}}, waddr};
-
-            assign rdata[0] = ram_rdata[1];
-
-            SB_RAM40_4K #(
-                .READ_MODE(2),
-                .WRITE_MODE(2)
-            ) ram (
-                .RDATA(ram_rdata),
-                .RADDR(raddr_phys),
-                .RCLK(clk),
-                .RCLKE(1'b1),
-                .RE(1'b1),
-                .WADDR(waddr_phys),
-                .WCLK(clk),
-                .WCLKE(1'b1),
-                .WE(we),
-                .MASK(16'h0000),
-                .WDATA({14'b0000_0000_0000_00, wdata[0], 1'b0})
-            );
-        end else if (WIDTH == 8) begin : g_ice40_w8
-            wire [10:0] raddr_phys = {{(11-ADDR_WIDTH){1'b0}}, raddr};
-            wire [10:0] waddr_phys = {{(11-ADDR_WIDTH){1'b0}}, waddr};
-            wire [15:0] rdata16;
-
-            assign rdata = {rdata16[14], rdata16[12], rdata16[10], rdata16[8],
-                            rdata16[6],  rdata16[4],  rdata16[2],  rdata16[0]};
-
-            SB_RAM40_4K #(
-                .READ_MODE(1),
-                .WRITE_MODE(1)
-            ) ram (
-                .RDATA(rdata16),
-                .RADDR(raddr_phys),
-                .RCLK(clk),
-                .RCLKE(1'b1),
-                .RE(1'b1),
-                .WADDR(waddr_phys),
-                .WCLK(clk),
-                .WCLKE(1'b1),
-                .WE(we),
-                .MASK(16'h0000),
-                .WDATA({1'b0, wdata[7], 1'b0, wdata[6], 1'b0, wdata[5], 1'b0,
-                        wdata[4], 1'b0, wdata[3], 1'b0, wdata[2], 1'b0,
-                        wdata[1], 1'b0, wdata[0]})
-            );
-        end else if (WIDTH == 16) begin : g_ice40_w16
-            wire [10:0] raddr_phys = {{(11-ADDR_WIDTH){1'b0}}, raddr};
-            wire [10:0] waddr_phys = {{(11-ADDR_WIDTH){1'b0}}, waddr};
-
-            SB_RAM40_4K #(
-                .READ_MODE(0),
-                .WRITE_MODE(0)
-            ) ram (
-                .RDATA(rdata),
-                .RADDR(raddr_phys),
-                .RCLK(clk),
-                .RCLKE(1'b1),
-                .RE(1'b1),
-                .WADDR(waddr_phys),
-                .WCLK(clk),
-                .WCLKE(1'b1),
-                .WE(we),
-                .MASK(16'h0000),
-                .WDATA(wdata)
-            );
-        end else begin : g_ice40_inferred
-            (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
             reg [WIDTH-1:0] rdata_q;
 
             assign rdata = rdata_q;

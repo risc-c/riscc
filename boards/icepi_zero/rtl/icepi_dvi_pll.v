@@ -1,3 +1,5 @@
+// icepi_dvi_pll.v : ECP5 video-clock PLL wrapper for IcePi Zero.
+
 `default_nettype none
 
 // ECP5 PLL for a 50 MHz input, producing 25 MHz pixels, a 125 MHz shift

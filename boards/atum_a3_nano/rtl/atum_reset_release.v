@@ -1,3 +1,5 @@
+// atum_reset_release.v : Agilex configuration-reset primitive wrapper.
+
 `default_nettype none
 
 // Agilex 3 configuration-reset endpoint. Quartus recognizes this documented

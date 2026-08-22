@@ -40,9 +40,6 @@ width extension.
 | `IE` | 1 | interrupt-enable bit (`sys` profile) |
 
 There are no arithmetic condition codes and no architectural zero register.
-The RC32X conditional-branch format alone treats its `Xd=r0` selector as a
-literal zero source; that encoding rule does not alter `r0` storage or its
-meaning for any other instruction.
 All `r`- and S-register writes retain their low XLEN bits. Program-counter
 updates retain their low XLEN bits.
 
@@ -644,9 +641,8 @@ With `rd = r0`, no link is written; this is a plain register jump, spelled
 
 ## Appendix B. Multiply-Divide Instructions (MDU) Extension
 
-This optional extension may be combined with RC16 or RC32. When the optional
-RC32X extension is implemented with RC32, Appendix D supplies long forms with
-five-bit operand selectors. It is required by no profile and has no Nano form.
+This optional extension may be combined with RC16 or RC32. It is required by
+no profile and has no Nano form.
 
 The following optional instructions occupy otherwise reserved three-register
 slots:
@@ -694,10 +690,9 @@ ISA. It sets `XLEN = 32`. RC16 and RC32 are separate architectural
 configurations.
 
 RC32 changes register and data width; it does not add registers or widen the
-three-bit register selectors in compact instructions. The separately optional
-RC32X extension in Appendix D adds a five-bit, 32-selector operand namespace and
-its associated long formats. Thus an RC32 compact instruction still selects
-only `r0..r7` or `S0..S7`, but each selected register holds a 32-bit value.
+three-bit register selectors in compact instructions. An RC32 compact
+instruction selects `r0..r7` or `S0..S7`, and each selected register holds a
+32-bit value.
 
 Unless this appendix specifies otherwise, RC32 retains the compact instruction
 encodings, semantics, and profile availability of RC16, with every
@@ -709,8 +704,7 @@ bits.
 In RC32, `r0..r7`, `S0..S7`, and `pc` are 32 bits wide. Register and
 program-counter writes retain their low 32 bits, and arithmetic results and
 effective addresses wrap modulo `2^32`. Links, interrupt return addresses,
-and `interrupt_vector` are 32-bit byte addresses. RC32X is not needed to select
-or operate on these 32-bit compact-register values.
+and `interrupt_vector` are 32-bit byte addresses.
 
 A 32-bit address selects one of `2^32` bytes in the unified address space.
 Compact instructions retain their immediate widths and field positions. Their
@@ -774,8 +768,7 @@ their result to 32 bits as specified by the mnemonic.
 The long-instruction length and interrupt rules in section 7 apply. RC32
 defines the shared `JALL` and `JMPL` encoding in its `sys` and `full`
 profiles; it remains absent from `min`. All other base-RC32 long
-encodings are reserved. Appendix D defines additional long instructions when
-RC32X is present.
+encodings are reserved.
 
 A full-range absolute call or jump loads its byte target from a nearby literal
 and then uses the inherited compact `JALR`:
@@ -809,14 +802,16 @@ RC32 mainline profile:
 | `STH rs, [ra]` | X | X | X |
 
 Compact shift-count availability remains unchanged: only the encodings from 1
-through 8 exist, subject to the selected profile. Appendix D defines the
-optional RC32X register extension for RC32.
+through 8 exist, subject to the selected profile.
 
 ## Appendix D. RC32X Register Extension
 
-RC32X is an optional RC32-only register-namespace and long-instruction
-extension. It does not change `XLEN`: its registers are 32 bits wide because
-it requires RC32. RC32 itself retains only the compact `r0..r7` and `S0..S7`
+RC32X is not yet implemented. This appendix records an optional RC32-only
+register and long-instruction extension for future experiments; it is not part
+of any current core or toolchain.
+
+RC32X does not change `XLEN`: its registers are 32 bits wide because it
+requires RC32. RC32 itself retains only the compact `r0..r7` and `S0..S7`
 register names; RC32X adds the following architectural state:
 
 | state | width | description |

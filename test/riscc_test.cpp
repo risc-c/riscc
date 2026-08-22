@@ -5,7 +5,7 @@
 // architectural memory/irq interface -- no internal signals.
 //
 // Memory model: 32K x 16 synchronous single-port RAM (1-cycle read latency,
-// like an iCE40 UP5K SPRAM).  Loads a little-endian binary image at word 0.
+// like a synchronous FPGA RAM). Loads a little-endian binary image at word 0.
 //
 // I/O page: the top 16 bytes (0xFFF0..0xFFFF, words 0x7FF8..0x7FFF) are
 // word-wide I/O registers, out of reach of code/data that grow from 0.
@@ -16,6 +16,7 @@
 //   0xFFFE (word 0x7FFF)  result word: 0x600D pass, anything else fail
 // Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N]
 //           [--trace] [--dump-written] [--uart-expect-line TEXT]
+//           [--mem-stall-seed N]
 // --irq-at raises one IRQ at cycle N (deterministic IRQ tests without the
 // store-to-0xFFFA trigger). A read from 0xFFFA acknowledges it. Exit status
 // follows the result word.
@@ -116,6 +117,7 @@ int main(int argc, char **argv)
     int irq_at_fired = 0;
     int trace = 0;
     int dump_written = 0;
+    uint32_t mem_stall_seed = 0;
     const char *uart_expect_line = nullptr;
     for (int i = 2; i < argc; i++)
     {
@@ -127,6 +129,8 @@ int main(int argc, char **argv)
             trace = 1;
         else if (!strcmp(argv[i], "--dump-written"))
             dump_written = 1;
+        else if (!strcmp(argv[i], "--mem-stall-seed") && i + 1 < argc)
+            mem_stall_seed = strtoul(argv[++i], nullptr, 0);
         else if (!strcmp(argv[i], "--uart-expect-line") && i + 1 < argc)
             uart_expect_line = argv[++i];
         else
@@ -145,11 +149,23 @@ int main(int argc, char **argv)
 
     uint16_t rdata = 0;
     int irq = 0;
+#ifdef RISCC_TB_MEM_HANDSHAKE
+    uint32_t mem_stall_state = mem_stall_seed ? mem_stall_seed : 1;
+    unsigned mem_wait = 0;
+    int mem_pending = 0;
+    uint32_t pending_addr = 0;
+    uint16_t pending_wdata = 0;
+    int pending_we = 0;
+    int pending_wmask = 0;
+#endif
 
     top->clk = 0;
     top->rst = 1;
     top->irq = 0;
     top->mem_rdata = 0;
+#ifdef RISCC_TB_MEM_HANDSHAKE
+    top->mem_ready = 0;
+#endif
     top->eval();
 
     uint64_t cyc = 0;
@@ -165,13 +181,80 @@ int main(int argc, char **argv)
         if (cyc == 4)
             top->rst = 0;
 
+        if (!irq_at_fired && irq_at >= 0 && cyc >= (uint64_t)irq_at) {
+            irq = 1;
+            irq_at_fired = 1;
+        }
+        top->irq = irq;
+
+#ifdef RISCC_TB_MEM_HANDSHAKE
+        // A native request remains asserted and stable until ready. Poison the
+        // input afterward to verify that the core captured a completed read.
+        top->mem_ready = 0;
+        top->mem_rdata = 0xDEAD;
+        top->eval();
+
+        uint32_t addr  = top->mem_addr;
+        int      we    = top->mem_we;
+        uint16_t wdata = top->mem_wdata;
+        int      wmask = top->mem_wmask;
+        const int request = top->mem_valid;
+        int request_complete = 0;
+
+        if (mem_pending &&
+            (!request || addr != pending_addr || we != pending_we ||
+             (we && wdata != pending_wdata) || wmask != pending_wmask)) {
+            fprintf(stderr,
+                "Memory request changed before ready at cycle %llu: "
+                "addr %08x/%08x we %d/%d data %04x/%04x mask %x/%x\n",
+                (unsigned long long)cyc, pending_addr, addr,
+                pending_we, we, pending_wdata, wdata,
+                pending_wmask, wmask);
+            delete top;
+            return 1;
+        }
+
+        if (request && !mem_pending) {
+            mem_pending = 1;
+            pending_addr = addr;
+            pending_we = we;
+            pending_wdata = wdata;
+            pending_wmask = wmask;
+            if (mem_stall_seed) {
+                mem_stall_state ^= mem_stall_state << 13;
+                mem_stall_state ^= mem_stall_state >> 17;
+                mem_stall_state ^= mem_stall_state << 5;
+                mem_wait = mem_stall_state & 3;
+            } else {
+                mem_wait = 0;
+            }
+        }
+
+        if (mem_pending && mem_wait == 0) {
+            const int response_irq_read = !we && !top->rst &&
+                (addr & 0x7FFF) == 0x7FFD;
+            const int response_uart_state =
+                uart_expect_line && !we && !top->rst &&
+                (addr & 0x7FFF) == 0x7FF9;
+            const uint16_t response = response_irq_read ? (irq ? 1 : 0) :
+                (response_uart_state ? 1 : mem[addr & 0x7FFF]);
+            top->mem_rdata =
+                ((wmask & 1) ? (response & 0x00FF) : 0) |
+                ((wmask & 2) ? (response & 0xFF00) : 0);
+            top->mem_ready = 1;
+            top->eval();
+            request_complete = 1;
+        } else if (mem_pending) {
+            mem_wait--;
+        }
+#else
         // Present the prior synchronous response and settle response-driven
         // next-address logic before sampling the current request.
         top->mem_rdata = rdata;
         top->eval();
 
         // Sample the core's memory request during the current (pre-edge) cycle
-        uint16_t addr  = top->mem_addr;
+        uint32_t addr  = top->mem_addr;
 #ifdef RISCC_TB_RC32
         // The generic fixture owns a 64 KiB physical RAM window.  RC32's
         // architectural address can be wider, so alias its low window before
@@ -181,33 +264,36 @@ int main(int argc, char **argv)
         int      we    = top->mem_we;
         uint16_t wdata = top->mem_wdata;
         int      wmask = top->mem_wmask;
+#ifdef RISCC_TB_MEM_OE_N
+        const int request_complete = top->mem_we || !top->mem_oe_n;
+#else
+        const int request_complete = 1;
+#endif
+#endif
 
-        if (!irq_at_fired && irq_at >= 0 && cyc >= (uint64_t)irq_at) {
-            irq = 1;
-            irq_at_fired = 1;
-        }
-        top->irq = irq;
+        const uint16_t fixture_addr = addr & 0x7FFF;
 
         top->clk = 1;
         top->eval();
 
         // Synchronous memory commits at the posedge
-        const int test_irq_read = !we && !top->rst && addr == 0x7FFD;
+        const int test_irq_read = request_complete &&
+            !we && !top->rst && fixture_addr == 0x7FFD;
         const uint16_t test_irq_cause = top->irq ? 1 : 0;
         if (test_irq_read)
             irq = 0;
 
-        if (we && !top->rst)
+        if (request_complete && we && !top->rst)
         {
-            uint16_t old = mem[addr];
+            uint16_t old = mem[fixture_addr];
             uint16_t nw  = old;
             if (wmask & 1) nw = (uint16_t)((nw & 0xFF00) | (wdata & 0x00FF));
             if (wmask & 2) nw = (uint16_t)((nw & 0x00FF) | (wdata & 0xFF00));
-            mem[addr] = nw;
-            mem_written[addr & 0x7FFF] = 1;
-            if (addr == 0x7FFD) irq = 1;   // byte 0xFFFA: raise irq
-            if (addr == 0x7FFF) done = 1;  // byte 0xFFFE: result word
-            if (uart_expect_line && addr == 0x7FF8 && (wmask & 1))
+            mem[fixture_addr] = nw;
+            mem_written[fixture_addr] = 1;
+            if (fixture_addr == 0x7FFD) irq = 1; // byte 0xFFFA: raise irq
+            if (fixture_addr == 0x7FFF) done = 1; // byte 0xFFFE: result word
+            if (uart_expect_line && fixture_addr == 0x7FF8 && (wmask & 1))
             {
                 const char ch = char(wdata & 0xFF);
                 putchar(ch);
@@ -230,10 +316,17 @@ int main(int argc, char **argv)
             trace_printed = 1;
 }
 #endif
-        const int uart_state_read = uart_expect_line && !we && !top->rst &&
-            addr == 0x7FF9;
-        rdata = test_irq_read ? test_irq_cause :
-            (uart_state_read ? 1 : mem[addr & 0x7FFF]);
+#ifdef RISCC_TB_MEM_HANDSHAKE
+        if (request_complete)
+            mem_pending = 0;
+#else
+        if (request_complete && !we) {
+            const int uart_state_read =
+                uart_expect_line && !top->rst && fixture_addr == 0x7FF9;
+            rdata = test_irq_read ? test_irq_cause :
+                (uart_state_read ? 1 : mem[addr & 0x7FFF]);
+        }
+#endif
 
         top->clk = 0;
         top->eval();

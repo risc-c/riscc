@@ -1,3 +1,5 @@
+// fb_ram.v : dual-clock framebuffer RAM for IcePi Zero scanout.
+
 `default_nettype none
 
 module icepi_fb_ram (

@@ -6,7 +6,8 @@ RC32_PROFILES := min sys
 WIDTHS := 1 2 4 8 16
 TEST_MODES := native ecp5-lutram ecp5-block
 EXTENSIONS := mulh muldiv
-FAST_MEMORIES := async ice40 ecp5 agilex
+FAST_MEMORIES := async ecp5 ecp5-block agilex
+FASTER_MEMORIES := ecp5-block agilex
 MULTIPLIERS := soft dsp
 PIPELINES := fast faster
 OPT_LEVELS := o0 o2 os
@@ -28,7 +29,6 @@ PKG_CONFIG ?= pkg-config
 VERILATOR ?= verilator
 YOSYS ?= yosys
 NEXTPNR_ECP5 ?= nextpnr-ecp5
-NEXTPNR_ICE40 ?= nextpnr-ice40
 PNR_SEED ?= 1
 TUNE_SEEDS ?= 10
 ECPPACK ?= ecppack
@@ -128,9 +128,11 @@ RF_DEFINES_ecp5-lutram := -DRISCC_ECP5
 RF_DEFINES_ecp5-block := -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF
 
 MEMORY_DEFINES_async :=
-MEMORY_DEFINES_ice40 := -DRISCC_FAST_SYNC_RF
 MEMORY_DEFINES_ecp5 := -DRISCC_ECP5
+MEMORY_DEFINES_ecp5-block := -DRISCC_FAST_SYNC_RF
 MEMORY_DEFINES_agilex := -DRISCC_FAST_AGILEX
+FASTER_MEMORY_DEFINES_ecp5-block := -DRISCC_FASTER_BLOCK_RF
+FASTER_MEMORY_DEFINES_agilex :=
 MULTIPLIER_DEFINES_soft :=
 MULTIPLIER_DEFINES_dsp := -DRISCC_FAST_DSP
 fast_defines = $(MEMORY_DEFINES_$(1)) $(MULTIPLIER_DEFINES_$(2))
@@ -171,7 +173,7 @@ help:
 	  '  test-nano                   test Nano' \
 	  '  test-fast                   test MEMORY and MULTIPLIER' \
 	  '  test-fast-all               test all fast-core variants' \
-	  '  test-faster                 test both faster-core multipliers' \
+	  '  test-faster                 test Faster ECP5/Agilex RF variants' \
 	  '  test-funnel                 test interrupt funneling' \
 	  '  test-peripherals            test timer and interrupt peripherals' \
 	  '  test-rc32                   test and fuzz RC32 Sys' \
@@ -240,7 +242,7 @@ help:
 	  '  WIDTH=1|2|4|8|16           default: 16' \
 	  '  MODE=native|ecp5-lutram|ecp5-block' \
 	  '  EXTENSION=mulh|muldiv       default: muldiv' \
-	  '  MEMORY=async|ice40|ecp5|agilex' \
+	  '  MEMORY=async|ecp5|ecp5-block|agilex' \
 	  '  MULTIPLIER=soft|dsp         default: soft' \
 	  '  TUNE_SEEDS=N                seeds searched by tables-lattice (10)' \
 	  '  QUARTUS_SH=/path/quartus_sh required for Agilex targets'

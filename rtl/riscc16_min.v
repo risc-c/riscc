@@ -1,24 +1,26 @@
-// riscc16_min.v : area-specialized RISC-C/16 Min core.
+// riscc16_min.v : area-oriented full-width RC16 Min core.
 //
 // This full-width Min implementation uses one shared 17-bit adder/result
 // path, one memory-data register, and a one-port synchronous register file.
-// Sys IRQ, JAL16, variable-shift, and Full multiply machinery remain in the
-// separate riscc16 Sys/Full core.
+// Sys IRQ, JALL, variable-shift, and Full multiply machinery remain in the
+// separate RC16 Sys/Full cores.
 
 `default_nettype none
 
 module riscc16_min #(
-    parameter [15:0] RESET_PC = 16'h0000           // byte address
+    parameter [15:0] RESET_PC = 16'h0000  // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,
+    input  wire        irq,        // unused by the Min profile
 
-    output wire [14:0] mem_addr,   // word address
+    output wire [14:0] mem_addr,   // halfword address
     input  wire [15:0] mem_rdata,
     output wire [15:0] mem_wdata,
     output wire [1:0]  mem_wmask,
-    output wire        mem_we
+    output wire        mem_we,
+    output wire        mem_valid,  // request valid; held until mem_ready
+    input  wire        mem_ready   // request accepted; read data is valid
 `ifdef RISCC_TRACE
     ,
 `include "riscc_trace_ports.vh"
@@ -37,33 +39,28 @@ module riscc16_min #(
     localparam ST_EXECUTE             = 3;
     localparam ST_FETCH_REQUEST       = 4;
     localparam ST_MEMORY_ACCESS       = 5;
-    localparam ST_LOAD_CAPTURE        = 6;
-    localparam ST_JUMP_COMMIT         = 7;
-    localparam ST_COMPARE_WRITEBACK   = 8;
-    localparam ST_INSTRUCTION_CAPTURE = 9;
-    localparam ST_MDR_WRITEBACK       = 10;
+    localparam ST_JUMP_COMMIT         = 6;
+    localparam ST_COMPARE_WRITEBACK   = 7;
+    localparam ST_MDR_WRITEBACK       = 8;
 
-    (* fsm_encoding = "none" *) reg [10:1] state_q;
+    (* fsm_encoding = "none" *) reg [8:1] state_q;
 
     wire in_decode              = state_q[ST_DECODE];
     wire in_operand_load        = state_q[ST_OPERAND_LOAD];
     wire in_execute             = state_q[ST_EXECUTE];
     wire in_fetch_request       = state_q[ST_FETCH_REQUEST];
     wire in_memory_access       = state_q[ST_MEMORY_ACCESS];
-    wire in_load_capture        = state_q[ST_LOAD_CAPTURE];
     wire in_jump_commit         = state_q[ST_JUMP_COMMIT];
     wire in_compare_writeback   = state_q[ST_COMPARE_WRITEBACK];
-    wire in_instruction_capture = state_q[ST_INSTRUCTION_CAPTURE];
     wire in_mdr_writeback       = state_q[ST_MDR_WRITEBACK];
 
     // ------------------------------------------------------------------
     // Stored datapath state and instruction decode
     // ------------------------------------------------------------------
     reg [15:0] instruction_q;
-    reg        register_format_q;
     // Instruction addresses are aligned, so retain the PC without its
     // constant-zero byte bit and restore that bit only at the shared adder.
-    reg [14:0] pc_q;
+    reg [14:0] pc_q;  // internal halfword PC
     reg [15:0] mdr_q;
     // The byte lane and less-than result have disjoint lifetimes.
     reg        captured_bit_q;
@@ -72,8 +69,8 @@ module riscc16_min #(
 
     wire immediate_memory = !instruction_q[15];
     wire immediate_store_word = immediate_memory && instruction_q[0];
-    wire immediate_class = instruction_q[15] && !register_format_q;
-    wire register_class  = instruction_q[15] && register_format_q;
+    wire immediate_class = instruction_q[15] && !instruction_q[14];
+    wire register_class  = instruction_q[15] && instruction_q[14];
 
     wire [2:0] rd = instruction_q[13:11];
     wire [2:0] ra = instruction_q[10:8];
@@ -81,6 +78,7 @@ module riscc16_min #(
     wire [1:0] register_group = instruction_q[7:6];
     wire [2:0] register_opcode = instruction_q[5:3];
     wire [2:0] rb = instruction_q[2:0];
+    wire [15:0] alu_result;
 
     wire immediate_load_group =
         immediate_class && !immediate_opcode[2] && !immediate_opcode[1];
@@ -182,20 +180,13 @@ module riscc16_min #(
     wire start_fetch = in_fetch_request | writeback_complete;
 
     // A read issued in one state appears during the following state. LDI,
-    // LUI, and branches ignore RF data, so one broad immediate selector is
-    // smaller than separately decoding only the immediate ALU operations.
+    // LUI, and branches ignore RF data, so they share one broad immediate
+    // selector.
     wire select_read_rd =
-        immediate_class | in_execute |
+        immediate_class | in_execute | (in_memory_access && store_op) |
         (in_operand_load && register_group[1]);
-`ifdef RISCC_ECP5
     wire select_read_rb =
         start_operand_load && !funnel_op;
-`else
-    // Group 10 always reads ra in the compact baseline. Using the group bit
-    // directly leaves the iCE40 RF-address path shallower at identical area.
-    wire select_read_rb =
-        start_operand_load && !register_group[1];
-`endif
     wire [2:0] rf_read_register =
         select_read_rd ? rd : select_read_rb ? rb : ra;
     wire rf_read_system_bank =
@@ -204,8 +195,8 @@ module riscc16_min #(
     wire [15:0] rf_read_data;
     wire [2:0] rf_write_register =
         compare_immediate ? 3'b000 : rd;
-    // rf_we qualifies the state. Keeping MTS selected outside Execute and
-    // selecting the JALR bank even when S0 suppresses its write maps smaller.
+    // rf_we qualifies the state. MTS may remain selected outside Execute, and
+    // the JALR bank may remain selected when S0 suppresses the write.
     wire rf_write_system_bank =
         mts_op | start_register_call;
     wire rf_we =
@@ -230,7 +221,7 @@ module riscc16_min #(
     // ------------------------------------------------------------------
     // Compact branches rotate their signed halfword displacement in the
     // instruction: physical bit zero is the sign, and bits 7:1 become byte
-    // offset bits 7:1.  This lets the byte-PC adder consume the displacement
+    // offset bits 7:1. This lets the byte-PC adder consume the displacement
     // directly, with no shifter or second branch state.
     wire [15:0] zero_extended_imm8 = {8'h00, instruction_q[7:0]};
     wire [15:0] upper_immediate = {instruction_q[7:0], 8'h00};
@@ -243,9 +234,9 @@ module riscc16_min #(
                          mem_rdata[15:8],
         selected_load_byte};
 
-    // Advance the byte PC by two while capturing the fetched halfword. Decode
-    // then sees pc_next, so JALR can write its link without another state.
-    wire alu_a_is_pc = in_instruction_capture | in_decode;
+    // Decode advances the byte PC by two. The same sum is JALR's link value;
+    // a taken compact branch adds its displacement in this pass as well.
+    wire alu_a_is_pc = in_decode;
     wire alu_a_is_zero =
         (in_execute &&
          (immediate_load_group | immediate_logic |
@@ -253,7 +244,7 @@ module riscc16_min #(
         (in_mdr_writeback && !funnel_op) |
         in_compare_writeback;
     wire [15:0] alu_a =
-        alu_a_is_pc ? {pc_q, 1'b0} :
+        alu_a_is_pc ? {pc_q, alu_carry_in} :
         alu_a_is_zero ? 16'h0000 :
         rf_read_data;
 
@@ -266,7 +257,7 @@ module riscc16_min #(
     wire alu_b_is_zero_extended_imm =
         (in_execute &&
          (load_immediate | immediate_arithmetic | immediate_memory)) |
-        (in_decode && branch_op);
+        (in_decode && branch_op && branch_taken);
     wire alu_b_is_upper_imm =
         in_execute && load_upper_immediate;
     wire [15:0] normal_alu_b =
@@ -274,7 +265,7 @@ module riscc16_min #(
         alu_b_is_mdr ? mdr_q :
         alu_b_is_upper_imm ? upper_immediate :
         alu_b_is_zero_extended_imm ? zero_extended_imm8 :
-        {15'h0000, in_instruction_capture};
+        16'h0000;
 
     wire [15:0] logic_rhs =
         register_logic_op ? mdr_q : zero_extended_imm8;
@@ -287,17 +278,9 @@ module riscc16_min #(
                                  (rf_read_data & logic_rhs)) :
             (rf_read_data ^ logic_rhs);
 
-`ifdef RISCC_INFERRED_SYNC_RF
-    // Active one-bit shifts use only groups 01 and 10. Selecting group 01
-    // directly gives the inferred-MLAB build a smaller, faster endpoint mux.
     wire single_step_shift_input =
-        register_group[0] ?
-        (register_opcode[0] && rf_read_data[15]) : mdr_q[0];
-`else
-    wire single_step_shift_input =
-        register_group[1] ? mdr_q[0] :
+        funnel_right_op ? mdr_q[0] :
         (register_opcode[0] && rf_read_data[15]);
-`endif
     wire [15:0] single_step_shift_result =
         {single_step_shift_input, rf_read_data[15:1]};
     wire [15:0] alu_b =
@@ -312,7 +295,7 @@ module riscc16_min #(
         (register_subtract_or_compare | compare_immediate);
     wire sign_extend_immediate =
         (in_execute && (immediate_arithmetic | immediate_memory)) |
-        (in_decode && branch_op);
+        (in_decode && branch_op && branch_taken);
     // Sign extension is active in Decode only for branches; every other
     // signed immediate reaches the adder in Execute.
     wire immediate_sign_bit =
@@ -325,12 +308,12 @@ module riscc16_min #(
     // FSL1's Execute pass stores old rd + ra[15] in MDR. Writeback adds old
     // rd once more, producing (old rd << 1) | ra[15] without a carry register.
     wire alu_carry_in =
-        in_instruction_capture | subtract_enable |
+        in_decode | subtract_enable |
         (funnel_left_execute && mdr_q[15]);
     wire [16:0] alu_sum_ext =
         {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
         {16'h0000, alu_carry_in};
-    wire [15:0] alu_result = alu_sum_ext[15:0];
+    assign alu_result = alu_sum_ext[15:0];
 
     wire subtract_overflow =
         (~(alu_a[15] ^ adjusted_alu_b[15])) &
@@ -343,56 +326,55 @@ module riscc16_min #(
     // ------------------------------------------------------------------
     // Unified memory port
     // ------------------------------------------------------------------
-    wire memory_write_cycle = in_memory_access && store_op;
+    wire memory_write_request = in_memory_access && store_op;
+    wire memory_write_cycle = memory_write_request && mem_ready;
+    wire memory_read_cycle = in_memory_access && !store_op && mem_ready;
     assign mem_addr = in_memory_access ? mdr_q[15:1] : pc_q;
     assign mem_wdata = byte_memory_op ?
                        {rf_read_data[7:0], rf_read_data[7:0]} :
                        rf_read_data;
-    assign mem_wmask = byte_memory_op ?
+    assign mem_wmask = (in_memory_access && byte_memory_op) ?
         (captured_bit_q ? 2'b10 : 2'b01) :
         2'b11;
-    assign mem_we = memory_write_cycle;
+    assign mem_valid = start_fetch | in_memory_access;
+    assign mem_we = memory_write_request;
 
     // ------------------------------------------------------------------
     // Sequential state and datapath updates
     // ------------------------------------------------------------------
     always @(posedge clk) begin
         if (rst) begin
-            state_q <= (10'b1 << (ST_FETCH_REQUEST - 1));
+            state_q <= (8'b1 << (ST_FETCH_REQUEST - 1));
             pc_q <= RESET_PC[15:1];
             r0_zero_q <= 1'b1;
             r0_negative_q <= 1'b0;
         end else begin
-            state_q[ST_INSTRUCTION_CAPTURE] <= start_fetch;
-            state_q[ST_DECODE] <= in_instruction_capture;
+            state_q[ST_DECODE] <= start_fetch && mem_ready;
             state_q[ST_OPERAND_LOAD] <= start_operand_load;
             state_q[ST_EXECUTE] <=
                 start_direct_execute | in_operand_load;
             state_q[ST_FETCH_REQUEST] <=
                 (in_decode && branch_op) |
-                memory_write_cycle | in_jump_commit;
-            state_q[ST_MEMORY_ACCESS] <= memory_address_ready;
-            state_q[ST_LOAD_CAPTURE] <=
-                in_memory_access && !store_op;
+                memory_write_cycle | in_jump_commit |
+                (start_fetch && !mem_ready);
+            state_q[ST_MEMORY_ACCESS] <= memory_address_ready |
+                (in_memory_access && !mem_ready);
             state_q[ST_JUMP_COMMIT] <=
                 start_register_call | (in_decode && return_op);
             state_q[ST_COMPARE_WRITEBACK] <=
                 in_execute && register_compare;
             state_q[ST_MDR_WRITEBACK] <=
-                in_load_capture | funnel_left_execute;
+                memory_read_cycle | funnel_left_execute;
 
-            if (in_instruction_capture) begin
+            if (start_fetch && mem_ready) begin
                 instruction_q <= mem_rdata;
-                register_format_q <= mem_rdata[14];
             end
 
-            if (in_instruction_capture |
-                (in_decode && branch_op && branch_taken) |
-                in_jump_commit)
+            if (in_decode | in_jump_commit)
                 pc_q <= alu_result[15:1];
 
-            if (in_load_capture | update_mdr_from_alu)
-                mdr_q <= in_load_capture ? load_result : alu_result;
+            if (memory_read_cycle | update_mdr_from_alu)
+                mdr_q <= memory_read_cycle ? load_result : alu_result;
 
             if (memory_address_ready ||
                 (in_execute && register_compare))
@@ -407,6 +389,9 @@ module riscc16_min #(
         end
     end
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 16;
     wire tr_commit_i =
@@ -415,11 +400,18 @@ module riscc16_min #(
     wire [14:0] tr_pc_i = pc_q;
     wire [15:0] tr_ir_i = instruction_q;
     wire        tr_ie_i = 1'b0;
-    wire        tr_rf_we_i = rf_we;
-    wire        tr_rf_bank_i = rf_write_system_bank;
+    // The physical JALR link write happens early in Decode. Delay only its
+    // trace shadow update to Jump Commit so it cannot enter the preceding
+    // instruction's one-cycle-delayed trace record.
+    wire        tr_link_we_i =
+        in_jump_commit && jal_register_op && link_enabled;
+    wire        tr_rf_we_i =
+        (rf_we && !start_register_call) | tr_link_we_i;
+    wire        tr_rf_bank_i = tr_link_we_i | rf_write_system_bank;
     wire [2:0]  tr_rf_reg_i = rf_write_register;
     wire [3:0]  tr_rf_lsb_i = 4'd0;
-    wire [RISCC_TRACE_W-1:0] tr_rf_data_i = rf_wdata;
+    wire [RISCC_TRACE_W-1:0] tr_rf_data_i =
+        tr_link_we_i ? {pc_q, 1'b0} : rf_wdata;
 `include "riscc_trace_state.vh"
 `endif
 

@@ -1,4 +1,4 @@
-// riscc_full.v : parameterized RC16 Full core (W=1, 2, 4, or 8).
+// riscc_full.v : area-oriented serial RC16 Full core (W=1, 2, 4, or 8).
 //
 // Serial microarchitecture: doc/HARDWARE.md 'Implementation family' (branch
 // shadow, one PC adder, address/data streams, and the INIT2 staging lap).
@@ -6,21 +6,23 @@
 
 `default_nettype none
 
-// Full adds MUL, whose pass loop rides the existing shift machinery.
+// Full adds MUL, whose pass loop reuses the existing shift machinery.
 
 module riscc #(
     parameter integer W = 4,
-    parameter [15:0] RESET_PC = 16'h0000           // byte address
+    parameter [15:0] RESET_PC = 16'h0000  // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,        // level-sensitive, taken at fetch boundary
+    input  wire        irq,        // level-sensitive; sampled between instructions
 
-    output wire [14:0] mem_addr,   // word address
+    output wire [14:0] mem_addr,   // halfword address
     input  wire [15:0] mem_rdata,
     output wire [15:0] mem_wdata,
-    output wire [1:0]  mem_wmask,  // byte lanes
-    output wire        mem_we
+    output wire [1:0]  mem_wmask,  // byte-lane enables
+    output wire        mem_we,
+    output wire        mem_valid,  // request valid; held until mem_ready
+    input  wire        mem_ready   // request accepted; read data is valid
 `ifdef RISCC_TRACE
     ,
 `include "riscc_trace_ports.vh"
@@ -31,52 +33,26 @@ module riscc #(
     localparam integer SLICE_BITS = $clog2(SLICES);
     localparam integer W_LOG2 = $clog2(W);
     localparam integer RF_ADDR_WIDTH = 4 + SLICE_BITS;
-`ifdef RISCC_ECP5
-    localparam TARGET_ECP5 = 1'b1;
-`else
-    localparam TARGET_ECP5 = 1'b0;
-`endif
-`ifdef RISCC_INFERRED_SYNC_RF
-    localparam INFERRED_SYNC_RF = 1'b1;
-`else
-    localparam INFERRED_SYNC_RF = 1'b0;
-`endif
 
     // ------------------------------------------------------------------
     // State and serial-slice counter
     // ------------------------------------------------------------------
-    // state_q[2] enables every counted state.  Encoding depends only on the
-    // elaborated datapath width, not target, RF implementation, or build goal.
-    localparam [2:0] ST_FETCH_WAIT    = (W == 1) ? 3'd3 :
-                                               (W == 2) ? 3'd3 :
-                                               (W == 4) ? 3'd2 : 3'd0;
-    localparam [2:0] ST_FETCH_CAPTURE = (W == 1) ? 3'd0 :
-                                               (W == 2) ? 3'd0 :
-                                               (W == 4) ? 3'd1 : 3'd2;
-    localparam [2:0] ST_DECODE        = (W == 1) ? 3'd2 :
-                                               (W == 2) ? 3'd1 :
-                                               (W == 4) ? 3'd3 : 3'd1;
-    localparam [2:0] ST_MEM_WAIT      = (W == 1) ? 3'd1 :
-                                               (W == 2) ? 3'd2 :
-                                               (W == 4) ? 3'd0 : 3'd3;
-    localparam [2:0] ST_EXECUTE       = (W == 1) ? 3'd7 :
-                                               (W == 2) ? 3'd7 :
-                                               (W == 4) ? 3'd4 : 3'd7;
-    localparam [2:0] ST_MEM_XFER      = (W == 1) ? 3'd4 :
-                                               (W == 2) ? 3'd4 :
-                                               (W == 4) ? 3'd5 : 3'd6;
-    localparam [2:0] ST_INIT          = (W == 1) ? 3'd5 :
-                                               (W == 2) ? 3'd6 :
-                                               (W == 4) ? 3'd6 : 3'd5;
-    localparam [2:0] ST_INIT2         = (W == 1) ? 3'd6 :
-                                               (W == 2) ? 3'd5 :
-                                               (W == 4) ? 3'd7 : 3'd4;
+    // Bit 2 enables every counted state; request and decode states keep it
+    // clear. One encoding is used for every width and target.
+    localparam [2:0] ST_FETCH_WAIT    = 3'd1;
+    localparam [2:0] ST_DECODE        = 3'd3;
+    localparam [2:0] ST_MEM_WAIT      = 3'd0;
+    localparam [2:0] ST_EXECUTE       = 3'd4;
+    localparam [2:0] ST_MEM_XFER      = 3'd7;
+    localparam [2:0] ST_INIT          = 3'd5;
+    localparam [2:0] ST_INIT2         = 3'd6;
 
     reg  [2:0] state_q;
     reg  [SLICE_BITS-1:0] slice_idx_q;
 
-    wire in_fetch_capture = (state_q == ST_FETCH_CAPTURE);
+    wire in_fetch_wait    = (state_q == ST_FETCH_WAIT);
     wire in_decode        = (state_q == ST_DECODE);
+    wire in_mem_wait      = (state_q == ST_MEM_WAIT);
     wire in_mem_xfer      = (state_q == ST_MEM_XFER);
     wire in_init          = (state_q == ST_INIT);
     wire in_init2         = (state_q == ST_INIT2);
@@ -94,22 +70,37 @@ module riscc #(
     // Instruction fields and decode
     // ------------------------------------------------------------------
     reg [15:0] instr_q;
-    reg        register_format_q;
 
-    // Contiguous register-format fields: 11 ddd aaa fffff bbb.
+    // System-profile state.
+    reg ie_q;
+    reg trap_q;
+    reg jall_target_phase_q;
+    wire take_irq = ie_q & irq;
+    wire trap_active = trap_q;
+
+    // Shared serial streams and their small pieces of side state.
+    reg [15:0] address_stream_q;
+    reg [15:0] data_stream_q;
+    reg [15:0] mem_response_q;
+    reg load_fill_q;
+    reg memory_lane_q;
+    reg funnel_bit_q;
+
+    // ISA notation: ddd is the destination, aaa and bbb are source fields,
+    // and f5 is the five-bit register-operation field.
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5 = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
-    wire imm_mem_group = ~instr_q[15] & register_format_q;
-    wire immediate_group = instr_q[15] & ~register_format_q;
-    wire register_group = instr_q[15] & register_format_q;
+    wire imm_mem_group = ~instr_q[15] & instr_q[14];
+    wire immediate_group = instr_q[15] & ~instr_q[14];
+    wire register_group = instr_q[15] & instr_q[14];
 
     wire branch_group = immediate_group & (aaa == 3'b111) & ~trap_active;
-    // A preempted branch is still not an ALU operation; trap writeback and
-    // the IRQ PC path override its normal result. This broader W=1 form maps
-    // smaller than routing trap_active through the branch decoder.
+    // A preempted branch is still not an ALU operation: trap writeback and
+    // the IRQ PC path override its normal result. At W=1, immediate decode
+    // therefore does not need trap_active in the branch term.
     wire immediate_alu_op = immediate_group &
         ((W == 1) ? ~(&aaa) : ~branch_group);
     wire add_immediate_op = immediate_group & (aaa == 3'b010);
@@ -117,14 +108,13 @@ module riscc #(
     wire cmpi_op = immediate_group & aaa[1] & aaa[0];
     // Loose JMP8: reserved ccc=101/110/111 alias as JMP8.
     wire jmp8_op = branch_group & ddd[2];
-    // Defined JAL16 uses the 00 major space; reserved long words alias it.
-    wire long_form_op = ~instr_q[15] & ~register_format_q;
+    // JALL uses the 00 major space; reserved long words alias it.
+    wire long_form_op = ~instr_q[15] & ~instr_q[14];
     wire link_dest_nonzero = |ddd;   // Sd == S0 writes no link (plain jump)
 
     wire f_group_00 = ~f5[4] & ~f5[3];
     wire f_group_01 = ~f5[4] &  f5[3];
-    wire f_group_11 = ((W == 4) | (W == 8)) ?
-        (f5[4] & (f5[3] | f5[2])) : (f5[4] & f5[3]);
+    wire f_group_11 = f5[4] & f5[3];
     wire system_op = register_group & f_group_11;
 
     // Full keeps 00_111 separate for MUL. Group 00 is the ordinary ALU;
@@ -132,27 +122,24 @@ module riscc #(
     wire register_alu_plane = register_group & ~f5[3];
     wire ordinary_alu_op = register_alu_plane & ~f5[4] & ~(&f5[2:0]);
     wire funnel_op = register_alu_plane & f5[4];
-    // At /1, MUL is unioned into writes_rd below, making the full plane exact.
     wire register_write_op = register_alu_plane &
-        ((W == 1) | f5[4] | ~(&f5[2:0]));
+        (f5[4] | ~(&f5[2:0]));
 
-    // At /2 and /8, reserved group-10 values with f5[1]=1 may alias
-    // SLT controls; /1 and /4 retain the timing-better exact decode.
-    wire slt_op = ((W == 2) || (W == 8)) ?
-        (register_alu_plane & ~f5[2] & f5[1]) :
-        (ordinary_alu_op & ~f5[2] & f5[1]);
+    wire slt_op = register_alu_plane & ~f5[2] & f5[1];
     wire signed_compare = ~instr_q[3];
     // SRLI/SRAI (01_100/101) and SLLI (01_111) repeat EXECUTE bbb+1
     // times.
     wire right_shift_op =
         register_group & f_group_01 & f5[2] & ~f5[1];
-    // MUL rd, ra, rb takes 16 EXECUTE passes.  The product accumulates in rd
+    // MUL rd, ra, rb takes 16 EXECUTE passes. The product accumulates in rd
     // via the RF read-old/write-new path, ra doubles through data_stream_q's
-    // SLLI recycle path, and rb parks in address_stream_q.  mul_bit_buffer_q
+    // SLLI recycle path, and rb parks in address_stream_q. mul_bit_buffer_q
     // emits one bit per pass and reloads W bits at each W-pass boundary.
     // The final pass refills the fetch address stream.
     reg  [W-1:0] mul_bit_buffer_q;
     wire mul_bit = mul_bit_buffer_q[0];
+    wire [W:0] mul_bit_buffer_shift =
+        {1'b0, mul_bit_buffer_q} >> 1;
     wire multiply_op = register_group & f_group_00 & (&f5[2:0]);
     wire left_shift_op = register_group & f_group_01 &
                          f5[2] & f5[1] & f5[0];
@@ -186,12 +173,7 @@ module riscc #(
                              f5[1] & f5[0];
     wire native_load_op = register_memory_plane & ~f5[2] & ~f5[1];
     wire direct_load_op = register_memory_plane & f5[1] & ~f5[0];
-    // The direct /8 sum-of-products form is materially faster on both targets;
-    // it is area-neutral on iCE40/ECP5 block RF and costs one ECP5 LUTRAM site.
-    wire indexed_mem_op = (W == 8) ?
-        (register_memory_plane &
-             ((~f5[2] & ~f5[1]) | (f5[1] & ~f5[0]))) :
-        (native_load_op | (register_memory_plane & f5[1] & ~f5[0]));
+    wire indexed_mem_op = native_load_op | direct_load_op;
 
     // All controls share bbb=000. ddd[1] selects return versus direct IE
     // control; ddd[2] and ddd[0] duplicate the new/set IE value. Thus
@@ -207,7 +189,7 @@ module riscc #(
                               (bbb[0] | ~ddd[1]);
     wire register_link_data_op = system_op & ~bbb[1];
     wire system_move_op = system_op & ~bbb[2] & bbb[1];
-    wire link_context = register_jal_op | jal16_target_phase_q;
+    wire link_context = register_jal_op | jall_target_phase_q;
     wire ie_write_op = control_plane;
     wire ie_next = control_ie_next;
 
@@ -216,31 +198,13 @@ module riscc #(
     wire mem_op = store_op | load_op;
     wire byte_access = direct_memory_plane & ~bbb[0];
     wire sign_extend_byte = f5[2];
-    // Ordinary ALU operations stage bbb. Funnels stage aaa through the same
-    // pass. Sharing the source decode maps smaller on iCE40/ECP5 at /1
-    // through /4; inferred-RF non-ECP targets and /8 use the exact path.
-    localparam COMPACT_DIRECT_PATH =
-        (W != 8) && (TARGET_ECP5 || ~INFERRED_SYNC_RF);
-    wire alu_uses_rb_stream = COMPACT_DIRECT_PATH ?
-        ((ordinary_alu_op | indexed_mem_op) & ~direct_load_op) :
-        (ordinary_alu_op | native_load_op);
+    // Ordinary ALU operations and indexed loads stage bbb. Funnels stage aaa
+    // through the same operand pass.
+    wire alu_uses_rb_stream = ordinary_alu_op | native_load_op;
     wire needs_rb_pass = alu_uses_rb_stream | funnel_op;
     wire needs_operand_pass =
         needs_rb_pass | (indexed_mem_op & ~byte_access);
     wire needs_init_pass = mem_op | slt_op | multiply_op | funnel_op;
-
-    // ------------------------------------------------------------------
-    // System profile
-    // ------------------------------------------------------------------
-    reg ie_q;
-    reg trap_q;
-    // Missing optional ops are undefined on builds that lack them.
-    // IRQ enters via word 2.
-    wire take_irq = ie_q & irq;
-    wire trap_active = trap_q;
-
-    // Set after the long head and cleared after its extension executes.
-    reg jal16_target_phase_q;
 
     // ------------------------------------------------------------------
     // Register file: 16 regs x 16 bits in one synchronous RAM (one EBR),
@@ -249,71 +213,27 @@ module riscc #(
     // Read schedule (one stream at a time):
     //   INIT2 first lap : bbb/aaa -> data_stream_q    (two-source operations)
     //   INIT            : aaa -> ALU / ddd -> funnel stream
-    //   store-data lap  : rd  -> data_stream_q        (MEM_XFER normally;
-    //                                                   second INIT2 for
-    //                                                   wide ECP5 Full)
+    //   store-data lap  : rd  -> data_stream_q        (MEM_XFER)
     //   EXECUTE         : rs1 -> ALU / pc_q   (single-stage ops)
     // ------------------------------------------------------------------
-    // A second INIT2 store-data lap maps smaller for ECP5 Full /4 and /8.
-    // /1 and /2 keep the normal MEM_XFER lap.
-    localparam STORE_DATA_IN_SECOND_INIT2 = TARGET_ECP5 && (W >= 4);
-    reg init_pass_done_q;
-    wire init2_operand_pass =
-        in_init2 &
-        (~STORE_DATA_IN_SECOND_INIT2 | ~init_pass_done_q);
-    wire store_data_init2_pass =
-        in_init2 & STORE_DATA_IN_SECOND_INIT2 & init_pass_done_q;
-    wire store_data_mem_pass =
-        in_mem_xfer & ~STORE_DATA_IN_SECOND_INIT2 & store_op;
-    wire memory_stream_pass =
-        in_mem_xfer & (STORE_DATA_IN_SECOND_INIT2 | ~store_op);
-    wire init_after_init2 =
-        needs_init_pass &
-        (~STORE_DATA_IN_SECOND_INIT2 | ~init_pass_done_q);
+    // Stores read their data during MEM_XFER at every width.
+    wire store_data_mem_pass = in_mem_xfer & store_op;
+    wire memory_stream_pass = in_mem_xfer & ~store_op;
     // bbb[0] is the bank-select bit: 0 reads S[aaa], 1 writes S[ddd]
     // (links share MTS's write path; CLI/STI have no RF traffic).
     wire src_system_bank = system_op & ~bbb[0];
-    wire dst_system_bank = (system_op & bbb[0]) | jal16_target_phase_q;
-    // At /8, the natural aaa fallback is smaller than the equivalent operand
-    // mux; narrower mappings retain the direct mux. Both schedules read aaa in
-    // INIT2 and ddd in INIT/EXECUTE.
-    wire source_is_rd;
-    wire rf_read_rb;
-    wire rf_read_rd;
-    wire [2:0] rf_operand_reg;
+    wire dst_system_bank = (system_op & bbb[0]) | jall_target_phase_q;
+    wire source_is_rd = immediate_group | funnel_op;
+    wire rf_read_rb =
+        (needs_rb_pass &
+         (in_decode | (in_init2 & ~last_slice))) |
+        (multiply_op & ((in_init2 & last_slice) |
+                        (in_init & ~last_slice)));
+    wire rf_read_rd =
+        (in_init & last_slice & (store_op | multiply_op)) |
+        store_data_mem_pass | (in_execute & multiply_op);
+    wire [2:0] rf_operand_reg = f5[4] ? aaa : bbb;
     wire [2:0] rf_src_low;
-    generate
-        if (W == 8) begin : g_w8_rf_schedule
-            wire rf_operand_pass =
-                in_decode | (init2_operand_pass & ~last_slice);
-            assign source_is_rd = immediate_group;
-            assign rf_read_rb =
-                (alu_uses_rb_stream & rf_operand_pass) |
-                (multiply_op & ((in_init2 & last_slice) |
-                                (in_init & ~last_slice)));
-            assign rf_read_rd = (funnel_op & ~rf_operand_pass) |
-                (in_init & last_slice & (store_op | multiply_op)) |
-                store_data_init2_pass |
-                store_data_mem_pass |
-                (in_execute & multiply_op);
-            assign rf_operand_reg = bbb;
-        end else begin : g_serial_rf_schedule
-            assign source_is_rd = immediate_group | funnel_op;
-            assign rf_read_rb =
-                (needs_rb_pass &
-                 (in_decode | (init2_operand_pass & ~last_slice))) |
-                (multiply_op & ((in_init2 & last_slice) |
-                                (in_init & ~last_slice)));
-            assign rf_read_rd =
-                (in_init & last_slice & (store_op | multiply_op)) |
-                store_data_init2_pass |
-                store_data_mem_pass |
-                (in_execute & multiply_op);
-            assign rf_operand_reg = (TARGET_ECP5 && (W == 2)) ?
-                (bbb ^ ({3{f5[4]}} & (bbb ^ aaa))) :
-                (f5[4] ? aaa : bbb);
-        end
-    endgenerate
     assign rf_src_low = source_is_rd ? ddd : aaa;
     wire [3:0] rf_src_reg = {src_system_bank, rf_src_low};
     wire [2:0] rf_dst_low = ddd & {3{~(trap_active | cmpi_op)}};
@@ -325,8 +245,7 @@ module riscc #(
     // byte lands in data_stream_q[15:8], avoiding a byte-duplication mux.
     wire store_high_byte = byte_access & store_op;
     wire rf_read_lane_flip =
-        ((store_data_init2_pass | store_data_mem_pass) &
-         store_high_byte & address_stream_q[0]) |
+        (store_data_mem_pass & store_high_byte & address_stream_q[0]) |
         (in_init & last_slice & store_high_byte & address_stream_q[W]);
     wire [SLICE_BITS-1:0] byte_lane_offset =
         {rf_read_lane_flip, {(SLICE_BITS-1){1'b0}}};
@@ -363,7 +282,7 @@ module riscc #(
     // ------------------------------------------------------------------
     // Immediate stream
     // ------------------------------------------------------------------
-    // LUI rotates the zero-extended imm8 stream by one byte.  Since SLICES is
+    // LUI rotates the zero-extended imm8 stream by one byte. Since SLICES is
     // a power of two, flipping the counter MSB performs that rotation.
     // ADDI/CMPI and branches sign-extend. Their selectors factor as
     // 01x and 111; the remaining immediate ALU operations zero-extend.
@@ -382,18 +301,10 @@ module riscc #(
     // ------------------------------------------------------------------
     // Serial ALU (also generates the memory address)
     // ------------------------------------------------------------------
-    // The smaller store schedule trades one extra pass for less logic in
-    // Sys /1 and Full /4,/8.
-    wire slow_direct_store = (W == 4) | (W == 8);
-    wire direct_store_stream_base = register_store_op & slow_direct_store;
     wire alu_a_enable =
-        ~(immediate_group & ~aaa[2] & ~aaa[1]) & ~direct_store_stream_base;
-    wire alu_b_zero = COMPACT_DIRECT_PATH ?
-        (system_op |
-         (register_memory_plane & f5[1] & ~bbb[0] &
-          ((W == 2) | ~f5[0]))) :
-        (system_op | (direct_load_op & ~bbb[0]) |
-         (register_store_op & ~slow_direct_store));
+        ~(immediate_group & ~aaa[2] & ~aaa[1]);
+    wire alu_b_zero = system_op |
+        (register_memory_plane & f5[1] & ~bbb[0]);
     // Logic operations ignore the adder, so their low function bits may
     // alias this control without decoding f5[2].
     wire alu_subtract =
@@ -406,7 +317,7 @@ module riscc #(
     wire [W-1:0] alu_a =
         rf_rdata & {W{alu_a_enable & ~slt_execute & ~mul_clear_product}};
     wire [W-1:0] alu_b_raw =
-        ((needs_operand_pass | multiply_op | direct_store_stream_base) ?
+        ((needs_operand_pass | multiply_op) ?
          data_stream_q[W-1:0] :
          imm_slice) &
                        {W{~(alu_b_zero | slt_execute) &
@@ -425,11 +336,7 @@ module riscc #(
         (rf_rdata[W-1] & signed_compare) ^
         ~(alu_b_raw[W-1] & signed_compare) ^ alu_sum_ext[W];
 
-    // At generic /4, exact funnel/SLT selection maps smaller. Elsewhere,
-    // memory INIT carry is dead before EXECUTE and may share the seed mux.
-    localparam EXACT_CARRY_SEED = ~TARGET_ECP5 && (W == 4);
-    wire carry_seed_op = EXACT_CARRY_SEED ?
-                         (funnel_op | slt_op) : ~multiply_op;
+    wire carry_seed_op = funnel_op | slt_op;
     always @(posedge clk)
         alu_carry_q <= (carry_seed_op & in_init & last_slice) ?
                            (f5[4] ? data_stream_q[W-1] :
@@ -448,78 +355,52 @@ module riscc #(
         ((rf_rdata & alu_b_raw) & {W{~logic_select[1]}});
     wire [W-1:0] alu_result = logic_op ? logic_result : alu_sum;
 
-    // ------------------------------------------------------------------
-    // Address stream: data byte address or next fetch byte address.
-    // ------------------------------------------------------------------
-    reg [15:0] address_stream_q;
-    wire [W-1:0] next_fetch_address_slice = next_pc_slice;
-    always @(posedge clk) begin
-        if (rst)
-            address_stream_q <= RESET_PC;
-        // During MUL, address_stream_q parks the multiplier.  Rotate one
-        // slice at each W-pass boundary; the final pass refills the fetch
-        // address stream.
-        else if (in_init | (in_execute & (~(multiply_op & repeat_exec) |
-                                       (last_slice & mul_reload_boundary))))
-            address_stream_q <= {
-                in_init ?
-                          (((W == 1) & register_store_op &
-                            ~slow_direct_store) ? rf_rdata : alu_sum) :
-                (multiply_op & repeat_exec) ? address_stream_q[W-1:0] :
-                next_fetch_address_slice,
-                address_stream_q[15:W]};
-    end
-
     // Shift operations stream ra into data_stream_q. Funnels instead stage ra,
     // then stream old rd while retaining ra[0] for FSR1; FSL1 seeds the adder
     // carry directly from staged ra[15].
-    reg funnel_bit_q;
-    // The equivalent f5[4] boundary maps better at the middle serial widths.
-    localparam F4_SHIFT_BOUNDARY =
-        INFERRED_SYNC_RF && ((W == 2) || (W == 4));
     wire right_shift_input = last_slice ?
-        (F4_SHIFT_BOUNDARY ?
-             (f5[4] ? funnel_bit_q :
-                      (arithmetic_shift & data_stream_q[W-1])) :
-             (f5[3] ? (arithmetic_shift & data_stream_q[W-1]) :
-                      funnel_bit_q)) :
+        (f5[4] ? funnel_bit_q :
+                 (arithmetic_shift & data_stream_q[W-1])) :
         data_stream_q[W];
+    wire [W:0] right_shift_base =
+        {1'b0, data_stream_q[W-1:0]} >> 1;
     wire [W-1:0] right_shift_slice =
-        (data_stream_q[W-1:0] >> 1) |
+        right_shift_base[W-1:0] |
         ({{(W-1){1'b0}}, right_shift_input} << (W - 1));
     // A left shift appends the previous slice's delayed MSB.
     wire left_shift_input = ~first_slice & left_shift_carry_q;
+    wire [W:0] left_shift_base = {data_stream_q[W-1:0], 1'b0};
     wire [W-1:0] shift_result_slice = use_left_shift_path ?
-        ((data_stream_q[W-1:0] << 1) |
+        (left_shift_base[W-1:0] |
          {{(W-1){1'b0}}, left_shift_input}) :
         right_shift_slice;
 
     // ------------------------------------------------------------------
-    // Data stream: operands, stores, loads, and JAL16 targets
+    // Data stream: operands, stores, loads, and JALL targets
     // ------------------------------------------------------------------
-    reg [15:0] data_stream_q;
-    reg load_fill_q;
-    reg memory_lane_q;
-    // The stream shifts on every counted cycle, including MEM_XFER.  INIT2
+    // The stream shifts on every counted cycle, including MEM_XFER. INIT2
     // fills and consumers shift too; idle passes rotate don't-care data that
     // the next fill/load overwrites.
     wire [W-1:0] memory_read_slice =
-        mem_rdata[slice_idx_q * W +: W];
+        mem_response_q[slice_idx_q * W +: W];
     // W=1 can select the requested byte directly while the word is streamed.
     // Wider variants stream the whole word and rotate the RF write address.
     wire byte_load = byte_access & load_op;
     wire w1_memory_slice_high = byte_load ? address_stream_q[0] :
                                             slice_idx_q[SLICE_BITS-1];
     wire w1_memory_data_bit =
-        mem_rdata[(w1_memory_slice_high * 8) +
-                  ((slice_idx_q * W) & 7)];
+        mem_response_q[(w1_memory_slice_high * 8) +
+                       ((slice_idx_q * W) & 7)];
     wire w1_byte_fill_bit = sign_extend_byte &
-                            mem_rdata[(address_stream_q[0] * 8) + 7];
+        mem_response_q[(address_stream_q[0] * 8) + 7];
     wire w1_load_stream_bit = (byte_load & slice_idx_q[SLICE_BITS-1]) ?
                               w1_byte_fill_bit : w1_memory_data_bit;
     wire [W-1:0] load_stream_slice = (W == 1) ?
         {{(W-1){1'b0}}, w1_load_stream_bit} : memory_read_slice;
     always @(posedge clk) begin
+        if (mem_valid)
+            mem_response_q <= mem_rdata;
+
         // MUL holds A in data_stream_q during INIT.
         if (slice_count_en & ~(in_init & multiply_op))
             // Repeated shift/MUL passes recycle the stream's shifted output.
@@ -532,7 +413,7 @@ module riscc #(
             memory_lane_q <= address_stream_q[0];
             load_fill_q <= sign_extend_byte &
                            (address_stream_q[0] ?
-                                mem_rdata[15] : mem_rdata[7]);
+                                mem_response_q[15] : mem_response_q[7]);
         end
         if (in_init & first_slice)
             funnel_bit_q <= data_stream_q[0];
@@ -551,7 +432,7 @@ module riscc #(
              ((W == 1) | mul_reload_boundary)))
             mul_bit_buffer_q <= address_stream_q[(2*W)-1:W];
         else if (in_execute & last_slice & repeat_exec & multiply_op)
-            mul_bit_buffer_q <= mul_bit_buffer_q >> 1;
+            mul_bit_buffer_q <= mul_bit_buffer_shift[W-1:0];
     end
 
     // ------------------------------------------------------------------
@@ -559,32 +440,19 @@ module riscc #(
     // ------------------------------------------------------------------
     reg r0_zero_q;
     reg r0_negative_q;
-    reg r0_zero_so_far_q;
     wire writes_r0 = rf_we & ~(|rf_dst_reg);
 
-    // Keeping the architectural zero flag stable until the final /4 slice
-    // maps one LUT smaller. Other widths can accumulate directly in the flag
-    // because no following instruction observes an intermediate serial value.
     always @(posedge clk)
         if (writes_r0) begin
-            if (W == 4) begin
-                r0_zero_so_far_q <=
-                    (rf_wdata == {W{1'b0}}) &
-                    (first_slice | r0_zero_so_far_q);
-                if (last_slice)
-                    r0_zero_q <=
-                        (rf_wdata == {W{1'b0}}) & r0_zero_so_far_q;
-            end else
-                r0_zero_q <= (rf_wdata == {W{1'b0}}) &
-                             (first_slice | r0_zero_q);
+            r0_zero_q <= (rf_wdata == {W{1'b0}}) &
+                         (first_slice | r0_zero_q);
 
-            if (W == 1)
-                // Intermediate serial bits are unobservable; the final write
-                // leaves bit 15 or a byte-load fill in the flag.
-                r0_negative_q <= rf_wdata[0];
-            else if (last_slice)
-                r0_negative_q <=
-                    load_high_byte ? load_fill_q : rf_wdata[W-1];
+            if ((W == 1) |
+                &(slice_idx_q ^
+                  {load_high_byte, {(SLICE_BITS-1){1'b0}}}))
+                // Test the architectural top write slice, including the
+                // high-byte rotation, rather than special-casing widths.
+                r0_negative_q <= rf_wdata[W-1];
         end
 
     wire branch_taken = branch_group & ~ddd[2] &
@@ -593,7 +461,7 @@ module riscc #(
 
     // ------------------------------------------------------------------
     // PC stream and serial adder (byte PC + offset + two-byte step).
-    // The adder output is also every link/EPC value: PC+2 for JALR/JAL16;
+    // The adder output is also every link/EPC value: PC+2 for JALR/JALL;
     // for IRQ entry the parked carry is forced to 0 (and the
     // offset gated off) so the same adder yields the raw preempted pc_q.
     // ------------------------------------------------------------------
@@ -621,13 +489,13 @@ module riscc #(
                                                    : ~(in_decode & take_irq);
 
     // Register jumps stream rs1 into data_stream_q during INIT2, sharing the
-    // same PC path used by a JAL16 target word.
+    // same PC path used by a JALL target halfword.
     wire pc_from_register = register_target_op;
     wire [15:0] irq_pc_word = 16'h0004 >> (slice_idx_q * W);
     wire [W-1:0] irq_pc_slice = irq_pc_word[W-1:0];
     wire [W-1:0] next_pc_slice =
         trap_active ? irq_pc_slice :
-        (pc_from_register | jal16_target_phase_q) ?
+        (pc_from_register | jall_target_phase_q) ?
                                          data_stream_q[W-1:0] :
                                                  pc_sum;
 
@@ -637,6 +505,20 @@ module riscc #(
         else if (in_execute & ~repeat_exec)
             pc_q <= {next_pc_slice, pc_q[15:W]};
 
+    // During MUL, address_stream_q parks the multiplier. Rotate one slice at
+    // each W-pass boundary; the final pass refills the fetch address stream.
+    always @(posedge clk) begin
+        if (rst)
+            address_stream_q <= RESET_PC;
+        else if (in_init | (in_execute & (~(multiply_op & repeat_exec) |
+                                       (last_slice & mul_reload_boundary))))
+            address_stream_q <= {
+                in_init ? alu_sum :
+                (multiply_op & repeat_exec) ? address_stream_q[W-1:0] :
+                next_pc_slice,
+                address_stream_q[15:W]};
+    end
+
     // rd write data; EPC uses the same link path.
     wire [W-1:0] link_slice = pc_sum;
     wire [W-1:0] load_slice =
@@ -644,7 +526,7 @@ module riscc #(
          (slice_idx_q[SLICE_BITS-1] ^ memory_lane_q)) ?
             {W{load_fill_q}} : data_stream_q[W-1:0];
     assign rf_wdata =
-        (trap_active | register_link_data_op | jal16_target_phase_q) ?
+        (trap_active | register_link_data_op | jall_target_phase_q) ?
             link_slice :
         load_op ? load_slice :
         shift_writeback_op ? shift_result_slice :
@@ -653,121 +535,97 @@ module riscc #(
     // ------------------------------------------------------------------
     // System profile state
     // ------------------------------------------------------------------
-    localparam DECODE_IE_UPDATE = (W == 2) || (W == 4);
-    // Updating controls at decode packs best for W=2/4.  IE is not sampled
-    // again until the next decode boundary, so this is architecturally
-    // equivalent to the execute-boundary form used for W=1/8.
-    generate
-        if (DECODE_IE_UPDATE) begin : g_decode_ie_update
-            always @(posedge clk) begin
-                if (in_decode) begin
-                    trap_q <= take_irq;
-                    if (ie_write_op)
-                        ie_q <= ie_next;
-                end
-                if (in_execute & trap_q & last_slice)
+    always @(posedge clk) begin
+        if (in_decode)
+            trap_q <= take_irq;
+        if (in_execute) begin
+            if (trap_q) begin
+                if (last_slice)
                     ie_q <= 1'b0;
-                if (rst) begin
-                    ie_q   <= 1'b0;
-                    trap_q <= 1'b0;
-                end
-            end
-        end else begin : g_execute_ie_update
-            always @(posedge clk) begin
-                if (in_decode)
-                    trap_q <= take_irq;
-                if (in_execute) begin
-                    if (trap_q) begin
-                        if (last_slice)
-                            ie_q <= 1'b0;
-                    end else if (ie_write_op & last_slice)
-                        ie_q <= ie_next;
-                end
-                if (rst) begin
-                    ie_q   <= 1'b0;
-                    trap_q <= 1'b0;
-                end
-            end
+            end else if (ie_write_op & last_slice)
+                ie_q <= ie_next;
         end
-    endgenerate
+        if (rst) begin
+            ie_q   <= 1'b0;
+            trap_q <= 1'b0;
+        end
+    end
 
     // ------------------------------------------------------------------
     // Sequencer
     // ------------------------------------------------------------------
     always @(posedge clk) begin
+        /* verilator lint_off CASEINCOMPLETE */
         case (state_q)
             ST_FETCH_WAIT:
-                state_q <= ST_FETCH_CAPTURE;
-            ST_FETCH_CAPTURE:
-                state_q <= ST_DECODE;
+                if (mem_ready)
+                    state_q <= ST_DECODE;
             ST_DECODE:
                 state_q <= take_irq ? ST_EXECUTE :
                     (needs_operand_pass |
-                     direct_store_stream_base |
                      pc_from_register |
                      variable_shift_op | multiply_op) ? ST_INIT2 :
                     needs_init_pass ? ST_INIT : ST_EXECUTE;
             ST_INIT2:
                 if (last_slice)
-                    state_q <= init_after_init2 ? ST_INIT : ST_EXECUTE;
+                    state_q <= needs_init_pass ? ST_INIT :
+                               store_op ? ST_MEM_WAIT : ST_EXECUTE;
             ST_INIT:
                 if (last_slice)
-                    state_q <= store_op ?
-                               (STORE_DATA_IN_SECOND_INIT2 ? ST_INIT2 :
-                                                             ST_MEM_XFER) :
+                    state_q <= store_op ? ST_MEM_XFER :
                                mem_op   ? ST_MEM_WAIT : ST_EXECUTE;
-            // Loads and JAL16 target words observe one memory-wait cycle.
+            // Loads and JALL target halfwords remain here through acknowledgment.
             ST_MEM_WAIT:
-                state_q <= ST_MEM_XFER;
+                if (mem_ready)
+                    state_q <= store_op ? ST_EXECUTE : ST_MEM_XFER;
             ST_MEM_XFER:
                 if (last_slice)
-                    state_q <= ST_EXECUTE;
+                    state_q <= store_op ? ST_MEM_WAIT : ST_EXECUTE;
             ST_EXECUTE:
                 if (last_slice & ~repeat_exec)
-                    state_q <= (long_form_op & ~jal16_target_phase_q &
+                    state_q <= (long_form_op & ~jall_target_phase_q &
                                 ~trap_active) ?
                                ST_MEM_WAIT : ST_FETCH_WAIT;
         endcase
+        /* verilator lint_on CASEINCOMPLETE */
         if (rst)
             state_q <= ST_FETCH_WAIT;
-
-        if (in_fetch_capture)
-            init_pass_done_q <= 1'b0;
-        if (in_init & last_slice)
-            init_pass_done_q <= 1'b1;
 
         slice_idx_q <= slice_count_en ? slice_idx_next :
                                        {SLICE_BITS{1'b0}};
 
-        if (in_fetch_capture) begin
+        if (in_fetch_wait & mem_ready) begin
             instr_q <= mem_rdata;
-            register_format_q <= mem_rdata[14];
         end
 
         if (in_execute & last_slice)
-            jal16_target_phase_q <= long_form_op & ~jal16_target_phase_q &
+            jall_target_phase_q <= long_form_op & ~jall_target_phase_q &
                                   ~trap_active;
         if (rst)
-            jal16_target_phase_q <= 1'b0;
+            jall_target_phase_q <= 1'b0;
 
     end
 
     // ------------------------------------------------------------------
-    // Memory interface.  Stores commit on EXECUTE's first cycle, while both
-    // streams still hold their pre-shift address and data.
+    // Wishbone-compatible request. The request states hold the address,
+    // data, write qualifier, and byte lanes stable until mem_ready.
     // ------------------------------------------------------------------
     // address_stream_q shadows pc_q as a byte address.
     assign mem_addr = address_stream_q[15:1];
-    assign mem_we = in_execute & first_slice & store_op & ~trap_active;
+    assign mem_valid = in_fetch_wait | in_mem_wait;
+    assign mem_we = in_mem_wait & store_op;
     assign mem_wdata = data_stream_q;  // STB data is pre-rotated to its lane.
-    assign mem_wmask = byte_access ?
+    assign mem_wmask = (in_mem_wait & byte_access) ?
                        {address_stream_q[0], ~address_stream_q[0]} :
                        2'b11;
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
     wire tr_commit_i = in_execute & last_slice & ~repeat_exec &
-                       ~(long_form_op & ~jal16_target_phase_q &
+                       ~(long_form_op & ~jall_target_phase_q &
                          ~trap_active);
     wire [SLICE_BITS-1:0] tr_wr_slice_i = slice_idx_q ^
         {load_high_byte, {(SLICE_BITS-1){1'b0}}};

@@ -1,3 +1,5 @@
+// icepi_tmds_ddr.v : TMDS encoding, serialization, and DDR output stage.
+
 `default_nettype none
 
 module icepi_tmds_ddr (
@@ -40,78 +42,78 @@ module icepi_tmds_ddr (
         .out(red_code)
     );
 
-    reg [9:0] red_word;
-    reg [9:0] green_word;
-    reg [9:0] blue_word;
+    reg [9:0] red_word_q;
+    reg [9:0] green_word_q;
+    reg [9:0] blue_word_q;
 
     always @(posedge pix_clk) begin
-        red_word <= red_code;
-        green_word <= green_code;
-        blue_word <= blue_code;
+        red_word_q <= red_code;
+        green_word_q <= green_code;
+        blue_word_q <= blue_code;
     end
 
     localparam [9:0] SHIFT_CLOCK_INIT = 10'b0000011111;
 
-    reg [9:0] red_shift = 10'd0;
-    reg [9:0] green_shift = 10'd0;
-    reg [9:0] blue_shift = 10'd0;
-    reg [9:0] clock_shift = SHIFT_CLOCK_INIT;
-    reg       shift_off_sync = 1'b0;
-    reg [7:0] shift_sync_wait = 8'd0;
-    reg [6:0] sync_fail = 7'd0;
+    reg [9:0] red_shift_q = 10'd0;
+    reg [9:0] green_shift_q = 10'd0;
+    reg [9:0] blue_shift_q = 10'd0;
+    reg [9:0] clock_shift_q = SHIFT_CLOCK_INIT;
+    reg       shift_off_sync_q = 1'b0;
+    reg [7:0] shift_sync_wait_q = 8'd0;
+    reg [6:0] sync_fail_q = 7'd0;
 
     always @(posedge pix_clk) begin
         if (rst)
-            shift_off_sync <= 1'b0;
+            shift_off_sync_q <= 1'b0;
         else
-            shift_off_sync <= (clock_shift[5:4] != SHIFT_CLOCK_INIT[5:4]);
+            shift_off_sync_q <= (clock_shift_q[5:4] != SHIFT_CLOCK_INIT[5:4]);
     end
 
     always @(posedge shift_clk) begin
         if (rst) begin
-            red_shift <= 10'd0;
-            green_shift <= 10'd0;
-            blue_shift <= 10'd0;
-            clock_shift <= SHIFT_CLOCK_INIT;
-            shift_sync_wait <= 8'd0;
-            sync_fail <= 7'd0;
+            red_shift_q <= 10'd0;
+            green_shift_q <= 10'd0;
+            blue_shift_q <= 10'd0;
+            clock_shift_q <= SHIFT_CLOCK_INIT;
+            shift_sync_wait_q <= 8'd0;
+            sync_fail_q <= 7'd0;
         end else begin
-            if (shift_off_sync) begin
-                if (shift_sync_wait[7])
-                    shift_sync_wait <= 8'd0;
+            if (shift_off_sync_q) begin
+                if (shift_sync_wait_q[7])
+                    shift_sync_wait_q <= 8'd0;
                 else
-                    shift_sync_wait <= shift_sync_wait + 8'd1;
+                    shift_sync_wait_q <= shift_sync_wait_q + 8'd1;
             end else begin
-                shift_sync_wait <= 8'd0;
+                shift_sync_wait_q <= 8'd0;
             end
 
-            if (clock_shift[5:4] == SHIFT_CLOCK_INIT[5:4]) begin
-                red_shift <= red_word;
-                green_shift <= green_word;
-                blue_shift <= blue_word;
+            if (clock_shift_q[5:4] == SHIFT_CLOCK_INIT[5:4]) begin
+                red_shift_q <= red_word_q;
+                green_shift_q <= green_word_q;
+                blue_shift_q <= blue_word_q;
             end else begin
-                red_shift <= {2'b00, red_shift[9:2]};
-                green_shift <= {2'b00, green_shift[9:2]};
-                blue_shift <= {2'b00, blue_shift[9:2]};
+                red_shift_q <= {2'b00, red_shift_q[9:2]};
+                green_shift_q <= {2'b00, green_shift_q[9:2]};
+                blue_shift_q <= {2'b00, blue_shift_q[9:2]};
             end
 
-            if (!shift_sync_wait[7]) begin
-                clock_shift <= {clock_shift[1:0], clock_shift[9:2]};
+            if (!shift_sync_wait_q[7]) begin
+                clock_shift_q <= {clock_shift_q[1:0], clock_shift_q[9:2]};
             end else begin
-                if (sync_fail[6]) begin
-                    clock_shift <= SHIFT_CLOCK_INIT;
-                    sync_fail <= 7'd0;
+                if (sync_fail_q[6]) begin
+                    clock_shift_q <= SHIFT_CLOCK_INIT;
+                    sync_fail_q <= 7'd0;
                 end else begin
-                    sync_fail <= sync_fail + 7'd1;
+                    sync_fail_q <= sync_fail_q + 7'd1;
                 end
             end
         end
     end
 
-    wire [1:0] blue_pair = blue_shift[1:0];
-    wire [1:0] green_pair = green_shift[1:0];
-    wire [1:0] red_pair = red_shift[1:0];
-    wire [1:0] clock_pair = clock_shift[1:0];
+    wire [1:0] blue_pair = blue_shift_q[1:0];
+    wire [1:0] green_pair = green_shift_q[1:0];
+    wire [1:0] red_pair = red_shift_q[1:0];
+    wire [1:0] clock_pair = clock_shift_q[1:0];
 
 `ifdef VERILATOR
     assign tmds = {clock_pair[0], red_pair[0], green_pair[0], blue_pair[0]};

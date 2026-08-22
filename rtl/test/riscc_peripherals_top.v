@@ -1,3 +1,5 @@
+// riscc_peripherals_top.v : focused integration harness for shared MMIO blocks.
+
 `timescale 10ns/10ns
 `default_nettype none
 
@@ -17,15 +19,27 @@ module riscc_peripherals_top #(
     wire [15:0] timer_rdata;
     wire [15:0] irq_rdata;
 
-    riscc_timer_mmio #(.TICK_DIV(TICK_DIV)) timer (
-        .clk(clk), .rst(rst), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
-        .cpu_wdata(cpu_wdata), .cpu_rdata(timer_rdata), .irq(timer_irq)
+    riscc_timer_mmio #(
+        .TICK_DIV(TICK_DIV)
+    ) timer (
+        .clk(clk),
+        .rst(rst),
+        .cpu_we(cpu_we),
+        .cpu_addr(cpu_addr),
+        .cpu_wdata(cpu_wdata),
+        .cpu_rdata(timer_rdata),
+        .irq(timer_irq)
     );
 
     riscc_irq_ctrl irq_ctrl (
-        .clk(clk), .rst(rst), .cpu_we(cpu_we), .cpu_addr(cpu_addr),
-        .cpu_wdata(cpu_wdata), .cpu_rdata(irq_rdata),
-        .sources({timer_irq, uart_irq}), .irq(cpu_irq)
+        .clk(clk),
+        .rst(rst),
+        .cpu_we(cpu_we),
+        .cpu_addr(cpu_addr),
+        .cpu_wdata(cpu_wdata),
+        .cpu_rdata(irq_rdata),
+        .sources({timer_irq, uart_irq}),
+        .irq(cpu_irq)
     );
 
     assign cpu_rdata = timer_rdata | irq_rdata;

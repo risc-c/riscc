@@ -1,13 +1,15 @@
+// riscc_framebuffer_mmio.v : shared CPU-to-framebuffer write aperture.
+
 `timescale 10ns/10ns
 `default_nettype none
 
-// CPU-side half of the board-local 4-bpp demo framebuffer.  The demo keeps
+// CPU-side half of the board-local 4-bpp demo framebuffer. The demo keeps
 // 24 KiB of the 64 KiB CPU address space for firmware, then places the
-// framebuffer immediately above it.  Scanout RAM and video timing remain
+// framebuffer immediately above it. Scanout RAM and video timing remain
 // board-local so each FPGA keeps its native RAM inference and output path.
 module riscc_framebuffer_mmio #(
     parameter [14:0] WORDS = 15'd19200,
-    // Allocate the upper 32 KiB except the final eight MMIO words.  This
+    // Allocate the upper 32 KiB except the final eight MMIO words. This
     // preserves the IcePi's one-bit framebuffer write decode at 50 MHz.
     parameter HIGH_HALF_APERTURE = 0
 ) (
@@ -25,7 +27,7 @@ module riscc_framebuffer_mmio #(
 );
     generate
         if (HIGH_HALF_APERTURE != 0) begin : g_high_half
-            // CPU addresses are words.  0x4000..0x7ff7 are framebuffer;
+            // CPU addresses are halfwords. 0x4000..0x7ff7 are framebuffer;
             // 0x7ff8..0x7fff remain the normal 0xfff0..0xffff MMIO space.
             assign fb_sel = cpu_addr[14] && !(&cpu_addr[14:3]);
             assign fb_addr = {1'b0, cpu_addr[13:0]};

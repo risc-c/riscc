@@ -1,9 +1,9 @@
-// riscc32_sys.v : size-oriented serial RISC-C/32 Sys core.
+// riscc32_sys.v : area-oriented serial RC32 Sys core.
 //
-// This is the RC32 Sys counterpart to riscc_sys.  It keeps the one-port,
+// This is the RC32 Sys counterpart to riscc_sys. It keeps the one-port,
 // 16-bit synchronous memory interface and serializes both the 32-bit
 // register file and the native 32-bit data transfers through W-bit slices.
-// W may be 1, 2, 4, 8, or 16.  PC, links, and all pointers are architectural
+// W may be 1, 2, 4, 8, or 16. PC, links, and all pointers are architectural
 // byte addresses; mem_addr is the corresponding physical halfword address.
 //
 // Sys adds IE/interrupt entry and JALL/JMPL to the compact RC32 Min datapath.
@@ -13,18 +13,20 @@
 
 module riscc32_sys #(
     parameter integer W = 4,
-    parameter [31:0] RESET_PC = 32'h0000_0000
+    parameter [31:0] RESET_PC = 32'h0000_0000  // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,
+    input  wire        irq,        // level-sensitive; sampled between instructions
 
-    // Halfword address.  A native data word takes two consecutive accesses.
+    // Halfword address. A native data word takes two consecutive accesses.
     output wire [31:0] mem_addr,
     input  wire [15:0] mem_rdata,
     output wire [15:0] mem_wdata,
     output wire [1:0]  mem_wmask,
-    output wire        mem_we
+    output wire        mem_we,
+    output wire        mem_valid,  // request valid; held until mem_ready
+    input  wire        mem_ready   // request accepted; read data is valid
 `ifdef RISCC_TRACE
     ,
 `include "riscc_trace_ports32.vh"
@@ -36,49 +38,42 @@ module riscc32_sys #(
     localparam integer RF_ADDR_WIDTH = 4 + SLICE_BITS;
     localparam [SLICE_BITS-1:0] LAST_MEMORY_SLICE =
         {1'b0, {(SLICE_BITS-1){1'b1}}};
-    // A second adder costs almost a whole slice at the wide datapaths.
-    // Reuse the ALU for PC updates there, accepting one extra Execute pass.
-    // At /1, /2, and /4 a separate PC adder is cheaper than the phase muxes.
-    // The wider configurations share because this core is area-first.
+
+    // ------------------------------------------------------------------
+    // Width-dependent datapath choices
+    // ------------------------------------------------------------------
+    // At /1, /2, and /4 the PC has a dedicated adder. Wider configurations
+    // share the ALU and accept one extra Execute pass.
     localparam SHARE_PC_ADDER = (W >= 8);
     // Wide datapaths form an LDPC address with the PC-update path, load the
     // word, then subtract the displacement to recover pc_next. Narrow paths
     // form the address directly in INIT because their extra ALU input is less
     // expensive than the deferred control schedule.
     localparam DEFER_LDPC = (W >= 8);
-    // At /8, LDPC reuses INIT for the restoring PC pass. At /16, retaining
-    // a one-bit load phase across the memory transfer maps smaller.
+    // At /8, LDPC reuses INIT for the restoring PC pass. At /16, a one-bit
+    // load phase is retained across the memory transfer.
     localparam RESTORE_LDPC_IN_INIT = (W == 8);
+    // At wide datapaths, a stalled store boundary is the bitwise complement
+    // of the already-available next slice, avoiding a third synchronous-RF
+    // address choice.
+    localparam USE_BOUNDARY_COMPLEMENT = (W >= 8);
+
+    // ------------------------------------------------------------------
+    // State and serial-slice counter
+    // ------------------------------------------------------------------
     // State bit 2 distinguishes the four counted datapath passes from the
-    // four control/wait states.  Target-specific /4 and /8 encodings minimize
-    // the decoded control cones; only the codes change, never the schedule.
-`ifndef RISCC_ECP5
-    localparam [2:0] ST_FETCH_CAPTURE = 3'b011;
-    localparam [2:0] ST_DECODE = 3'b001;
-    localparam [2:0] ST_FETCH_WAIT = (W == 8) ? 3'b010 : 3'b000;
-    localparam [2:0] ST_MEM_WAIT = (W == 8) ? 3'b000 : 3'b010;
-    localparam [2:0] ST_MEM_XFER = (W == 4) ? 3'b100 : 3'b111;
-    localparam [2:0] ST_INIT2 = 3'b101;
-    localparam [2:0] ST_EXECUTE = 3'b110;
-    localparam [2:0] ST_INIT = (W == 4) ? 3'b111 : 3'b100;
-`else
-    localparam [2:0] ST_FETCH_CAPTURE =
-        (W == 4) ? 3'b010 : (W == 8) ? 3'b001 : 3'b011;
-    localparam [2:0] ST_DECODE =
-        ((W == 4) | (W == 8)) ? 3'b011 : 3'b001;
-    localparam [2:0] ST_FETCH_WAIT = (W == 8) ? 3'b010 : 3'b000;
-    localparam [2:0] ST_MEM_WAIT =
-        (W == 4) ? 3'b001 :
-        (W == 8) ? 3'b000 : 3'b010;
-    localparam [2:0] ST_MEM_XFER = 3'b111;
-    localparam [2:0] ST_INIT2 = (W == 4) ? 3'b110 : 3'b101;
-    localparam [2:0] ST_EXECUTE = (W == 4) ? 3'b101 : 3'b110;
-    localparam [2:0] ST_INIT = 3'b100;
-`endif
+    // three control/wait states. Keep one encoding for every width and target.
+    localparam [2:0] ST_DECODE = 3'b000;
+    localparam [2:0] ST_FETCH_WAIT = 3'b010;
+    localparam [2:0] ST_MEM_WAIT = 3'b011;
+    localparam [2:0] ST_MEM_XFER = 3'b110;
+    localparam [2:0] ST_INIT2 = 3'b100;
+    localparam [2:0] ST_EXECUTE = 3'b111;
+    localparam [2:0] ST_INIT = 3'b101;
 
     // Counted passes always expose the current slice in bits [W-1:0].
     // INIT2 stages a second operand, INIT forms an effective address, and
-    // MEM_XFER streams a transfer.  EXECUTE writes the result; at /8 and
+    // MEM_XFER streams a transfer. EXECUTE writes the result; at /8 and
     // wider a second EXECUTE pass reuses the ALU to advance the PC.
     reg [2:0] state_q;
     reg [SLICE_BITS-1:0] slice_idx_q;
@@ -89,8 +84,9 @@ module riscc32_sys #(
     // Set after the JALL header commits, while the literal is fetched and
     // then shifted through the existing data stream into the PC.
     reg jall_phase_q;
+    wire take_irq = ie_q & irq;
+    wire trap_active = trap_q;
 
-    wire in_fetch_capture = state_q == ST_FETCH_CAPTURE;
     wire in_decode = state_q == ST_DECODE;
     wire in_init2 = state_q == ST_INIT2;
     wire in_init = state_q == ST_INIT;
@@ -107,6 +103,7 @@ module riscc32_sys #(
         (in_execute & (~SHARE_PC_ADDER | pc_phase_q)) |
         (in_init & ldpc_restore_init_op);
     wire slice_count_en = state_q[2];
+    wire memory_write_wait;
     wire [SLICE_BITS:0] slice_idx_sum =
         {1'b0, slice_idx_q} + {{SLICE_BITS{1'b0}}, 1'b1};
     wire [SLICE_BITS-1:0] slice_idx_next =
@@ -121,7 +118,14 @@ module riscc32_sys #(
     // Keep the architectural instruction word unchanged.
     reg [15:0] instr_q;
     reg [31:0] instr_pc_q;
+    reg [31:0] address_stream_q;
+    reg [31:0] data_stream_q;
+    reg [15:0] mem_response_q;
+    reg [31:0] pc_q;
+    reg pc_carry_q;
 
+    // ISA notation: ddd is the destination, aaa and bbb are source fields,
+    // and f5 is the five-bit register-operation field.
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5 = instr_q[7:3];
@@ -131,11 +135,7 @@ module riscc32_sys #(
     wire immediate_group = instr_q[15] & ~instr_q[14];
     wire register_group = instr_q[15] & instr_q[14];
     wire [W-1:0] data_stream_input;
-    // Preserve a compact register target between its data and PC passes.
-    wire hold_pc_operand = SHARE_PC_ADDER & data_execute &
-        (register_target_op | (jall_phase_q & (W != 16)));
-    wire stream_en = state_q[2] & ~hold_pc_operand;
-
+    wire [W-1:0] jall_stream_slice;
     wire branch_group = immediate_group & (aaa == 3'b111);
     // Compact opcode 001 loads M32[pc_next + 2*rel8]. It replaces compact LUI
     // and addresses a linker-managed literal directly.
@@ -195,7 +195,7 @@ module riscc32_sys #(
     wire direct_data_op = direct_mem_op;
     wire sign_extend_typed = f5[2];
 
-    // RET/RETI and CLI/STI share bbb=000.  ddd[1] distinguishes the
+    // RET/RETI and CLI/STI share bbb=000. ddd[1] distinguishes the
     // return selectors from the direct IE controls.
     wire control_ie_value = ddd[2];
     wire control_plane = system_op & ~bbb[1];
@@ -211,7 +211,7 @@ module riscc32_sys #(
     wire register_target_op = system_op & ~bbb[1] &
         (bbb[0] | ~ddd[1]);
     // The unused 00 major space aliases the shared long-call path, exactly as
-    // RC16 Sys does.  Defined JALL/JMPL encodings retain their behaviour.
+    // RC16 Sys does. Defined JALL/JMPL encodings retain their behavior.
     wire jall_op = ~instr_q[15] & ~instr_q[14] & ~trap_active;
     wire link_context = register_jal_op | jall_phase_q;
     wire memory_following_execute =
@@ -230,11 +230,20 @@ module riscc32_sys #(
     wire needs_operand_pass = needs_rb_pass;
     wire needs_init_pass =
         (mem_op & ~deferred_ldpc_op) | slt_op | funnel_op;
+    // Preserve a compact register target between its data and PC passes.
+    wire hold_pc_operand = SHARE_PC_ADDER & data_execute &
+        (register_target_op | (jall_phase_q & (W != 16)));
+    wire stream_en = slice_count_en & ~memory_write_wait &
+        ~hold_pc_operand;
 
-    // Architectural sampling occurs after the fetch/decode boundary; JALL's
-    // target literal is therefore indivisible.
-    wire take_irq = ie_q & irq;
-    wire trap_active = trap_q;
+    // Shared serial position expressed as both a 5-bit word index and a
+    // halfword-local bit offset.
+    wire [4:0] slice_idx_5 =
+        {{(5-SLICE_BITS){1'b0}}, slice_idx_q};
+    wire upper_half = slice_idx_5[SLICE_BITS-1];
+    wire [4:0] stream_bit_offset_wide =
+        {1'b0, slice_idx_5[3:0]} << $clog2(W);
+    wire [3:0] stream_bit_offset = stream_bit_offset_wide[3:0];
 
     // ------------------------------------------------------------------
     // One-port serial register file
@@ -268,9 +277,19 @@ module riscc32_sys #(
                 {(SLICE_BITS-2){1'b0}}};
         end
     endgenerate
-    wire [SLICE_BITS-1:0] rf_read_slice =
-        (slice_count_en ? slice_idx_next : {SLICE_BITS{1'b0}}) ^
-        rf_read_lane_offset;
+    wire [SLICE_BITS-1:0] rf_read_slice;
+    generate
+        if (USE_BOUNDARY_COMPLEMENT) begin : g_rf_boundary_complement
+            assign rf_read_slice =
+                ((slice_idx_next ^ {SLICE_BITS{memory_write_wait}}) &
+                 {SLICE_BITS{slice_count_en}}) ^ rf_read_lane_offset;
+        end else begin : g_rf_boundary_hold
+            assign rf_read_slice =
+                (slice_count_en ?
+                 (memory_write_wait ? slice_idx_q : slice_idx_next) :
+                 {SLICE_BITS{1'b0}}) ^ rf_read_lane_offset;
+        end
+    endgenerate
 
     wire [SLICE_BITS-1:0] rf_write_lane_offset;
     wire byte_load_unselected;
@@ -315,16 +334,10 @@ module riscc32_sys #(
     // ------------------------------------------------------------------
     wire sign_extend_imm =
         add_immediate_op | cmpi_op | branch_group | ldpc_op;
-    // Select a halfword before the serial part-select.  A 32-bit indexed
-    // mux is particularly expensive for W=1, while this uses the same small
-    // 16-bit mux in all widths.
-    wire [4:0] slice_idx_5 =
-        {{(5-SLICE_BITS){1'b0}}, slice_idx_q};
-    wire upper_half = slice_idx_5[SLICE_BITS-1];
-    wire [3:0] stream_bit_offset =
-        slice_idx_5[3:0] << $clog2(W);
+    // Select a halfword before the serial part-select. A 32-bit indexed mux is
+    // particularly expensive for W=1, so every width uses the offset above.
     // RC32 rotates compact word displacement bit i[1] above i[7:2], then
-    // appends two alignment zeroes.  Other compact immediates retain their
+    // appends two alignment zeroes. Other compact immediates retain their
     // ordinary bit-7 sign.
     wire relative_immediate_op = branch_group | ldpc_op;
     wire compact_sign_bit = ((W != 16) & relative_immediate_op) ?
@@ -391,8 +404,34 @@ module riscc32_sys #(
             assign relative_offset_slice = imm_slice;
         end
     endgenerate
+
+    // ------------------------------------------------------------------
+    // Branch shadow and PC offset
+    // ------------------------------------------------------------------
+    reg r0_zero_q;
+    reg r0_negative_q;
+    wire writes_r0 = rf_we & ~(|rf_dst_reg);
+
+    always @(posedge clk)
+        if (writes_r0) begin
+            r0_zero_q <= (rf_wdata == {W{1'b0}}) &
+                         (first_slice | r0_zero_q);
+
+            if (last_slice)
+                r0_negative_q <= rf_wdata[W-1];
+        end
+
+    wire use_pc_offset =
+        (branch_group &
+         (ddd[2] ? 1'b1 :
+          ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]))) |
+        deferred_ldpc_pre;
+    wire restore_pc_after_ldpc = deferred_ldpc_restore;
     wire [W-1:0] pc_step_slice =
         {{(W-1){1'b0}}, first_slice & ~trap_active};
+    wire [W-1:0] pc_offset_slice = restore_pc_after_ldpc ?
+        ~relative_offset_slice :
+        (relative_offset_slice & {W{use_pc_offset}}) | pc_step_slice;
     wire pc_uses_alu = SHARE_PC_ADDER & pc_execute;
     wire alu_uses_pc = ldpc_init | pc_uses_alu;
     wire [W-1:0] alu_sum_a =
@@ -438,151 +477,14 @@ module riscc32_sys #(
         ((rf_rdata & alu_b_raw) & {W{~logic_select[1]}});
     wire [W-1:0] alu_result = logic_op ? logic_result : alu_sum;
 
-    // ------------------------------------------------------------------
-    // Address, load, and shift streams
-    // ------------------------------------------------------------------
-    reg [31:0] address_stream_q;
-    reg [31:0] data_stream_q;
-
-    // As in RC16 Min, keep the address stream directly on the memory port.
-    // INIT replaces it with an effective byte address; each PC pass replaces
-    // it with the next byte PC.
-    wire [W-1:0] next_fetch_address_slice = next_pc_slice;
-
-    always @(posedge clk) begin
-        if (rst)
-            address_stream_q <= RESET_PC;
-        else if (pc_execute)
-            address_stream_q <= {
-                next_fetch_address_slice, address_stream_q[31:W]};
-        else if (in_init)
-            address_stream_q <= {alu_sum, address_stream_q[31:W]};
-    end
-
-    wire right_shift_input = last_slice ?
-        (f5[4] ? serial_bit_q :
-                 (arithmetic_shift & data_stream_q[W-1])) :
-        data_stream_q[W];
-    wire [W-1:0] shift_result_slice =
-        (data_stream_q[W-1:0] >> 1) |
-        ({{(W-1){1'b0}}, right_shift_input} << (W - 1));
-
-    wire [W-1:0] memory_read_slice =
-        mem_rdata[stream_bit_offset +: W];
-    // JALL's literal follows the normal serial stream direction: the low
-    // half comes from memory, then the header supplies address bits 20:16 and
-    // the remaining high bits are zero.  This keeps the target on the usual
-    // W-bit stream-input mux instead of adding a 32-bit parallel load path.
-    wire [15:0] jall_upper_half = {11'b0, instr_q[10:6]};
-    wire [W-1:0] jall_stream_slice;
-    generate
-        if (W == 16) begin : g_jall_stream_w16
-            assign jall_stream_slice = upper_half ? jall_upper_half :
-                                                   mem_rdata;
-        end else begin : g_jall_stream_serial
-            assign jall_stream_slice = upper_half ?
-                jall_upper_half[stream_bit_offset[3:0] +: W] :
-                mem_rdata[stream_bit_offset[3:0] +: W];
-        end
-    endgenerate
-    generate
-        if (W == 16) begin : g_jall_direct_pc
-            // The literal response remains valid through the first Execute
-            // slice; the second slice comes from the retained header. Avoid
-            // staging either half through the wide operand stream.
-            assign data_stream_input = rf_rdata;
-        end else begin : g_jall_staged_pc
-            assign data_stream_input = jall_phase_q ?
-                                       jall_stream_slice : rf_rdata;
-        end
-    endgenerate
-    wire typed_fill_bit = sign_extend_typed &
-        ((byte_load & ~address_stream_q[0]) ?
-            mem_rdata[7] : mem_rdata[15]);
-    wire [W-1:0] load_stream_slice;
-    generate
-        if (W == 1) begin : g_typed_load_w1
-            wire [3:0] typed_memory_index = byte_load ?
-                {address_stream_q[0], slice_idx_q[2:0]} : slice_idx_q[3:0];
-            wire typed_data_bit = mem_rdata[typed_memory_index];
-            wire typed_done = byte_load ?
-                (slice_idx_q[4] | slice_idx_q[3]) : slice_idx_q[4];
-            assign load_stream_slice = native_word_load ? memory_read_slice :
-                typed_done ? typed_fill_bit : typed_data_bit;
-        end else if (W == 16) begin : g_typed_load_w16
-            wire [7:0] addressed_byte = address_stream_q[0] ?
-                mem_rdata[15:8] : mem_rdata[7:0];
-            wire typed_upper = upper_half & ~native_word_load;
-            wire typed_byte_low = byte_load & ~upper_half;
-            assign load_stream_slice[15:8] = typed_upper |
-                typed_byte_low ? {8{typed_fill_bit}} :
-                memory_read_slice[15:8];
-            assign load_stream_slice[7:0] = typed_upper ?
-                {8{typed_fill_bit}} :
-                typed_byte_low ? addressed_byte :
-                memory_read_slice[7:0];
-        end else begin : g_typed_load_serial
-            assign load_stream_slice = native_word_load ? memory_read_slice :
-                upper_half ? {W{typed_fill_bit}} : memory_read_slice;
-        end
-    endgenerate
-
-    // Shift operands and stores share one serial staging register. Loads
-    // bypass it and write the RF during MEM_XFER; JALL uses its normal serial
-    // input to stage an absolute target, so it needs neither a target register
-    // nor a parallel-load mux.
-    always @(posedge clk)
-        if (stream_en)
-            data_stream_q <= {
-                data_stream_input,
-                data_stream_q[31:W]};
-
-    // ------------------------------------------------------------------
-    // Branch shadow and serial PC path
-    // ------------------------------------------------------------------
-    reg r0_zero_q;
-    reg r0_negative_q;
-    wire writes_r0 = rf_we & ~(|rf_dst_reg);
-
-    always @(posedge clk)
-        if (writes_r0) begin
-            r0_zero_q <= (rf_wdata == {W{1'b0}}) &
-                         (first_slice | r0_zero_q);
-
-            if (last_slice)
-                r0_negative_q <= rf_wdata[W-1];
-        end
-
-    wire use_pc_offset =
-        (branch_group &
-         (ddd[2] ? 1'b1 :
-          ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]))) |
-        deferred_ldpc_pre;
-    wire restore_pc_after_ldpc = deferred_ldpc_restore;
-
-    reg [31:0] pc_q;
-    reg pc_carry_q;
-    wire [W-1:0] pc_offset_slice = restore_pc_after_ldpc ?
-        ~relative_offset_slice :
-        (relative_offset_slice & {W{use_pc_offset}}) | pc_step_slice;
     wire [W:0] separate_pc_sum_ext =
         {1'b0, pc_q[W-1:0]} + {1'b0, pc_offset_slice} +
         {{W{1'b0}}, pc_carry_q};
     wire [W:0] pc_sum_ext = SHARE_PC_ADDER ?
         alu_sum_ext : separate_pc_sum_ext;
     wire [W-1:0] pc_sum = pc_sum_ext[W-1:0];
-    wire [W-1:0] irq_pc_slice;
-    generate
-        // At /2 only slice one of the fixed byte vector is nonzero.  This
-        // avoids a general variable shift in the narrowest useful Sys build.
-        if (W == 2) begin : g_irq_pc_w2
-            assign irq_pc_slice = (slice_idx_q == 4'd1) ? 2'b01 : 2'b00;
-        end else begin : g_irq_pc_generic
-            wire [31:0] irq_pc_word =
-                32'h0000_0004 >> (slice_idx_q * W);
-            assign irq_pc_slice = irq_pc_word[W-1:0];
-        end
-    endgenerate
+    wire [31:0] irq_pc_word = 32'h0000_0004 >> (slice_idx_q * W);
+    wire [W-1:0] irq_pc_slice = irq_pc_word[W-1:0];
     wire [W-1:0] next_pc_slice;
     generate
         if (W == 16) begin : g_jall_direct_next_pc
@@ -606,52 +508,121 @@ module riscc32_sys #(
             pc_q <= {next_pc_slice, pc_q[31:W]};
     end
 
-    // Loads write their formatted slices directly during MEM_XFER.  This is
+    // ------------------------------------------------------------------
+    // Address, load, and shift streams
+    // ------------------------------------------------------------------
+    // As in RC16 Min, keep the address stream directly on the memory port.
+    // INIT replaces it with an effective byte address; each PC pass replaces
+    // it with the next byte PC.
+    always @(posedge clk) begin
+        if (rst)
+            address_stream_q <= RESET_PC;
+        else if (pc_execute)
+            address_stream_q <= {
+                next_pc_slice, address_stream_q[31:W]};
+        else if (in_init)
+            address_stream_q <= {alu_sum, address_stream_q[31:W]};
+    end
+
+    wire right_shift_input = last_slice ?
+        (f5[4] ? serial_bit_q :
+                 (arithmetic_shift & data_stream_q[W-1])) :
+        data_stream_q[W];
+    wire [W:0] right_shift_base =
+        {1'b0, data_stream_q[W-1:0]} >> 1;
+    wire [W-1:0] shift_result_slice =
+        right_shift_base[W-1:0] |
+        ({{(W-1){1'b0}}, right_shift_input} << (W - 1));
+
+    wire [W-1:0] memory_read_slice =
+        mem_response_q[stream_bit_offset +: W];
+    // JALL's literal follows the normal serial stream direction: the low
+    // half comes from memory, then the header supplies address bits 20:16 and
+    // the remaining high bits are zero. This keeps the target on the usual
+    // W-bit stream-input mux instead of adding a 32-bit parallel load path.
+    wire [15:0] jall_upper_half = {11'b0, instr_q[10:6]};
+    generate
+        if (W == 16) begin : g_jall_stream_w16
+            assign jall_stream_slice = upper_half ? jall_upper_half :
+                                                   mem_response_q;
+        end else begin : g_jall_stream_serial
+            assign jall_stream_slice = upper_half ?
+                jall_upper_half[stream_bit_offset[3:0] +: W] :
+                mem_response_q[stream_bit_offset[3:0] +: W];
+        end
+    endgenerate
+    generate
+        if (W == 16) begin : g_jall_direct_pc
+            assign data_stream_input = rf_rdata;
+        end else begin : g_jall_staged_pc
+            assign data_stream_input = jall_phase_q ?
+                                       jall_stream_slice : rf_rdata;
+        end
+    endgenerate
+    wire typed_fill_bit = sign_extend_typed &
+        ((byte_load & ~address_stream_q[0]) ?
+            mem_response_q[7] : mem_response_q[15]);
+    wire [W-1:0] load_stream_slice;
+    generate
+        if (W == 1) begin : g_typed_load_w1
+            wire [3:0] typed_memory_index = byte_load ?
+                {address_stream_q[0], slice_idx_q[2:0]} : slice_idx_q[3:0];
+            wire typed_data_bit = mem_response_q[typed_memory_index];
+            wire typed_done = byte_load ?
+                (slice_idx_q[4] | slice_idx_q[3]) : slice_idx_q[4];
+            assign load_stream_slice = native_word_load ? memory_read_slice :
+                typed_done ? typed_fill_bit : typed_data_bit;
+        end else if (W == 16) begin : g_typed_load_w16
+            wire [7:0] addressed_byte = address_stream_q[0] ?
+                mem_response_q[15:8] : mem_response_q[7:0];
+            wire typed_upper = upper_half & ~native_word_load;
+            wire typed_byte_low = byte_load & ~upper_half;
+            assign load_stream_slice[15:8] = typed_upper |
+                typed_byte_low ? {8{typed_fill_bit}} :
+                memory_read_slice[15:8];
+            assign load_stream_slice[7:0] = typed_upper ?
+                {8{typed_fill_bit}} :
+                typed_byte_low ? addressed_byte :
+                memory_read_slice[7:0];
+        end else begin : g_typed_load_serial
+            assign load_stream_slice = native_word_load ? memory_read_slice :
+                upper_half ? {W{typed_fill_bit}} : memory_read_slice;
+        end
+    endgenerate
+
+    // Shift operands and stores share one serial staging register. A store
+    // request is issued on the final slice of each transferred halfword. If
+    // ACK is late, the slice counter and stream hold, keeping RF data and the
+    // assembled halfword stable without a separate memory-data register. JALL
+    // continues to use the normal stream path.
+    always @(posedge clk)
+        if (stream_en)
+            data_stream_q <= {
+                data_stream_input,
+                data_stream_q[31:W]};
+
+    // Loads write their formatted slices directly during MEM_XFER. This is
     // the same schedule at every datapath width and keeps memory data out of
     // the general operand stream.
     wire [W-1:0] direct_load_slice = byte_load_unselected ?
         {W{typed_fill_bit}} : load_stream_slice;
-    // Direct IE controls never assert rf_we, so the broad control-plane term
-    // is a don't-care for them.  The exact register-target term maps smaller
-    // at /2 and /8, and for iCE40 /4; ECP5 /4 prefers the broad term.
-    generate
-        if (W == 4) begin : g_link_first_wdata
-`ifdef RISCC_ECP5
-            assign rf_wdata = any_shift_op ? shift_result_slice :
-                (trap_active | control_plane | jall_phase_q) ? pc_sum :
-                in_mem_xfer ? direct_load_slice : alu_result;
-`else
-            assign rf_wdata = any_shift_op ? shift_result_slice :
-                (trap_active | register_target_op | jall_phase_q) ? pc_sum :
-                in_mem_xfer ? direct_load_slice : alu_result;
-`endif
-        end else if (W == 8) begin : g_exact_wide_wdata
-            assign rf_wdata = any_shift_op ? shift_result_slice :
-                in_mem_xfer ? direct_load_slice :
-                (trap_active | register_target_op | jall_phase_q) ? pc_sum :
-                alu_result;
-        end else if (W == 2) begin : g_exact_load_first_wdata
-            assign rf_wdata = any_shift_op ? shift_result_slice :
-                in_mem_xfer ? direct_load_slice :
-                (trap_active | register_target_op | jall_phase_q) ? pc_sum :
-                alu_result;
-        end else begin : g_load_first_wdata
-            assign rf_wdata = any_shift_op ? shift_result_slice :
-                in_mem_xfer ? direct_load_slice :
-                (trap_active | control_plane | jall_phase_q) ? pc_sum :
-                alu_result;
-        end
-    endgenerate
+    // Direct IE controls never assert rf_we, so the full compact control plane
+    // is a safe don't-care superset of the PC writeback instructions. Keeping
+    // that shared decode out of the result mux is both simpler and shallower.
+    assign rf_wdata = any_shift_op ? shift_result_slice :
+        in_mem_xfer ? direct_load_slice :
+        (trap_active | control_plane | jall_phase_q) ? pc_sum :
+        alu_result;
 
     // ------------------------------------------------------------------
     // Sequencer and memory interface
     // ------------------------------------------------------------------
     always @(posedge clk) begin
+        /* verilator lint_off CASEINCOMPLETE */
         case (state_q)
             ST_FETCH_WAIT:
-                state_q <= ST_FETCH_CAPTURE;
-            ST_FETCH_CAPTURE:
-                state_q <= ST_DECODE;
+                if (mem_ready)
+                    state_q <= ST_DECODE;
             ST_DECODE:
                 state_q <= take_irq ? ST_EXECUTE :
                     (needs_operand_pass | register_target_op | any_shift_op) ?
@@ -665,12 +636,15 @@ module riscc32_sys #(
                                store_op ? ST_MEM_XFER :
                                mem_op ? ST_MEM_WAIT : ST_EXECUTE;
             ST_MEM_WAIT:
-                state_q <= ST_MEM_XFER;
+                if (mem_ready)
+                    state_q <= ST_MEM_XFER;
             ST_MEM_XFER:
-                if (last_slice)
-                    state_q <= ldpc_restore_init_op ? ST_INIT : ST_EXECUTE;
-                else if (last_memory_half & native_word_load)
-                    state_q <= ST_MEM_WAIT;
+                if (~memory_write_wait) begin
+                    if (last_slice)
+                        state_q <= ldpc_restore_init_op ? ST_INIT : ST_EXECUTE;
+                    else if (last_memory_half & native_word_load)
+                        state_q <= ST_MEM_WAIT;
+                end
             ST_EXECUTE:
                 if (last_slice & (~SHARE_PC_ADDER | pc_phase_q))
                     state_q <= memory_following_execute ? ST_MEM_WAIT :
@@ -678,23 +652,33 @@ module riscc32_sys #(
             default:
                 state_q <= ST_FETCH_WAIT;
         endcase
+        /* verilator lint_on CASEINCOMPLETE */
 
         if (rst)
             state_q <= ST_FETCH_WAIT;
 
         if (rst)
             instr_pc_q <= RESET_PC;
-        else if (in_fetch_capture)
+        else if ((state_q == ST_FETCH_WAIT) & mem_ready)
             instr_pc_q <= address_stream_q;
 
         // Keep the global stream position while waiting for a native word's
-        // high halfword response.  All other idle states begin a fresh pass.
-        slice_idx_q <= slice_count_en ? slice_idx_next :
-            (in_mem_wait & slice_idx_q[SLICE_BITS-1]) ? slice_idx_q :
-            {SLICE_BITS{1'b0}};
+        // high halfword response. All other idle states begin a fresh pass.
+        slice_idx_q <= USE_BOUNDARY_COMPLEMENT ?
+            (slice_count_en ?
+                (slice_idx_next ^ {SLICE_BITS{memory_write_wait}}) :
+                (in_mem_wait & slice_idx_q[SLICE_BITS-1]) ?
+                    slice_idx_q : {SLICE_BITS{1'b0}}) :
+            (slice_count_en ?
+                (memory_write_wait ? slice_idx_q : slice_idx_next) :
+             (in_mem_wait & slice_idx_q[SLICE_BITS-1]) ?
+                slice_idx_q : {SLICE_BITS{1'b0}});
 
-        if (in_fetch_capture)
+        if ((state_q == ST_FETCH_WAIT) & mem_ready)
             instr_q <= mem_rdata;
+
+        if (mem_valid)
+            mem_response_q <= mem_rdata;
 
         if (rst)
             jall_phase_q <= 1'b0;
@@ -738,7 +722,7 @@ module riscc32_sys #(
         end
 
         if (W == 16) begin : g_wide_ldpc_phase
-            // Only /16 retains this flag.  Every completed PC pass can clear
+            // Only /16 retains this flag. Every completed PC pass can clear
             // it; an LDPC pre-pass is the sole path that writes one.
             always @(posedge clk)
                 if (rst)
@@ -755,14 +739,19 @@ module riscc32_sys #(
         end
     endgenerate
 
-    wire store_low_write = in_mem_xfer & last_memory_half & store_op;
-    wire native_store_high_write = in_mem_xfer & last_slice & native_store;
+    wire store_low_write = in_mem_xfer & store_op & last_memory_half;
+    wire native_store_high_write =
+        in_mem_xfer & native_store & last_slice;
+    wire memory_write_request = store_low_write | native_store_high_write;
+    assign memory_write_wait = memory_write_request & ~mem_ready;
     wire memory_high_half =
-        (native_word_load & slice_idx_q[SLICE_BITS-1]) |
+        (in_mem_wait & native_word_load & slice_idx_q[SLICE_BITS-1]) |
         native_store_high_write;
     assign mem_addr = {1'b0, address_stream_q[31:1]} |
         {{31{1'b0}}, memory_high_half};
-    assign mem_we = store_low_write | native_store_high_write;
+    assign mem_valid = (state_q == ST_FETCH_WAIT) | in_mem_wait |
+                       memory_write_request;
+    assign mem_we = memory_write_request;
     wire [15:0] completed_store_half;
     generate
         if (W == 16) begin : g_store_half_16
@@ -782,9 +771,12 @@ module riscc32_sys #(
             assign mem_wdata = completed_store_half;
         end
     endgenerate
-    assign mem_wmask = byte_store ?
+    assign mem_wmask = (memory_write_request & byte_store) ?
         {address_stream_q[0], ~address_stream_q[0]} : 2'b11;
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
     wire tr_commit_i = pc_execute & last_slice &

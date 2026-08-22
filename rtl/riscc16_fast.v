@@ -1,115 +1,69 @@
-// riscc16_fast.v : compact full-profile RC16 pipelined core.
+// riscc16_fast.v : compact two-stage RC16 Full pipeline.
 //
-// Fetch and execute overlap. ECP5 uses an asynchronous two-read LUTRAM RF;
-// iCE40 uses two synchronous EBR copies and stalls on a preceding-result RAW.
+// Fetch and execute overlap. The RF can use either asynchronous two-read
+// LUTRAM or two synchronous block-RAM copies. The block-RAM build stalls on a
+// preceding-result RAW.
 // Results write directly from execute without a forwarding network.
-// Memory, shifts, and soft MUL use small side states. JAL16 consumes the
-// following halfword already present in the fetch-response slot.
+// Shifts and soft MUL use small side states. Loads complete directly from the
+// acknowledged memory response. JALL consumes the following halfword already
+// present in the fetch-response slot.
 
 `default_nettype none
 
-// Device datapaths retain only splits that improve routed efficiency.
-// iCE40 and ECP5 DSP builds route logic through ALU-A; their soft builds use
-// the shared result path. Agilex soft uses both splits, while DSP uses neither.
-`ifdef RISCC_ECP5
-`ifndef RISCC_FAST_DSP
-`define RISCC_FAST_PREDECODE_IMM_SIGN
-`endif
-`ifdef RISCC_FAST_DSP
-`define RISCC_FAST_LOGIC_TO_A
-`endif
-`elsif RISCC_FAST_SYNC_RF
-`ifndef RISCC_FAST_DSP
-`define RISCC_FAST_PREDECODE_IMM_SIGN
-`endif
-`ifdef RISCC_FAST_DSP
-`define RISCC_FAST_LOGIC_TO_A
-`endif
-`elsif RISCC_FAST_AGILEX
-`ifdef RISCC_FAST_DSP
-`define RISCC_FAST_HALFWORD_CONTROL
-`else
-`define RISCC_FAST_CONTROL_NORMALIZE
-`define RISCC_FAST_LOGIC_TO_A
-`define RISCC_FAST_LOAD_EXECUTE
-`define RISCC_FAST_SUPPRESS_BRANCH_WRITE
-`endif
-`endif
-
-// Fabric implementations benefit from treating reserved RC16 encodings as
-// datapath aliases. DSP packing is better with the precise decodes below.
-`ifndef RISCC_FAST_DSP
-`define RISCC_FAST_RELAX_RESERVED_DECODE
-`endif
-
 module riscc16_fast #(
-    parameter [15:0] RESET_PC = 16'h0000
+    parameter [15:0] RESET_PC = 16'h0000  // halfword address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,
-    output wire [14:0] mem_addr,
+    input  wire        irq,        // level-sensitive; sampled between instructions
+
+    output wire [14:0] mem_addr,   // halfword address
     input  wire [15:0] mem_rdata,
     output wire [15:0] mem_wdata,
-    output wire [1:0]  mem_wmask,
-    output wire        mem_we
+    output wire [1:0]  mem_wmask,  // byte-lane enables
+    output wire        mem_we,
+    output wire        mem_valid,  // request valid; held until mem_ready
+    input  wire        mem_ready   // request accepted; read data is valid
 `ifdef RISCC_TRACE
     ,
 `include "riscc_trace_ports.vh"
 `endif
 );
 
-    // Area-tuned quadrant encoding. RUN is the pipelined steady state; the
-    // soft build also uses the raw state bits in its side-result mux.
+    // ------------------------------------------------------------------
+    // Pipeline state and side-state control
+    // ------------------------------------------------------------------
+    // RUN is the pipelined steady state; the remaining states finish operations
+    // that retain X while a younger instruction waits at the frontend.
     localparam [1:0] ST_RUN   = 2'd1;
-    localparam [1:0] ST_LOAD  = 2'd0;
     localparam [1:0] ST_SHIFT = 2'd3;
     localparam [1:0] ST_MUL   = 2'd2;
     reg [1:0] state_q;
-`ifdef RISCC_FAST_DSP
+    wire core_advance;
+    reg bus_wait_q;
     wire in_run   = state_q == ST_RUN;
-    wire in_load  = state_q == ST_LOAD;
     wire in_shift = state_q == ST_SHIFT;
     wire in_mul   = state_q == ST_MUL;
-`else
-    wire in_run   = ~state_q[1] &  state_q[0];
-    wire in_load  = ~state_q[1] & ~state_q[0];
-    wire in_shift =  state_q[1] &  state_q[0];
-    wire in_mul   =  state_q[1] & ~state_q[0];
-`endif
 
     reg interrupt_enable_q;
 
-    // One tagged synchronous fetch request feeds X directly.
+    // One tagged acknowledged fetch response feeds X directly.
     reg [14:0] fetch_pc_q;
     reg        fetch_pending_q;
     reg [14:0] fetch_pending_pc_q;
+    reg [15:0] mem_response_q;
     // Execute carries only the architectural instruction and its PC.
     reg        x_valid_q;
     reg [14:0] x_pc_q;
     reg [15:0] x_instr_q;
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-    reg        x_imm_sign_q;
-`endif
-`ifdef RISCC_ECP5
-    // ECP5 LUTRAM consumes both source addresses registered with X.
-    reg [3:0]  x_raddr_a_q;
-    reg [3:0]  x_raddr_b_q;
-`elsif RISCC_FAST_SYNC_RF
+`ifdef RISCC_FAST_SYNC_RF
     // Retain accepted source addresses for a possible synchronous-RF replay.
     reg [3:0]  x_raddr_a_q;
     reg [2:0]  x_raddr_b_q;
-`elsif RISCC_FAST_AGILEX
-`ifdef RISCC_FAST_DSP
-    // The Agilex DSP critical path benefits from predecoding only RF-B.
-    reg [3:0]  x_raddr_b_q;
-`endif
-`endif
-`ifdef RISCC_FAST_SYNC_RF
     reg        x_rf_wait_q;
 `endif
 
-    // Side-state storage.  Lifetimes do not overlap between operations.
+    // Side-state storage. Lifetimes do not overlap between operations.
     reg [15:0] side_data_q;
     reg [5:0]  side_aux_q;
 `ifdef RISCC_FAST_DSP
@@ -131,6 +85,9 @@ module riscc16_fast #(
     // ------------------------------------------------------------------
     // Instruction decode
     // ------------------------------------------------------------------
+    // ISA notation: ddd is the destination, aaa and bbb are source fields,
+    // and f5 is the five-bit register-operation field. The x_ prefix denotes
+    // the Execute-stage copy.
     wire [1:0] x_class = x_instr_q[15:14];
     wire [2:0] x_ddd = x_instr_q[13:11];
     wire [2:0] x_aaa = x_instr_q[10:8];
@@ -150,94 +107,33 @@ module riscc16_fast #(
     wire x_system = x_high_group;
     wire x_multiply = x_reg_alu_group & (&x_f5[2:0]);
     wire x_shift_left = x_reg_mem & (&x_f5[2:0]);
-`ifdef RISCC_ECP5
-    // Keep the architectural compact encoding in X. f5[0] selects the compact
-    // group and ooo[1] excludes every defined VSH selector.
+    // f5[0] selects the compact funnel group and ooo[1] excludes every
+    // defined vector-shift selector.
     wire x_funnel = x_register & x_f5[4] & ~x_f5[3] &
                       x_f5[0] & ~x_bbb[1];
-`else
-    // The synchronous-RF path keeps compact funnels in their architectural
-    // encoding; other paths normalize their fields at the fetch/X boundary.
-    wire x_funnel = x_register & x_f5[4] & ~x_f5[3] &
-`ifdef RISCC_FAST_SYNC_RF
-        ~x_bbb[1];
-`else
-        ~x_f5[2];
-`endif
-`endif
     wire x_reg_alu = x_reg_alu_group & ~x_multiply;
     wire x_shift_right = x_reg_mem & x_f5[2] & ~x_f5[1];
     wire x_shift = x_shift_right | x_shift_left;
     // LDX uses ra+rb. Direct typed accesses use ra.
     wire x_indexed_memory = x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0];
     wire x_direct_load = x_reg_mem & x_f5[1] & ~x_f5[0];
-`ifndef RISCC_FAST_SYNC_RF
-    // The asynchronous-RF mapper prefers the complete register-memory truth
-    // set factored once: LDX, direct typed loads, and STB.
-    wire x_reg_memory = x_reg_mem &
-        ((~x_f5[2] & (~x_f5[0] | x_f5[1])) |
-         (x_f5[1] & ~x_f5[0]));
-`endif
-`ifdef RISCC_FAST_SYNC_RF
     wire x_memory =
         x_imm_memory | x_indexed_memory | x_direct_load | x_reg_store;
-`else
-    wire x_memory = x_imm_memory | x_reg_memory;
-`endif
     wire x_store = x_imm_store | x_reg_store;
-`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
-    // In fabric, the smallest implementation lets reserved width selectors
-    // alias the sole defined RC16 byte path.
-    wire x_load_byte = x_direct_load | x_reg_store;
-`else
     wire x_load_byte = (x_direct_load | x_reg_store) & ~(|x_bbb);
-`endif
     wire x_signed_byte = x_load_byte & x_f5[2];
-    // RET/RETI and CLI/STI share bbb=000.  ddd[1] selects a return versus a
+    // RET/RETI and CLI/STI share bbb=000. ddd[1] selects a return versus a
     // direct IE operation; ddd[2] and ddd[0] duplicate the selected IE value.
-    // The copies are interchangeable architecturally, allowing each FPGA
-    // mapping to use the better-packed copy.
-`ifdef RISCC_FAST_CONTROL_NORMALIZE
-    // Agilex normalizes packed controls at the fetch/X boundary, retaining
-    // the original Execute decode and its established instruction fanout.
     wire x_control_ie_value = x_ddd[0];
-    wire x_return = x_system & ~x_bbb[2] & ~x_bbb[1] & ~x_bbb[0];
-    wire x_return_sets_ie = x_return & x_control_ie_value;
-    wire x_ie_control = x_system & x_bbb[2] & x_bbb[1];
-`elsif RISCC_FAST_DSP
-`ifdef RISCC_FAST_SYNC_RF
-    wire x_control_ie_value = x_ddd[0];
-`else
-    wire x_control_ie_value = x_ddd[2];
-`endif
-`else
-    wire x_control_ie_value = x_ddd[0];
-`endif
-`ifndef RISCC_FAST_CONTROL_NORMALIZE
     wire x_control_plane = x_system & ~x_bbb[1] & ~x_bbb[0];
     wire x_return = x_control_plane & ~x_ddd[1];
-    // CLI/STI select directly with ddd[1]; RETI is the only return that
-    // writes IE. DSP prefers one merged enable; fabric routes better with the
-    // two product terms preserved up to the sequential fanout.
-`ifdef RISCC_FAST_DSP
-    wire x_control_ie_write = x_control_plane &
-                              (x_ddd[1] | x_control_ie_value);
-`else
     wire x_return_sets_ie = x_return & x_control_ie_value;
     wire x_ie_control = x_control_plane & x_ddd[1];
-`endif
-`endif
     wire x_jal = x_system & ~x_bbb[2] & ~x_bbb[1] & x_bbb[0];
     wire x_move = x_system & ~x_bbb[2] & x_bbb[1];
-`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
-    // JALL is the only defined RC16 quadrant-00 instruction. In fabric,
-    // reserved encodings can alias it instead of carrying a wide comparator.
-    wire x_long_form = ~|x_class;
-`else
     wire x_long_form = (x_instr_q & 16'hc7ff) == 16'h0034;
-`endif
-    wire x_jal16 = x_long_form;
-    wire x_link_jump = x_jal | x_jal16;
+    wire x_jall = x_long_form;
+    wire x_link_jump = x_jal | x_jall;
 
     wire x_src_a_is_ddd = x_immediate | x_funnel;
     wire [3:0] x_src_a = x_branch ? 4'h0 :
@@ -247,81 +143,24 @@ module riscc16_fast #(
     // select because their B value is ignored; bbb remains decode-only.
     wire x_src_b_is_ddd = x_class[0] &
         (~x_class[1] | (x_f5[3] & x_f5[1]));
-`ifdef RISCC_ECP5
     wire [2:0] x_src_b_low = x_src_b_is_ddd ? x_ddd :
                              (x_funnel ? x_aaa : x_bbb);
     wire [3:0] x_src_b = {1'b0, x_src_b_low};
-`elsif RISCC_FAST_SYNC_RF
-    wire [2:0] x_src_b_low = x_src_b_is_ddd ? x_ddd :
-                             (x_funnel ? x_aaa : x_bbb);
-    wire [3:0] x_src_b = {1'b0, x_src_b_low};
-`else
-    wire [3:0] x_src_b = {1'b0, x_src_b_is_ddd ? x_ddd : x_bbb};
-`endif
     wire accept_fetch;
-    wire [1:0] d_class = mem_rdata[15:14];
-    wire [2:0] d_ddd_raw = mem_rdata[13:11];
-`ifdef RISCC_ECP5
+    wire rf_accept_fetch = accept_fetch & core_advance;
+    wire [1:0] d_class = mem_response_q[15:14];
+    wire [2:0] d_ddd_raw = mem_response_q[13:11];
     wire [2:0] d_ddd = d_ddd_raw;
-    wire [2:0] d_aaa = mem_rdata[10:8];
-    wire [4:0] d_f5 = mem_rdata[7:3];
-    wire [2:0] d_bbb = mem_rdata[2:0];
-`elsif RISCC_FAST_SYNC_RF
-    wire [2:0] d_ddd = d_ddd_raw;
-    wire [2:0] d_aaa = mem_rdata[10:8];
-    wire [4:0] d_f5 = mem_rdata[7:3];
-    wire [2:0] d_bbb = mem_rdata[2:0];
-`else
-    wire d_compact_funnel = &d_class & mem_rdata[7] & ~mem_rdata[6];
-`ifdef RISCC_FAST_CONTROL_NORMALIZE
-    wire d_packed_control = &d_class & (&mem_rdata[7:3]) &
-                            ~mem_rdata[2] & ~mem_rdata[1] & ~mem_rdata[0];
-    wire d_control_direct = mem_rdata[12];
-    wire d_control_ie_value = mem_rdata[11];
-    wire [2:0] d_ddd = d_ddd_raw;
-    wire [2:0] d_x_ddd = d_packed_control ?
-        {3{d_control_ie_value}} : d_ddd_raw;
-`else
-    wire [2:0] d_ddd = d_ddd_raw;
-    wire [2:0] d_x_ddd = d_ddd;
-`endif
-    wire [2:0] d_aaa = mem_rdata[10:8];
-    wire [4:0] d_f5 = d_compact_funnel ?
-        {mem_rdata[7:4], ~mem_rdata[0]} : mem_rdata[7:3];
-    wire [2:0] d_bbb =
-        d_compact_funnel ? mem_rdata[10:8] : mem_rdata[2:0];
-`ifdef RISCC_FAST_CONTROL_NORMALIZE
-    wire [2:0] d_x_bbb = d_packed_control ?
-        {d_control_direct, d_control_direct, 1'b0} :
-        d_bbb;
-`else
-    wire [2:0] d_x_bbb = d_bbb;
-`endif
-    wire [15:0] d_instr = {d_class, d_x_ddd, d_aaa, d_f5, d_x_bbb};
-`endif
+    wire [2:0] d_aaa = mem_response_q[10:8];
+    wire [4:0] d_f5 = mem_response_q[7:3];
+    wire [2:0] d_bbb = mem_response_q[2:0];
     wire d_immediate = d_class[1] & ~d_class[0];
     wire d_register = &d_class;
-`ifdef RISCC_ECP5
     wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
                     d_f5[0] & ~d_bbb[1];
-`else
-    wire d_funnel = d_register & d_f5[4] & ~d_f5[3] &
-`ifdef RISCC_FAST_SYNC_RF
-        ~d_bbb[1];
-`else
-        ~d_f5[2];
-`endif
-`endif
     wire d_high_group = d_register & d_f5[4] & d_f5[3];
     wire d_system = d_high_group;
     wire d_branch = d_immediate & (d_aaa == 3'b111);
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-    wire d_imm_sign = d_branch ? mem_rdata[0] : mem_rdata[7];
-`endif
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-    wire [15:0] d_execute_instr = d_branch ?
-        {mem_rdata[15:8], mem_rdata[0], mem_rdata[7:1]} : d_instr;
-`endif
     wire d_direct_load = d_register & ~d_f5[4] & d_f5[3] &
                          d_f5[1] & ~d_f5[0];
     wire d_uses_a = (~d_class[1] & d_class[0]) | d_register |
@@ -336,53 +175,25 @@ module riscc16_fast #(
         d_src_a_is_ddd ? {1'b0, d_ddd} : {1'b0, d_aaa};
     wire d_src_b_is_ddd = d_class[0] &
         (~d_class[1] | (d_f5[3] & d_f5[1]));
-`ifdef RISCC_ECP5
     wire [2:0] d_src_b_low = d_src_b_is_ddd ? d_ddd :
                              (d_funnel ? d_aaa : d_bbb);
     wire [3:0] d_src_b = {1'b0, d_src_b_low};
-`elsif RISCC_FAST_SYNC_RF
-    wire [2:0] d_src_b_low = d_src_b_is_ddd ? d_ddd :
-                             (d_funnel ? d_aaa : d_bbb);
-    wire [3:0] d_src_b = {1'b0, d_src_b_low};
-`else
-    wire [3:0] d_src_b = {1'b0, d_src_b_is_ddd ? d_ddd : d_bbb};
-`endif
     wire [3:0] rf_raddr_a;
     wire [3:0] rf_raddr_b;
     wire [15:0] rf_a;
     wire [15:0] rf_b;
 
 `ifdef RISCC_FAST_SYNC_RF
-    assign rf_raddr_a = accept_fetch ? d_src_a : x_raddr_a_q;
-    assign rf_raddr_b = accept_fetch ? d_src_b : {1'b0, x_raddr_b_q};
-`elsif RISCC_ECP5
-    assign rf_raddr_a = x_raddr_a_q;
-    assign rf_raddr_b = x_raddr_b_q;
-`elsif RISCC_FAST_AGILEX
-    assign rf_raddr_a = x_src_a;
-`ifdef RISCC_FAST_DSP
-    assign rf_raddr_b = x_raddr_b_q;
-`else
-    assign rf_raddr_b = x_src_b;
-`endif
+    assign rf_raddr_a = rf_accept_fetch ? d_src_a : x_raddr_a_q;
+    assign rf_raddr_b = rf_accept_fetch ? d_src_b : {1'b0, x_raddr_b_q};
 `else
     assign rf_raddr_a = x_src_a;
     assign rf_raddr_b = x_src_b;
 `endif
 
     wire [15:0] x_imm_z = {8'h00, x_instr_q[7:0]};
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-    // The rotated branch field was normalized when X was loaded.
-    wire [15:0] x_imm_s =
-        {{8{x_instr_q[7]}}, x_instr_q[7:0]};
-`else
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-    wire x_imm_sign = x_imm_sign_q;
-`else
     wire x_imm_sign = x_branch ? x_instr_q[0] : x_instr_q[7];
-`endif
     wire [15:0] x_imm_s = {{8{x_imm_sign}}, x_instr_q[7:0]};
-`endif
     wire [15:0] x_imm_u = {x_instr_q[7:0], 8'h00};
 
     wire [1:0] x_logic_op = x_imm_alu ? x_aaa[1:0] : x_f5[1:0];
@@ -390,54 +201,22 @@ module riscc16_fast #(
     wire [15:0] x_logic_result = !x_logic_op[1] ?
         (x_logic_op[0] ? (rf_a | x_logic_rhs) : (rf_a & x_logic_rhs)) :
         (rf_a ^ x_logic_rhs);
+    wire [15:0] alu_result;
 
-    // A load reuses count[0] for its captured byte lane.  side_aux_q holds
-    // {signed, byte, destination} while X retains the younger instruction.
-    wire load_high_lane = side_count_q[0];
-    wire saved_load_byte = side_aux_q[3];
-    wire saved_load_signed = side_aux_q[4];
-    wire format_load_byte = in_load & saved_load_byte;
-    wire [7:0] load_low_byte = (format_load_byte & load_high_lane) ?
+    wire [7:0] accepted_load_byte = alu_result[0] ?
         mem_rdata[15:8] : mem_rdata[7:0];
-    wire load_byte_sign = load_high_lane ? mem_rdata[15] : mem_rdata[7];
-    wire [7:0] load_high_byte = format_load_byte ?
-        {8{saved_load_signed & load_byte_sign}} : mem_rdata[15:8];
-    wire [15:0] load_value = {load_high_byte, load_low_byte};
-    wire [15:0] long_value = mem_rdata;
+    wire [15:0] accepted_load_value = x_load_byte ?
+        {{8{x_signed_byte & accepted_load_byte[7]}}, accepted_load_byte} :
+        mem_rdata;
+    wire [15:0] long_value = mem_response_q;
 
     wire x_shift_step_left =
-`ifdef RISCC_ECP5
         x_shift_left | (x_funnel & ~x_bbb[0]);
-`else
-        x_shift_left | (x_funnel &
-`ifdef RISCC_FAST_SYNC_RF
-        ~x_bbb[0]);
-`else
-        x_f5[0]);
-`endif
-`endif
-`ifdef RISCC_FAST_SYNC_RF
-    // The broader term packs with the EBR read path; the asynchronous RF
-    // mapping below benefits from retaining the operation qualifier.
-    wire x_funnel_left_bit = x_f5[4] & rf_b[15];
-`else
     wire x_funnel_left_bit = x_funnel & rf_b[15];
-`endif
-`ifdef RISCC_ECP5
     wire [15:0] x_shift_step = x_shift_step_left ?
         {rf_a[14:0], x_funnel_left_bit} :
-        {(x_f5[4] & rf_b[0]) |
-         (~x_f5[4] & x_f5[0] & rf_a[15]), rf_a[15:1]};
-`else
-    wire [15:0] x_shift_step = x_shift_step_left ?
-        {rf_a[14:0], x_funnel_left_bit} :
-        {(x_f5[4] & rf_b[0]) |
-`ifdef RISCC_FAST_SYNC_RF
-         (~x_f5[4] & x_f5[0] & rf_a[15]), rf_a[15:1]};
-`else
-         (x_f5[0] & rf_a[15]), rf_a[15:1]};
-`endif
-`endif
+        {(x_funnel & rf_b[0]) |
+         (~x_funnel & x_f5[0] & rf_a[15]), rf_a[15:1]};
     wire saved_shift_left = side_aux_q[3];
     wire saved_shift_arithmetic = side_aux_q[4];
     wire [15:0] shift_step = saved_shift_left ?
@@ -446,8 +225,7 @@ module riscc16_fast #(
     wire shift_finish = in_shift & (side_count_q[2:0] == 3'd1);
 
 `ifdef RISCC_FAST_DSP
-    // RISC-C exposes only the low product word.  Express that width directly
-    // so the DSP mapper need not preserve a routed high-half result bus.
+    // RISC-C exposes only the low product half; the high half is unobservable.
     wire [15:0] direct_mul_result = rf_a * rf_b;
     wire mul_finish = 1'b0;
 `else
@@ -485,23 +263,9 @@ module riscc16_fast #(
 `else
          x_memory));
 `endif
-`ifdef RISCC_FAST_LOGIC_TO_A
-    wire [15:0] alu_a = (normal_x && run_logic) ? x_logic_result :
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-        alu_a_is_pc ? {1'b0, x_pc_q} :
-`else
-        alu_a_is_pc ? {x_pc_q, 1'b0} :
-`endif
-        alu_a_is_rf ? rf_a : 16'h0000;
-`else
     wire [15:0] alu_a =
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-        alu_a_is_pc ? {1'b0, x_pc_q} :
-`else
         alu_a_is_pc ? {x_pc_q, 1'b0} :
-`endif
         alu_a_is_rf ? rf_a : 16'h0000;
-`endif
 `ifndef RISCC_FAST_DSP
     // Consume the saved RF multiplier MSB first. This Horner-form multiply,
     // acc = (acc << 1) + (bit ? multiplicand : 0), needs only one 16-bit
@@ -513,63 +277,32 @@ module riscc16_fast #(
     wire [15:0] immediate_result = x_aaa[0] ? x_imm_u : x_imm_z;
     wire run_imm_s = x_branch | x_imm_memory |
                      (x_imm_alu & ~x_aaa[2] & x_aaa[1]);
-`ifdef RISCC_FAST_AGILEX
     wire run_rf_b = x_reg_arithmetic | x_indexed_memory;
-    wire [15:0] run_rf_b_value = rf_b & {16{~x_load_byte}};
-`elsif RISCC_ECP5
-`ifdef RISCC_FAST_DSP
-    wire run_rf_b = x_reg_arithmetic |
-                    (x_indexed_memory & ~x_f5[1]);
-`else
-    wire run_rf_b = x_reg_arithmetic |
-                    (x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0]);
-`endif
-`else
-    wire run_rf_b = x_reg_arithmetic |
-                    (x_reg_mem & ~x_f5[2] & ~x_f5[1] & ~x_f5[0]);
-`endif
     wire run_short_imm = x_imm_alu & ~x_aaa[2] & ~x_aaa[1];
     wire x_bit_result = x_shift | x_funnel;
     wire [15:0] run_result =
-`ifndef RISCC_FAST_LOGIC_TO_A
         run_logic ? x_logic_result :
-`endif
         run_imm_s ? x_imm_s :
 `ifndef RISCC_FAST_DSP
         x_move ? rf_a :
 `endif
         run_rf_b ?
-`ifdef RISCC_FAST_AGILEX
-            run_rf_b_value :
-`else
             rf_b :
-`endif
         run_short_imm ? immediate_result :
 `ifdef RISCC_FAST_DSP
         x_move ? rf_a :
 `endif
         x_bit_result ? x_shift_step :
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-        x_jal16 ? 16'h0001 : 16'h0000;
-`else
-        x_jal16 ? 16'h0003 :
+        x_jall ? 16'h0003 :
         16'h0000;
-`endif
 `ifdef RISCC_FAST_DSP
     wire [15:0] alu_b = in_shift ? shift_step :
-`ifndef RISCC_FAST_LOAD_EXECUTE
-        in_load ? load_value :
-`endif
         normal_x ? run_result : 16'h0000;
 `else
     wire [15:0] alu_b = normal_x ? run_result :
         state_q[1] ?
             (state_q[0] ? shift_step : {side_data_q[14:0], 1'b0}) :
-`ifndef RISCC_FAST_LOAD_EXECUTE
-        ~state_q[0] ? load_value : 16'h0000;
-`else
         16'h0000;
-`endif
 `endif
     wire alu_subtract = normal_x &
         ((x_imm_arithmetic & x_aaa[0]) |
@@ -577,39 +310,37 @@ module riscc16_fast #(
     wire alu_carry_in = alu_subtract |
         (normal_x & (x_branch | x_link_jump));
 
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-    wire [15:0] adjusted_alu_b = alu_b ^ {16{alu_subtract}};
-`else
     wire pc_step = normal_x & (x_branch | x_link_jump);
     wire [15:0] stepped_alu_b =
         {alu_b[15:1], alu_b[0] | pc_step};
     wire [15:0] adjusted_alu_b = stepped_alu_b ^ {16{alu_subtract}};
-`endif
 `ifdef RISCC_FAST_DSP
-    wire [15:0] alu_result = alu_a + adjusted_alu_b +
-                             {15'h0000, alu_carry_in};
+    assign alu_result = alu_a + adjusted_alu_b +
+                        {15'h0000, alu_carry_in};
     wire alu_carry_out = (alu_a[15] & adjusted_alu_b[15]) |
         ((alu_a[15] ^ adjusted_alu_b[15]) & ~alu_result[15]);
 `else
     wire [16:0] alu_sum = {1'b0, alu_a} + {1'b0, adjusted_alu_b} +
                           {{16{1'b0}}, alu_carry_in};
-    wire [15:0] alu_result = alu_sum[15:0];
+    assign alu_result = alu_sum[15:0];
     wire alu_carry_out = alu_sum[16];
 `endif
     wire alu_overflow = (alu_a[15] ^ alu_b[15]) &
                         (alu_result[15] ^ alu_a[15]);
     wire signed_less = alu_result[15] ^ alu_overflow;
     wire unsigned_less = ~alu_carry_out;
-    wire x_compare = x_reg_alu_group & ~x_f5[2] & x_f5[1];
+    wire x_compare =
+`ifdef RISCC_FAST_DSP
+        x_reg_alu_group & ~x_f5[2] & x_f5[1];
+`else
+        x_reg_arithmetic & x_f5[1];
+`endif
     wire [15:0] execute_result =
 `ifdef RISCC_FAST_DSP
         (normal_x && x_multiply) ? direct_mul_result :
 `endif
         (normal_x && x_compare) ?
         {15'h0000, x_f5[0] ? unsigned_less : signed_less} :
-`ifdef RISCC_FAST_LOAD_EXECUTE
-        in_load ? load_value :
-`endif
         alu_result;
 
     wire x_r0_zero = ~|rf_a;
@@ -617,21 +348,17 @@ module riscc16_fast #(
         ((x_ddd[1] ? rf_a[15] : x_r0_zero) ^ x_ddd[0]);
 `ifdef RISCC_FAST_SYNC_RF
     wire x_long_wait = normal_x & x_long_form & ~fetch_pending_q;
-    wire x_jal16_execute = x_jal16 & fetch_pending_q;
+    wire x_jall_execute = x_jall & fetch_pending_q;
     wire x_redirect = normal_x &
-        ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
+        ((x_branch & x_branch_taken) | x_jal | x_return | x_jall_execute);
 `else
     wire x_long_wait = run_x & x_long_form & ~fetch_pending_q;
-    wire x_jal16_execute = run_x & x_jal16 & fetch_pending_q;
+    wire x_jall_execute = run_x & x_jall & fetch_pending_q;
     wire x_redirect = run_x &
-        ((x_branch & x_branch_taken) | x_jal | x_return | x_jal16_execute);
+        ((x_branch & x_branch_taken) | x_jal | x_return | x_jall_execute);
 `endif
-    wire [14:0] x_redirect_pc = x_jal16 ? long_value[15:1] :
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-        x_branch ? alu_result[14:0] : rf_a[15:1];
-`else
+    wire [14:0] x_redirect_pc = x_jall ? long_value[15:1] :
         x_branch ? alu_result[15:1] : rf_a[15:1];
-`endif
 
     // ------------------------------------------------------------------
     // Commit, hazards, and RF writeback
@@ -646,16 +373,16 @@ module riscc16_fast #(
         x_move | (x_link_jump & (|x_ddd));
     // All defined S-bank writes have bbb[0]=1; control-group forms have no
     // result write, so this broad bank select remains unobservable there.
-    wire x_result_system = (x_system & x_bbb[0]) | x_jal16;
+    wire x_result_system = (x_system & x_bbb[0]) | x_jall;
     wire x_cmpi = x_imm_alu & (x_aaa == 3'b011);
 
-    // Interrupt at the next populated X boundary.  Waiting for an outstanding
+    // Interrupt at the next populated X boundary. Waiting for an outstanding
     // fetch response avoids a second EPC/instruction selection path.
     wire [14:0] irq_epc = x_pc_q;
     wire [15:0] irq_instr = x_instr_q;
 
     wire x_load_start = normal_x & x_memory & ~x_store;
-    // The first bit shifts directly in X.  A count-one shift therefore
+    // The first bit shifts directly in X. A count-one shift therefore
     // completes like an ALU op; only the remaining bits use ST_SHIFT.
     wire x_multi_shift = x_shift & (|x_bbb);
     wire x_shift_start = normal_x & x_multi_shift;
@@ -664,7 +391,8 @@ module riscc16_fast #(
 `else
     wire x_mul_start = normal_x & x_multiply;
 `endif
-    wire x_side_start = x_load_start | x_shift_start | x_mul_start;
+    wire x_side_start =
+        x_shift_start | x_mul_start;
 `ifndef RISCC_FAST_DSP
     wire side_data_start = x_shift_start | x_mul_start;
     // Soft MUL consumes bit 15 in X, seeding the Horner accumulator before
@@ -673,24 +401,24 @@ module riscc16_fast #(
 `endif
     wire run_commit = normal_x & ~x_side_start &
                       ~x_long_wait;
-    wire side_commit = in_load | shift_finish | mul_finish;
+    wire side_commit = shift_finish | mul_finish;
     wire commit_valid = take_irq | run_commit | side_commit;
 
     wire run_rf_we = run_commit & x_result_we;
-    wire load_rf_we = in_load;
+    wire load_rf_we = x_load_start;
     wire shift_rf_we = shift_finish;
     wire mul_rf_we = mul_finish;
-    wire rf_we = take_irq | load_rf_we |
-                 shift_rf_we | mul_rf_we | run_rf_we;
+    wire rf_we = core_advance & (take_irq | load_rf_we |
+                 shift_rf_we | mul_rf_we | run_rf_we);
 `ifdef RISCC_FAST_DSP
-    wire side_rf_we = load_rf_we | shift_rf_we;
+    wire side_rf_we = shift_rf_we;
     wire [3:0] rf_waddr = {
         ~side_rf_we & (take_irq | x_result_system),
         side_rf_we ? side_aux_q[2:0] :
             (x_ddd & {3{~(take_irq | x_cmpi)}})
     };
 `else
-    wire saved_side_rf_we = load_rf_we | shift_rf_we;
+    wire saved_side_rf_we = shift_rf_we;
     wire gpr_side_rf_we = saved_side_rf_we | mul_rf_we;
     wire [3:0] rf_waddr = {
         ~gpr_side_rf_we & (take_irq | x_result_system),
@@ -698,17 +426,8 @@ module riscc16_fast #(
             (x_ddd & {3{~(take_irq | x_cmpi)}})
     };
 `endif
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-    wire [15:0] rf_wdata = (take_irq | x_link_jump) ?
-        {alu_result[14:0], 1'b0} : execute_result;
-`elsif RISCC_FAST_SUPPRESS_BRANCH_WRITE
-    // A taken or untaken branch never writes a register.  Do not carry its
-    // rotated-immediate adder result into the RF write-data cone.
-    wire [15:0] rf_wdata = (normal_x & x_branch) ?
-        16'h0000 : execute_result;
-`else
-    wire [15:0] rf_wdata = execute_result;
-`endif
+    wire [15:0] rf_wdata = x_load_start ? accepted_load_value :
+                            execute_result;
 `ifdef RISCC_FAST_SYNC_RF
     // A simultaneous EBR read/write may return the old word. Hold the
     // incoming instruction for one repeated read instead of forwarding.
@@ -728,15 +447,11 @@ module riscc16_fast #(
         state_next = state_q;
         case (state_q)
             ST_RUN: begin
-                if (x_load_start)
-                    state_next = ST_LOAD;
-                else if (x_shift_start)
+                if (x_shift_start)
                     state_next = ST_SHIFT;
                 else if (x_mul_start)
                     state_next = ST_MUL;
             end
-            ST_LOAD:
-                state_next = ST_RUN;
             ST_SHIFT: if (shift_finish)
                 state_next = ST_RUN;
             ST_MUL: if (mul_finish)
@@ -747,15 +462,23 @@ module riscc16_fast #(
 
     riscc16_fast_rf regs (
         .clk(clk),
-        .raddr_a(rf_raddr_a), .rdata_a(rf_a),
-        .raddr_b(rf_raddr_b), .rdata_b(rf_b),
-        .waddr(rf_waddr), .wdata(rf_wdata), .we(rf_we)
+        .raddr_a(rf_raddr_a),
+        .rdata_a(rf_a),
+        .raddr_b(rf_raddr_b),
+        .rdata_b(rf_b),
+        .waddr(rf_waddr),
+        .wdata(rf_wdata),
+        .we(rf_we)
     );
 
     // ------------------------------------------------------------------
     // Unified memory and fetch arbitration
     // ------------------------------------------------------------------
-    wire run_data_port = normal_x & x_memory;
+    // bus_wait_q keeps a data request selected even if a newly asserted IRQ
+    // suppresses normal_x. Fetch requests need only the valid hold below;
+    // their address is already the default memory-port selection.
+    wire hold_irq_request = bus_wait_q & take_irq;
+    wire run_data_port = (normal_x | hold_irq_request) & x_memory;
 `ifdef RISCC_FAST_SYNC_RF
 `ifdef RISCC_FAST_DSP
     wire rf_wait_cycle = in_run & x_rf_wait_q;
@@ -765,10 +488,10 @@ module riscc16_fast #(
 `else
     wire rf_wait_cycle = 1'b0;
 `endif
-    // Shifts move their younger instruction into X immediately.  A load uses
-    // its response cycle to launch the fetch following the held successor.
-    // Soft MUL launches its successor with final result writeback.
-    wire issue_fetch = in_load | mul_finish |
+    // Shifts move their younger instruction into X immediately. Soft MUL
+    // launches its successor with final result writeback.
+    wire issue_fetch =
+        mul_finish |
         (in_run & ~rf_wait_cycle & ~x_side_start &
         ~x_redirect & ~take_irq & ~run_data_port) |
         (x_shift_start & ~fetch_pending_q);
@@ -780,10 +503,11 @@ module riscc16_fast #(
     // clears its pending request, so it needs no separate cancel term.
     wire fetch_cancel = take_irq | x_redirect;
     wire frontend_side_finish = shift_finish;
-    assign accept_fetch = fetch_pending_q &
+    wire accept_fetch_raw = fetch_pending_q &
         ((in_run & ~rf_wait_cycle & ~x_redirect & ~take_irq &
           (~x_side_start | x_shift_start | x_load_start)) |
          (frontend_side_finish & ~x_valid_q));
+    assign accept_fetch = accept_fetch_raw;
     wire fetch_hold = rf_wait_cycle |
         (in_shift & (~shift_finish | x_valid_q));
     assign mem_addr = run_data_port ? alu_result[15:1] : fetch_pc_q;
@@ -792,226 +516,195 @@ module riscc16_fast #(
     wire [15:0] store_value = rf_b;
     wire store_lane = alu_result[0];
     assign mem_wdata = store_byte ? {2{store_value[7:0]}} : store_value;
-    assign mem_wmask = store_byte ? {store_lane, ~store_lane} : 2'b11;
+    assign mem_wmask = (run_data_port & store_byte) ?
+                       {store_lane, ~store_lane} : 2'b11;
+    assign mem_valid = ~rst &
+                       (hold_irq_request | run_data_port | issue_fetch);
+    wire memory_stall = mem_valid & ~mem_ready;
+    assign core_advance = ~memory_stall;
+
+    always @(posedge clk)
+        if (mem_valid & mem_ready)
+            mem_response_q <= mem_rdata;
+
+    always @(posedge clk)
+        bus_wait_q <= ~core_advance;
 
     // ------------------------------------------------------------------
     // Sequential pipeline and side states
     // ------------------------------------------------------------------
     always @(posedge clk) begin
-        state_q <= state_next;
+        if (core_advance) begin
+            state_q <= state_next;
 `ifdef RISCC_TRACE
-        trace_rf_we_q <= rf_we;
-        trace_rf_addr_q <= rf_waddr;
-        trace_rf_data_q <= rf_wdata;
-        if (take_irq) begin
-            trace_pc_live_q <= 15'd2;
-            trace_ie_live_q <= 1'b0;
-        end else if (run_commit) begin
-            trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
-`ifdef RISCC_FAST_DSP
-            if (x_control_ie_write)
-                trace_ie_live_q <= x_control_ie_value;
-`else
-            if (x_ie_control | x_return_sets_ie)
-                trace_ie_live_q <= x_control_ie_value;
-`endif
-        end else if (side_commit) begin
-            trace_pc_live_q <= side_pc_q + 15'd1;
-        end
-`endif
-
-        // Architectural interrupt-enable updates commit with their op.
-`ifdef RISCC_FAST_DSP
-        if (run_commit && x_control_ie_write)
-            interrupt_enable_q <= x_control_ie_value;
-`else
-        if (run_commit && (x_ie_control | x_return_sets_ie))
-            interrupt_enable_q <= x_control_ie_value;
-`endif
-
-        // Side datapath updates. The data register holds either the iterative
-        // shift value or the soft-MUL accumulator.
-`ifdef RISCC_FAST_DSP
-        if (in_shift && !shift_finish)
-            side_count_q <= side_count_q - 1'b1;
-        if (in_shift | x_shift_start)
-            side_data_q <= alu_result;
-`else
-        if (state_q[1]) begin
-            side_data_q <= alu_result;
-            side_count_q <= side_count_q - 1'b1;
-        end else if (side_data_start) begin
-            side_data_q <= side_data_input;
-        end
-`endif
-
-        // Start a side state from X. The younger D instruction is retained.
-        if (x_side_start) begin
-`ifdef RISCC_TRACE
-            side_pc_q <= x_pc_q;
-            side_instr_q <= x_trace_instr_q;
-`endif
-`ifdef RISCC_FAST_DSP
-            // DSP builds have only load and shift side states. Destination
-            // bits are common; mux only the two operation-specific bits.
-            side_aux_q[2:0] <= x_ddd;
-            if (x_load_start) begin
-                side_aux_q[4:3] <= {x_signed_byte, x_load_byte};
-                side_count_q <= {2'b00, alu_result[0]};
-            end else begin
-                side_aux_q[4:3] <= {x_f5[0], x_shift_left};
-                side_count_q <= x_bbb;
-`ifdef RISCC_FAST_SYNC_RF
-                side_aux_q[5] <= shift_successor_hazard;
-`endif
+            trace_rf_we_q <= rf_we;
+            trace_rf_addr_q <= rf_waddr;
+            trace_rf_data_q <= rf_wdata;
+            if (take_irq) begin
+                trace_pc_live_q <= 15'd2;
+                trace_ie_live_q <= 1'b0;
+            end else if (run_commit) begin
+                trace_pc_live_q <= x_redirect ? x_redirect_pc : x_pc_q + 15'd1;
+                if (x_ie_control | x_return_sets_ie)
+                    trace_ie_live_q <= x_control_ie_value;
+            end else if (side_commit) begin
+                trace_pc_live_q <= side_pc_q + 15'd1;
             end
+`endif
+
+            // Architectural interrupt-enable updates commit with their op.
+            if (run_commit && (x_ie_control | x_return_sets_ie))
+                interrupt_enable_q <= x_control_ie_value;
+
+            // Side datapath updates. The data register holds either the iterative
+            // shift value or the soft-MUL accumulator.
+`ifdef RISCC_FAST_DSP
+            if (in_shift && !shift_finish)
+                side_count_q <= side_count_q - 1'b1;
+            if (in_shift | x_shift_start)
+                side_data_q <= alu_result;
 `else
-            if (x_load_start | x_shift_start)
+            if (state_q[1]) begin
+                side_data_q <= alu_result;
+                side_count_q <= side_count_q - 1'b1;
+            end else if (side_data_start) begin
+                side_data_q <= side_data_input;
+            end
+`endif
+
+            // Start a side state from X. The younger D instruction is retained.
+            if (x_side_start) begin
+`ifdef RISCC_TRACE
+                side_pc_q <= x_pc_q;
+                side_instr_q <= x_trace_instr_q;
+`endif
+`ifdef RISCC_FAST_DSP
+                // DSP side storage serves variable shifts.
                 side_aux_q[2:0] <= x_ddd;
-            if (x_load_start) begin
-                side_aux_q[4:3] <= {x_signed_byte, x_load_byte};
-                side_count_q <= {3'b000, alu_result[0]};
-            end else if (x_shift_start) begin
-                side_aux_q[4:3] <= {x_f5[0], x_shift_left};
+                begin
+                    side_aux_q[4:3] <= {x_f5[0], x_shift_left};
+                    side_count_q <= x_bbb;
 `ifdef RISCC_FAST_SYNC_RF
-                side_aux_q[5] <= shift_successor_hazard;
+                    side_aux_q[5] <= shift_successor_hazard;
 `endif
-                side_count_q <= {1'b0, x_bbb};
-            end else if (x_mul_start) begin
-                side_count_q <= 4'd14;
+                end
+`else
+                if (x_shift_start)
+                    side_aux_q[2:0] <= x_ddd;
+                if (x_shift_start) begin
+                    side_aux_q[4:3] <= {x_f5[0], x_shift_left};
+`ifdef RISCC_FAST_SYNC_RF
+                    side_aux_q[5] <= shift_successor_hazard;
+`endif
+                    side_count_q <= {1'b0, x_bbb};
+                end else if (x_mul_start) begin
+                    side_count_q <= 4'd14;
+                end
+`endif
+            end
+
+`ifdef RISCC_FAST_SYNC_RF
+            if (accept_fetch) begin
+                x_raddr_a_q <= d_src_a;
+                x_raddr_b_q <= d_src_b[2:0];
             end
 `endif
-        end
 
-`ifdef RISCC_ECP5
-        if (accept_fetch) begin
-            x_raddr_a_q <= d_src_a;
-            x_raddr_b_q <= d_src_b;
-        end
-`elsif RISCC_FAST_SYNC_RF
-        if (accept_fetch) begin
-            x_raddr_a_q <= d_src_a;
-            x_raddr_b_q <= d_src_b[2:0];
-        end
-`elsif RISCC_FAST_AGILEX
-`ifdef RISCC_FAST_DSP
-        if (accept_fetch)
-            x_raddr_b_q <= d_src_b;
-`endif
-`endif
-
-        // X completes directly while the previous synchronous fetch response
-        // replaces it. The synchronous-RF build holds X for a repeated read
-        // when that edge also writes one of its source addresses.
-        if (in_run) begin
+            // X completes directly while the previous acknowledged fetch response
+            // replaces it. The synchronous-RF build holds X for a repeated read
+            // when that edge also writes one of its source addresses.
+            if (in_run) begin
 `ifdef RISCC_FAST_SYNC_RF
-            if (rf_wait_cycle) begin
+                if (rf_wait_cycle) begin
+                    x_rf_wait_q <= 1'b0;
+                end else begin
+`endif
+                x_valid_q <= (~take_irq & x_long_wait) | accept_fetch;
+                if (accept_fetch) begin
+                    x_pc_q <= fetch_pending_pc_q;
+                    x_instr_q <= mem_response_q;
+                end
+`ifdef RISCC_FAST_SYNC_RF
+                x_rf_wait_q <= incoming_rf_hazard | load_successor_hazard;
+                end
+`endif
+            end else if (frontend_side_finish) begin
+                if (accept_fetch) begin
+                    x_valid_q <= 1'b1;
+                    x_pc_q <= fetch_pending_pc_q;
+                    x_instr_q <= mem_response_q;
+                end
+`ifdef RISCC_FAST_SYNC_RF
+                x_rf_wait_q <= x_valid_q ? side_aux_q[5] : incoming_rf_hazard;
+`endif
+            end
+
+            // RAW stalls and iterative shifts repeat the younger instruction read
+            // in place. Advance to its successor just before it can enter X.
+            if (fetch_redirect)
+                fetch_pc_q <= fetch_redirect_pc;
+            else if (x_refetch_start && fetch_pending_q)
+                fetch_pc_q <= fetch_pending_pc_q;
+`ifdef RISCC_FAST_SYNC_RF
+            else if (rf_wait_cycle && fetch_pending_q)
+                fetch_pc_q <= fetch_pc_q + 1'b1;
+`endif
+            else if (frontend_side_finish && ~x_valid_q)
+                fetch_pc_q <= fetch_pc_q + 1'b1;
+`ifdef RISCC_FAST_SYNC_RF
+            else if (issue_fetch && ~x_shift_start &&
+                     ~incoming_rf_hazard)
+`else
+            else if (issue_fetch && ~x_shift_start)
+`endif
+                fetch_pc_q <= fetch_pc_q + 1'b1;
+
+            if (fetch_cancel) begin
+                fetch_pending_q <= 1'b0;
+            end else if (!fetch_hold) begin
+                fetch_pending_q <= issue_fetch;
+                if (issue_fetch)
+                    fetch_pending_pc_q <= fetch_pc_q;
+            end
+
+            if (take_irq)
+                interrupt_enable_q <= 1'b0;
+
+`ifdef RISCC_TRACE
+            // Execute may normalize compact encodings internally; traces retain
+            // the architectural instruction word accepted from memory.
+            if (accept_fetch)
+                x_trace_instr_q <= mem_response_q;
+`endif
+
+            if (rst) begin
+                state_q <= ST_RUN;
+                interrupt_enable_q <= 1'b0;
+                fetch_pc_q <= RESET_PC[14:0];
+                fetch_pending_q <= 1'b0;
+                x_valid_q <= 1'b0;
+`ifdef RISCC_FAST_SYNC_RF
                 x_rf_wait_q <= 1'b0;
-            end else begin
-`endif
-            x_valid_q <= (~take_irq & x_long_wait) | accept_fetch;
-            if (accept_fetch) begin
-                x_pc_q <= fetch_pending_pc_q;
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-                x_imm_sign_q <= d_imm_sign;
-`endif
-`ifdef RISCC_ECP5
-                x_instr_q <= mem_rdata;
-`elsif RISCC_FAST_SYNC_RF
-                x_instr_q <= mem_rdata;
-`elsif RISCC_FAST_HALFWORD_CONTROL
-                x_instr_q <= d_execute_instr;
-`else
-                x_instr_q <= d_instr;
-`endif
-            end
-`ifdef RISCC_FAST_SYNC_RF
-            x_rf_wait_q <= incoming_rf_hazard | load_successor_hazard;
-            end
-`endif
-        end else if (frontend_side_finish) begin
-            if (accept_fetch) begin
-                x_valid_q <= 1'b1;
-                x_pc_q <= fetch_pending_pc_q;
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-                x_imm_sign_q <= d_imm_sign;
-`endif
-`ifdef RISCC_ECP5
-                x_instr_q <= mem_rdata;
-`elsif RISCC_FAST_SYNC_RF
-                x_instr_q <= mem_rdata;
-`elsif RISCC_FAST_HALFWORD_CONTROL
-                x_instr_q <= d_execute_instr;
-`else
-                x_instr_q <= d_instr;
-`endif
-            end
-`ifdef RISCC_FAST_SYNC_RF
-            x_rf_wait_q <= x_valid_q ? side_aux_q[5] : incoming_rf_hazard;
-`endif
-        end
-
-        // RAW stalls and iterative shifts repeat the younger instruction read
-        // in place. Advance to its successor just before it can enter X.
-        if (fetch_redirect)
-            fetch_pc_q <= fetch_redirect_pc;
-        else if (x_refetch_start && fetch_pending_q)
-            fetch_pc_q <= fetch_pending_pc_q;
-`ifdef RISCC_FAST_SYNC_RF
-        else if (rf_wait_cycle && fetch_pending_q)
-            fetch_pc_q <= fetch_pc_q + 1'b1;
-`endif
-        else if (frontend_side_finish && ~x_valid_q)
-            fetch_pc_q <= fetch_pc_q + 1'b1;
-`ifdef RISCC_FAST_SYNC_RF
-        else if (issue_fetch && ~x_shift_start &&
-                 ~incoming_rf_hazard &&
-                 ~(in_load && x_rf_wait_q))
-`else
-        else if (issue_fetch && ~x_shift_start)
-`endif
-            fetch_pc_q <= fetch_pc_q + 1'b1;
-
-        if (fetch_cancel) begin
-            fetch_pending_q <= 1'b0;
-        end else if (!fetch_hold) begin
-            fetch_pending_q <= issue_fetch;
-            if (issue_fetch)
-                fetch_pending_pc_q <= fetch_pc_q;
-        end
-
-        if (take_irq)
-            interrupt_enable_q <= 1'b0;
-
-`ifdef RISCC_TRACE
-        // Execute may normalize compact encodings internally; traces retain
-        // the architectural instruction word accepted from memory.
-        if (accept_fetch)
-            x_trace_instr_q <= mem_rdata;
-`endif
-
-        if (rst) begin
-            state_q <= ST_RUN;
-            interrupt_enable_q <= 1'b0;
-            fetch_pc_q <= RESET_PC[14:0];
-            fetch_pending_q <= 1'b0;
-            x_valid_q <= 1'b0;
-`ifdef RISCC_FAST_SYNC_RF
-            x_rf_wait_q <= 1'b0;
 `endif
 `ifdef RISCC_TRACE
-            trace_pc_live_q <= RESET_PC[14:0];
-            trace_ie_live_q <= 1'b0;
-            trace_rf_we_q <= 1'b0;
+                trace_pc_live_q <= RESET_PC[14:0];
+                trace_ie_live_q <= 1'b0;
+                trace_rf_we_q <= 1'b0;
 `endif
+            end
         end
     end
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 16;
     wire [15:0] commit_instr = take_irq ? irq_instr :
         run_commit ? x_trace_instr_q : side_instr_q;
-    wire tr_commit_i = commit_valid;
+    // A stalled request holds the Execute stage in place. Do not let the
+    // trace shadow observe that held instruction as an architectural commit.
+    wire tr_commit_i = commit_valid & core_advance;
     wire [14:0] tr_pc_i = trace_pc_live_q;
     wire [15:0] tr_ir_i = commit_instr;
     wire tr_ie_i = trace_ie_live_q;
@@ -1025,8 +718,8 @@ module riscc16_fast #(
 
 endmodule
 
-// ECP5 uses two distributed-RAM replicas for asynchronous reads. iCE40 uses
-// two synchronous EBR replicas, one read port each, with broadcast writes.
+// ECP5 can use two distributed-RAM replicas for asynchronous reads or two
+// synchronous EBR replicas, one read port each, with broadcast writes.
 module riscc16_fast_rf (
     input  wire        clk,
     input  wire [3:0]  raddr_a,
@@ -1038,26 +731,8 @@ module riscc16_fast_rf (
     input  wire        we
 );
 `ifdef RISCC_FAST_SYNC_RF
-`ifdef SYNTHESIS
-    wire [10:0] raddr_a_phys = {7'b0000000, raddr_a};
-    wire [10:0] raddr_b_phys = {7'b0000000, raddr_b};
-    wire [10:0] waddr_phys = {7'b0000000, waddr};
-
-    SB_RAM40_4K #(.READ_MODE(0), .WRITE_MODE(0)) ram_a (
-        .RDATA(rdata_a), .RADDR(raddr_a_phys),
-        .RCLK(clk), .RCLKE(1'b1), .RE(1'b1),
-        .WADDR(waddr_phys), .WCLK(clk), .WCLKE(1'b1), .WE(we),
-        .MASK(16'h0000), .WDATA(wdata)
-    );
-    SB_RAM40_4K #(.READ_MODE(0), .WRITE_MODE(0)) ram_b (
-        .RDATA(rdata_b), .RADDR(raddr_b_phys),
-        .RCLK(clk), .RCLKE(1'b1), .RE(1'b1),
-        .WADDR(waddr_phys), .WCLK(clk), .WCLKE(1'b1), .WE(we),
-        .MASK(16'h0000), .WDATA(wdata)
-    );
-`else
-    reg [15:0] mem_a [0:15];
-    reg [15:0] mem_b [0:15];
+    (* ram_style = "block" *) reg [15:0] mem_a [0:15];
+    (* ram_style = "block" *) reg [15:0] mem_b [0:15];
     reg [15:0] rdata_a_q;
     reg [15:0] rdata_b_q;
 
@@ -1072,7 +747,6 @@ module riscc16_fast_rf (
             mem_b[waddr] <= wdata;
         end
     end
-`endif
 `elsif RISCC_ECP5
     (* ram_style = "distributed" *) reg [15:0] mem_a [0:15];
     (* ram_style = "distributed" *) reg [15:0] mem_b [0:15];
@@ -1112,27 +786,5 @@ module riscc16_fast_rf (
     end
 `endif
 endmodule
-
-`ifdef RISCC_FAST_LOAD_EXECUTE
-`undef RISCC_FAST_LOAD_EXECUTE
-`endif
-`ifdef RISCC_FAST_LOGIC_TO_A
-`undef RISCC_FAST_LOGIC_TO_A
-`endif
-`ifdef RISCC_FAST_CONTROL_NORMALIZE
-`undef RISCC_FAST_CONTROL_NORMALIZE
-`endif
-`ifdef RISCC_FAST_SUPPRESS_BRANCH_WRITE
-`undef RISCC_FAST_SUPPRESS_BRANCH_WRITE
-`endif
-`ifdef RISCC_FAST_HALFWORD_CONTROL
-`undef RISCC_FAST_HALFWORD_CONTROL
-`endif
-`ifdef RISCC_FAST_PREDECODE_IMM_SIGN
-`undef RISCC_FAST_PREDECODE_IMM_SIGN
-`endif
-`ifdef RISCC_FAST_RELAX_RESERVED_DECODE
-`undef RISCC_FAST_RELAX_RESERVED_DECODE
-`endif
 
 `default_nettype wire

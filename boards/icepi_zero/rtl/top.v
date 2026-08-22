@@ -1,3 +1,5 @@
+// top.v : physical top level for the IcePi Zero board.
+
 `default_nettype none
 
 module top (
@@ -21,14 +23,14 @@ module top (
         .locked(pll_locked)
     );
 
-    reg [7:0] rst_ctr = 8'h00;
-    wire soc_rst = !rst_ctr[7];
+    reg [7:0] reset_count_q = 8'h00;
+    wire soc_rst = !reset_count_q[7];
 
     always @(posedge clk) begin
         if (!pll_locked)
-            rst_ctr <= 8'h00;
-        else if (!rst_ctr[7])
-            rst_ctr <= rst_ctr + 8'd1;
+            reset_count_q <= 8'h00;
+        else if (!reset_count_q[7])
+            reset_count_q <= reset_count_q + 8'd1;
     end
 
     wire        fb_we;

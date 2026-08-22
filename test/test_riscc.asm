@@ -360,6 +360,10 @@ br_nz_ok:
     LDI16 r5, 0xFF80
     SUB   r0, r3, r5
     BNEZ  fail_late
+    LDB   r0, [r1]
+    BLTZ  fail_late          ; zero-extended high-lane byte is non-negative
+    LDBS  r0, [r1]
+    BGEZ  fail_late          ; sign-extended high-lane byte is negative
 
     LDI16 r5, 0x1234
     ST   r5, [r6+2]

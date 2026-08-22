@@ -1,14 +1,16 @@
+// top.v : physical top level for the Atum A3 Nano board.
+
 `default_nettype none
 
 module top (
-    input wire CLOCK0_50,
-    input wire CLOCK1_50,
-    input wire [1:0] KEY,
+    input  wire CLOCK0_50,
+    input  wire CLOCK1_50,
+    input  wire [1:0] KEY,
     output wire FPGA_UART_TX,
-    input wire FPGA_UART_RX,
+    input  wire FPGA_UART_RX,
     output wire [3:0] LED,
-    inout wire HDMI_I2C_SCL,
-    inout wire HDMI_I2C_SDA,
+    inout  wire HDMI_I2C_SCL,
+    inout  wire HDMI_I2C_SDA,
     output wire HDMI_TX_HS,
     output wire HDMI_TX_VS,
     output wire [23:0] HDMI_TX_D,
@@ -20,7 +22,9 @@ module top (
     wire sys_clk;
     wire sys_pll_locked;
     atum_sys_pll sys_pll (
-        .refclk(CLOCK1_50), .rst(1'b0), .outclk(sys_clk),
+        .refclk(CLOCK1_50),
+        .rst(1'b0),
+        .outclk(sys_clk),
         .locked(sys_pll_locked)
     );
 
@@ -40,8 +44,8 @@ module top (
     wire configuration_ready = ~ninit_done;
     atum_reset_release config_reset_release (.ninit_done(ninit_done));
 
-    // These status signals are asynchronous to sys_clk.  Synchronize them
-    // before allowing the reset counter to release the SoC.  The long count
+    // These status signals are asynchronous to sys_clk. Synchronize them
+    // before allowing the reset counter to release the SoC. The long count
     // additionally debounces PLL lock and the push button.
     (* ASYNC_REG = "TRUE" *) reg [1:0] configuration_ready_sync;
     (* ASYNC_REG = "TRUE" *) reg [1:0] pix_pll_lock_sync;
@@ -61,7 +65,7 @@ module top (
     wire soc_rst = !reset_count[17];
 
     // Assert reset immediately, then deassert it through two flops in the
-    // pixel domain.  This avoids releasing the HDMI logic near a pixel edge.
+    // pixel domain. This avoids releasing the HDMI logic near a pixel edge.
     (* ASYNC_REG = "TRUE" *) reg [1:0] video_rst_sync;
     always @(posedge pix_clk or posedge soc_rst) begin
         if (soc_rst)
@@ -81,30 +85,50 @@ module top (
         .MEM_HEX("mem/demo.memh"),
         .UART_CLK_DIV(1953)
     ) soc (
-        .clk(sys_clk), .rst(soc_rst), .uart_rx(FPGA_UART_RX),
-        .button(KEY), .uart_tx(FPGA_UART_TX), .led(led_raw), .fb_we(fb_we),
-        .fb_addr(fb_addr), .fb_wmask(fb_wmask), .fb_wdata(fb_wdata),
-        .dbg_fb_writes(), .dbg_uart_tx_count(), .dbg_uart_rx_count()
+        .clk(sys_clk),
+        .rst(soc_rst),
+        .uart_rx(FPGA_UART_RX),
+        .button(KEY),
+        .uart_tx(FPGA_UART_TX),
+        .led(led_raw),
+        .fb_we(fb_we),
+        .fb_addr(fb_addr),
+        .fb_wmask(fb_wmask),
+        .fb_wdata(fb_wdata),
+        .dbg_fb_writes(),
+        .dbg_uart_tx_count(),
+        .dbg_uart_rx_count()
     );
 
     atum_fb_hdmi video (
-        .cpu_clk(sys_clk), .cpu_we(fb_we), .cpu_addr(fb_addr),
-        .cpu_wmask(fb_wmask), .cpu_wdata(fb_wdata), .pix_clk(pix_clk),
-        .rst(video_rst_sync[1]), .pix_clk_out(HDMI_TX_CLK_p),
-        .hdmi_hs(HDMI_TX_HS), .hdmi_vs(HDMI_TX_VS), .hdmi_de(HDMI_TX_DE),
+        .cpu_clk(sys_clk),
+        .cpu_we(fb_we),
+        .cpu_addr(fb_addr),
+        .cpu_wmask(fb_wmask),
+        .cpu_wdata(fb_wdata),
+        .pix_clk(pix_clk),
+        .rst(video_rst_sync[1]),
+        .pix_clk_out(HDMI_TX_CLK_p),
+        .hdmi_hs(HDMI_TX_HS),
+        .hdmi_vs(HDMI_TX_VS),
+        .hdmi_de(HDMI_TX_DE),
         .hdmi_rgb(HDMI_TX_D)
     );
 
     atum_tfp410_init #(
-        .POWERUP_CYCLES(4500000), .I2C_HALF_CYCLES(1125)
+        .POWERUP_CYCLES(4500000),
+        .I2C_HALF_CYCLES(1125)
     ) tfp410_init (
-        .clk(sys_clk), .rst(soc_rst), .scl(HDMI_I2C_SCL),
-        .sda(HDMI_I2C_SDA), .ready(tfp410_ready)
+        .clk(sys_clk),
+        .rst(soc_rst),
+        .scl(HDMI_I2C_SCL),
+        .sda(HDMI_I2C_SDA),
+        .ready(tfp410_ready)
     );
 
     assign HDMI_ISEL = 1'b1;
     assign HDMI_PD_n = 1'b1;
-    // The physical LEDs are active low.  LED3 indicates transmitter setup.
+    // The physical LEDs are active low. LED3 indicates transmitter setup.
     assign LED = ~{tfp410_ready, led_raw[2:0]};
 endmodule
 

@@ -1,4 +1,4 @@
-// RISC-C Nano bit-serial implementation.
+// riscc_nano.v : smallest bit-serial RC16 Nano core.
 //
 // Nano keeps the RC16 /1 serial datapath shape but removes the expensive
 // architectural conveniences: no S-bank, no system/interrupt profile,
@@ -7,16 +7,16 @@
 `default_nettype none
 
 module riscc_nano #(
-    parameter [15:0] RESET_PC = 16'h0000
+    parameter [15:0] RESET_PC = 16'h0000  // byte address
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        irq,
+    input  wire        irq,        // unused by the Nano profile
 
-    output wire [14:0] mem_addr,
-    output wire        mem_valid,
-    output wire        mem_we,
-    output wire [1:0]  mem_wmask,
+    output wire [14:0] mem_addr,   // halfword address
+    output wire        mem_oe_n,   // active-low read request
+    output wire        mem_we,     // one-cycle write strobe
+    output wire [1:0]  mem_wmask,  // byte-lane enables
     output wire [15:0] mem_wdata,
     input  wire [15:0] mem_rdata
 `ifdef RISCC_TRACE
@@ -31,21 +31,19 @@ module riscc_nano #(
     // ------------------------------------------------------------------
     // State encoding and stored datapath state
     // ------------------------------------------------------------------
-    // The encoding is intentional: state_q[2] is high throughout the four
-    // 16-cycle serial phases, and state_q[0] also simplifies the RF schedule.
-    localparam [2:0] ST_FETCH_WAIT    = 3'd0;  // issue synchronous fetch
-    localparam [2:0] ST_FETCH_CAPTURE = 3'd1;  // capture fetched instruction
+    // The encoding is structural: state_q[2] is high throughout the four
+    // 16-cycle serial phases, and state_q[0] directly drives the RF schedule.
+    localparam [2:0] ST_FETCH_WAIT    = 3'd3;  // issue synchronous fetch
+    localparam [2:0] ST_FETCH_CAPTURE = 3'd0;  // capture fetched instruction
     localparam [2:0] ST_DECODE        = 3'd2;
-    localparam [2:0] ST_MEM_WAIT      = 3'd3;  // memory read latency
-    localparam [2:0] ST_READ_RB       = 3'd4;  // stream rb into operand_b_q
-    localparam [2:0] ST_PREP          = 3'd5;  // address/SLTU prepass
-    localparam [2:0] ST_MEM_XFER      = 3'd6;  // load/store data stream
-    localparam [2:0] ST_EXECUTE       = 3'd7;
+    localparam [2:0] ST_MEM_WAIT      = 3'd1;  // memory read latency
+    localparam [2:0] ST_READ_RB       = 3'd6;  // stream rb into operand_b_q
+    localparam [2:0] ST_PREP          = 3'd7;  // address/SLTU prepass
+    localparam [2:0] ST_MEM_XFER      = 3'd4;  // load/store data stream
+    localparam [2:0] ST_EXECUTE       = 3'd5;
 
     reg [2:0] state_q;
     reg [15:0] instr_q;
-    // Physical bit 14 is duplicated for a shallow format decode.
-    reg        register_format_q;
     reg [15:0] pc_q;
     reg [15:0] addr_q;
     reg [15:0] operand_b_q;
@@ -66,22 +64,24 @@ module riscc_nano #(
     wire last_bit  = &bit_idx_q;
 
     // ------------------------------------------------------------------
-    // Instruction fields and deliberately loose nano decode
+    // Instruction fields and deliberately loose Nano decode
     // ------------------------------------------------------------------
-    // Contiguous register-format fields: 11 ddd aaa fffff bbb.
+    // ISA notation: ddd is the destination, aaa and bbb are source fields,
+    // and f5 is the five-bit register-operation field.
     wire [2:0] ddd = instr_q[13:11];
     wire [2:0] aaa = instr_q[10:8];
     wire [4:0] f5  = instr_q[7:3];
     wire [2:0] bbb = instr_q[2:0];
 
     wire imm_mem_group   = ~instr_q[15];
-    wire immediate_group = instr_q[15] & ~register_format_q;
-    wire register_group  =  instr_q[15] &  register_format_q;
+    wire immediate_group = instr_q[15] & ~instr_q[14];
+    wire register_group  = instr_q[15] & instr_q[14];
 
     wire branch_group = immediate_group & (aaa == 3'b111);
     wire immediate_write_op = immediate_group & ~branch_group;
-    // Undefined nano encodings intentionally alias implemented operations;
-    // software must not depend on the aliases.  Loose decode costs fewer LUTs.
+    // Undefined Nano encodings intentionally alias implemented operations;
+    // software must not depend on the aliases. No separate reserved-opcode
+    // decode is implemented.
 
     wire alu_function_group = ~f5[4] & ~f5[3];
     wire memory_shift_function_group = ~f5[4] &  f5[3];
@@ -89,7 +89,7 @@ module riscc_nano #(
     wire register_alu_op = register_group & alu_function_group;
     wire register_memory_shift_group = register_group & memory_shift_function_group;
 
-    // SLT is undefined in nano; let its slot alias to SLTU.
+    // SLT is undefined in Nano; let its slot alias to SLTU.
     wire sltu_op = register_alu_op & ~f5[2] & f5[1];
     // Nano keeps only the right-shift arm. Full-only 01_110/111 may alias it.
     wire right_shift_op = register_group & memory_shift_function_group & f5[2];
@@ -99,7 +99,7 @@ module riscc_nano #(
     // and program-memory encodings may alias these paths in Nano.
     wire register_memory_op = register_memory_shift_group & ~right_shift_op;
     // JALR rd, ra lives in the register-indirect group (11_111, bbb=001);
-    // nano has no S-bank, so ddd names a general register and rd == r0
+    // Nano has no S-bank, so ddd names a general register and rd == r0
     // writes no link (plain jump).
     wire register_jump_op = register_group & f5[4];
     wire call_op = register_jump_op & (|ddd);
@@ -129,7 +129,7 @@ module riscc_nano #(
     // Synchronous register-file schedule
     // ------------------------------------------------------------------
     // With this state encoding, ~state_q[0] selects DECODE/READ_RB plus two
-    // harmless don't-care phases.  select_ddd wins in MEM_XFER, so stores
+    // harmless don't-care phases. select_ddd wins in MEM_XFER, so stores
     // still read their data register.
     wire select_bbb = needs_rb_pass & ~state_q[0] & ~last_bit;
     // The RF output is ignored while MEM_XFER streams a load, so selecting
@@ -137,7 +137,7 @@ module riscc_nano #(
     wire select_ddd = (in_prep & last_bit) | in_mem_xfer;
     wire [2:0] rf_read_reg = select_ddd ? ddd :
                              select_bbb ? bbb : source_reg_idx;
-    // The synchronous RF is addressed one cycle ahead.  Flipping address bit
+    // The synchronous RF is addressed one cycle ahead. Flipping address bit
     // 3 rotates a high-lane byte by eight bits; extra rotation in unrelated
     // register slots is unobserved.
     // In PREP/MEM_XFER, instr_q[15] distinguishes register-memory operations
@@ -228,7 +228,7 @@ module riscc_nano #(
                             (arithmetic_shift & operand_b_q[0]) : operand_b_q[1];
 
     wire writes_rd = immediate_write_op | register_alu_op | right_shift_op | call_op;
-    // Loads stream directly into the RF during MEM_XFER.  Store-side data is
+    // Loads stream directly into the RF during MEM_XFER. Store-side data is
     // don't-care because rf_we remains low.
     assign rf_wdata =
         in_mem_xfer ? mem_stream_bit :
@@ -303,7 +303,6 @@ module riscc_nano #(
 
         if (in_fetch_capture) begin
             instr_q <= mem_rdata;
-            register_format_q <= mem_rdata[14];
         end
 
         if (rst) begin
@@ -315,14 +314,20 @@ module riscc_nano #(
     // ------------------------------------------------------------------
     // Memory interface
     // ------------------------------------------------------------------
-    // mem_valid is always asserted; mem_we is the one-cycle store strobe and
-    // addr_q[0] selects the active byte lane.
+    // Fixed-latency synchronous SRAM interface. Reads complete one cycle
+    // after their address is presented; read data remains stable while Nano
+    // serializes it. mem_oe_n is low during read-access states and mem_we is
+    // a one-cycle store strobe. The active-low read qualifier is a controller
+    // state bit directly, so it needs no separate decode term.
     assign mem_addr  = addr_q[15:1];
-    assign mem_valid = 1'b1;
     assign mem_we    = in_execute & first_bit & store_op;
+    assign mem_oe_n  = state_q[2];
     assign mem_wdata = operand_b_q;
     assign mem_wmask = byte_access ? {addr_q[0], ~addr_q[0]} : 2'b11;
 
+    // ------------------------------------------------------------------
+    // Trace interface
+    // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 1;
     wire        tr_commit_i = in_execute & last_bit;
