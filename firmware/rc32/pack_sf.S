@@ -11,10 +11,10 @@ __riscc_pack_sf:
         BLTZ    .Lpack_underflow
         BNEZ    .Lpack_round
 .Lpack_underflow:
-        LDI     r0, 1
-        SUB     r0, r0, r3
-        MTS     s3, r0                 // shift = 1 - exponent
-        CMPI    r0, 32
+        MTS     s2, r4
+        LDI     r4, 1
+        SUB     r4, r4, r3             // shift = 1 - exponent
+        CMPI    r4, 32
         BLTZ    .Lpack_underflow_test
         MOV     r0, r1
         LDI     r1, 0
@@ -26,13 +26,12 @@ __riscc_pack_sf:
         ANDI    r0, 1
         SRLI    r1, r1, 1
         OR      r1, r1, r0
-        MFS     r0, s3
-        ADDI    r0, -1
-        MTS     s3, r0
+        ADDI    r4, -1
 .Lpack_underflow_test:
-        MFS     r0, s3
+        MOV     r0, r4
         BNEZ    .Lpack_underflow_loop
 .Lpack_underflow_done:
+        MFS     r4, s2
         LDI     r3, 1
 
 .Lpack_round:
@@ -88,6 +87,9 @@ __riscc_pack_sf:
         MOV     r1, r3
         MFS     r0, s7
         MTS     s3, r0
+#ifdef __RISCC_SYS__
+        .reloc  ., R_RISCC_RELAX_CALL, .Lpack_shl23_target
+#endif
         LDPC    r0, .Lpack_shl23_target
         JALR    s7, r0
         MOV     r3, r1
@@ -111,5 +113,9 @@ __riscc_pack_sf:
         .long   0x7f800000
 #ifndef __RISCC_FULL__
 .Lpack_shl23_target:
+#ifdef __RISCC_SYS__
+        .long   call_target(__riscc_shlsi23)
+#else
         .long   __riscc_shlsi23
+#endif
 #endif

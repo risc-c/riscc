@@ -126,13 +126,9 @@ __riscc_pack_sf:
         OR      r2, r2, r3
 
 .Lreturn:
-        LD      r0, [r7 + 8]
-        MTS     s6, r0
-        LD      r0, [r7 + 6]
-        MTS     s5, r0
         LD      r6, [r7 + 4]
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
-        ADDI    r7, 48
+        ADDI    r7, 46
         RET     S7
         .size __riscc_pack_sf, . - __riscc_pack_sf

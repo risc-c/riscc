@@ -69,12 +69,12 @@ __udivmoddi4:
 
 .Ludivdi_common:
         /* The divisor and optional remainder pointer are stack arguments. */
-        ADDI    r7, -12
-        ST      r4, [r7 + 0]
-        ST      r5, [r7 + 4]
-        ST      r6, [r7 + 8]
-        LD      r5, [r7 + 12]
-        LD      r6, [r7 + 16]
+        MTS     s2, r4
+        ADDI    r7, -8
+        ST      r5, [r7 + 0]
+        ST      r6, [r7 + 4]
+        LD      r5, [r7 + 8]
+        LD      r6, [r7 + 12]
 
         MFS     r0, s4
         ANDI    r0, 4
@@ -172,7 +172,7 @@ __udivmoddi4:
         BEQZ    .Ludivdi_return
         ADDI    r0, -1
         BEQZ    .Ludivdi_remainder
-        LD      r0, [r7 + 20]
+        LD      r0, [r7 + 16]
         BEQZ    .Ludivdi_return
         ST      r3, [r0 + 0]
         ST      r4, [r0 + 4]
@@ -181,9 +181,9 @@ __udivmoddi4:
         MOV     r1, r3
         MOV     r2, r4
 .Ludivdi_return:
-        LD      r4, [r7 + 0]
-        LD      r5, [r7 + 4]
-        LD      r6, [r7 + 8]
-        ADDI    r7, 12
+        MFS     r4, s2
+        LD      r5, [r7 + 0]
+        LD      r6, [r7 + 4]
+        ADDI    r7, 8
         RET     S7
         .size __udivmoddi4, . - __udivmoddi4

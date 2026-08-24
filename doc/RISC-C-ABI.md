@@ -81,8 +81,7 @@ The caller removes stack arguments.
 | `r7` | Stack pointer; restored to its incoming value before return |
 | `S0` | Architectural exception/link-suppression register; unavailable to ordinary allocation |
 | `S1` | Runtime interrupt scratch; unavailable to ordinary allocation |
-| `S2` | TLS anchor; unavailable to ordinary allocation |
-| `S3..S4` | Caller-saved compiler-managed software-cache registers |
+| `S2..S4` | Caller-saved compiler-managed software-cache registers |
 | `S5..S6` | Callee-saved compiler-managed software-cache registers |
 | `S7` | Public C link register; call-clobbered |
 
@@ -90,9 +89,9 @@ The caller removes stack arguments.
 implicit `r0` definition or use, including compare and branch instructions,
 have their architectural clobber or dependency.
 
-A callee restores incoming `r4..r6` and `S5..S6` before it returns. `S3` and
-`S4` are caller-saved. The compiler uses the non-reserved S bank for links,
-callee-saved GPR backups, and spill values; a value in `S3` or `S4` that must
+A callee restores incoming `r4..r6` and `S5..S6` before it returns. `S2..S4`
+are caller-saved. The compiler uses the software-managed S bank for links,
+callee-saved GPR backups, and spill values; a value in `S2..S4` that must
 survive a call is saved first. Hand-written code may use the same bank if it
 obeys the call convention of every function it calls.
 
@@ -194,17 +193,22 @@ calling conventions are outside ABI v0.
 Nano does not support TLS. The remainder of this section applies only to
 mainline profiles.
 
-`S2` is the native-width byte-addressed memory anchor for the current
-thread. C TLS occupies non-negative offsets from `S2`; negative offsets are
-outside the C TLS ABI and may be used by an interrupt or context-switch
-runtime.
+The runtime exports a writable, native-width pointer object named
+`__riscc_current_context`. Its value is the byte-addressed memory anchor for
+the current thread. C TLS occupies non-negative offsets from that anchor;
+negative offsets are outside the C TLS ABI and may be used by an interrupt or
+context-switch runtime. Startup initializes the object to the initial TLS
+block, and a scheduler updates it before resuming another thread.
 
 ABI v0 supports only C `__thread` and `_Thread_local` objects in the static
-local-exec model. A TLS address is `S2 + TPOFF(symbol)`. Mainline code loads a
-native-width TPOFF literal using the RC16 `R_RISCC_TPOFF_LO8` and
-`R_RISCC_TPOFF_HI8` pair or `R_RISCC_TPOFF32`; RC32X may instead use an I16
-pair. Assembly spells the expression `tpoff(symbol)`. A TPOFF relocation must
-name an `STT_TLS` symbol.
+local-exec model. A TLS address is
+`value(__riscc_current_context) + TPOFF(symbol)`. A compiler may reuse the
+loaded anchor throughout a function, so thread identity must remain unchanged
+while ordinary execution of that function continues. Mainline code loads a
+native-width TPOFF literal using the
+RC16 `R_RISCC_TPOFF_LO8` and `R_RISCC_TPOFF_HI8` pair or `R_RISCC_TPOFF32`;
+RC32X may instead use an I16 pair. Assembly spells the expression
+`tpoff(symbol)`. A TPOFF relocation must name an `STT_TLS` symbol.
 Dynamic TLS, initial-exec and general-dynamic TLS models, PIC TLS, and shared
 links are not supported.
 

@@ -72,20 +72,12 @@
         ST      r4, [r7 + 10]
         ST      r5, [r7 + 12]
         ST      r6, [r7 + 14]
-        MFS     r0, s5
-        ST      r0, [r7 + 16]
-        MFS     r0, s6
-        ST      r0, [r7 + 18]
         .endm
 
         .macro ABI_RETURN
         LD      r4, [r7 + 10]
         LD      r5, [r7 + 12]
         LD      r6, [r7 + 14]
-        LD      r0, [r7 + 16]
-        MTS     s5, r0
-        LD      r0, [r7 + 18]
-        MTS     s6, r0
         ADDI    r7, 40
         RET     S7
         .endm
@@ -124,16 +116,12 @@
         .macro SAVE_R5
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
-#else
-        MTS     s3, r5
 #endif
         .endm
 
         .macro RESTORE_R5
 #ifdef __RISCC_NANO__
         LD     r5, [r7 - 2]
-#else
-        MFS     r5, s3
 #endif
         .endm
 
@@ -389,9 +377,7 @@ __udivmodsi4:
         ST     r3, [r7 - 8]            /* divisor low */
         ST     r4, [r7 - 10]           /* divisor high */
 #else
-        MTS     s3, r5
-        MTS     s4, r6
-        MTS     s5, r0                  /* result selection */
+        MTS     s2, r0                  /* result selection */
 #endif
 
         OR      r0, r3, r4
@@ -456,7 +442,7 @@ __udivmodsi4:
         LDI     r5, 0                   /* remainder low */
         LDI     r6, 0                   /* remainder high */
         LDI     r0, 32
-        MTS     s6, r0
+        MTS     s3, r0
 #endif
 
 .Ludivsi_loop:
@@ -524,9 +510,9 @@ __udivmodsi4:
         ADDI    r0, -1
         ST     r0, [r7 - 12]
 #else
-        MFS     r0, s6
+        MFS     r0, s3
         ADDI    r0, -1
-        MTS     s6, r0
+        MTS     s3, r0
 #endif
         BNEZ    .Ludivsi_loop
 
@@ -548,7 +534,7 @@ __udivmodsi4:
         LD     r5, [r7 - 2]
         NANO_RETURN
 #else
-        MFS     r0, s5
+        MFS     r0, s2
         ADDI    r0, -1
         BEQZ    .Ludivsi_remainder
         BLTZ    .Ludivsi_return
@@ -561,8 +547,6 @@ __udivmodsi4:
         MOV     r1, r5
         MOV     r2, r6
 .Ludivsi_return:
-        MFS     r6, s4
-        MFS     r5, s3
         ABI_RETURN
 #endif
         .size __udivsi3, . - __udivsi3

@@ -12,8 +12,6 @@
         .extern __stack_top
 _start:
         LDPC    r7, .Lstack_top
-        LDPC    r0, .Ltls_start
-        MTS     s2, r0
         LDPC    r1, .Lzero_start
         LDPC    r2, .Lzero_end
         LDI     r3, 0
@@ -27,6 +25,9 @@ _start:
         BNEZ    .Lclear_zero
 
 .Lzero_done:
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .reloc  ., R_RISCC_RELAX_CALL, .Lmain
+#endif
         LDPC    r0, .Lmain
         JALR    S7, r0
         HALT
@@ -36,11 +37,23 @@ _start:
         .p2align 2
 .Lstack_top:
         .long   __stack_top
-.Ltls_start:
-        .long   __tls_start
 .Lzero_start:
         .long   __zero_start
 .Lzero_end:
         .long   __zero_end
 .Lmain:
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .long   call_target(main)
+#else
         .long   main
+#endif
+
+        // Writable active-context state remains separate from the local ROM
+        // literal pool, so code and vectors may reside in read-only memory.
+        .section .data.riscc_current_context,"aw",@progbits
+        .p2align 2
+        .global __riscc_current_context
+        .type __riscc_current_context,@object
+__riscc_current_context:
+        .long   __tls_start
+        .size __riscc_current_context, 4

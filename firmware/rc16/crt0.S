@@ -12,8 +12,6 @@
         .extern __stack_top
 _start:
         LDI16   r7, __stack_top
-        LDI16   r0, __tls_start
-        MTS     s2, r0
         LDI16   r1, __zero_start
         LDI16   r2, __zero_end
         LDI     r3, 0
@@ -34,3 +32,14 @@ _start:
 #endif
         HALT
         .size _start, . - _start
+
+        // The active TLS/context anchor is mutable runtime state rather than
+        // an asynchronously reserved S register.  Keep it in initialized
+        // data so ROM-based startup does not need to write its own image.
+        .section .data.riscc_current_context,"aw",@progbits
+        .p2align 1
+        .global __riscc_current_context
+        .type __riscc_current_context,@object
+__riscc_current_context:
+        .short  __tls_start
+        .size __riscc_current_context, 2

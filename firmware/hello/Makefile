@@ -16,21 +16,21 @@ RISCC_CONFIG := $(RISCC_ROOT)/firmware/riscc.mk
 .PHONY: all clean
 all: $(BUILD)/$(APP).bin $(ASM)
 
-$(APP_OBJ): $(APP_SRC) $(RISCC_CONFIG)
+$(APP_OBJ): $(APP_SRC) $(RISCC_CONFIG) $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -c $< -o $@
 
-$(ASM): $(APP_SRC) $(RISCC_CONFIG)
+$(ASM): $(APP_SRC) $(RISCC_CONFIG) $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -S $< -o $@
 
 $(ELF): $(APP_OBJ) $(RISCC_LINKER_SCRIPT) $(RISCC_STARTFILES) \
-	$(RISCC_LIBRARIES)
+	$(RISCC_LIBRARIES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) \
 	  $(RISCC_STARTFILES) $(APP_OBJ) $(RISCC_LIBRARIES) -o $@
 
-$(BUILD)/$(APP).bin: $(ELF)
+$(BUILD)/$(APP).bin: $(ELF) $(RISCC_OBJCOPY)
 	$(RISCC_OBJCOPY) -O binary $< $@
 
 clean:

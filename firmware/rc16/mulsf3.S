@@ -26,14 +26,10 @@
         .endm
 
         .macro ABI_RETURN
-        LD      r0, [r7 + 8]
-        MTS     s6, r0
-        LD      r0, [r7 + 6]
-        MTS     s5, r0
         LD      r6, [r7 + 4]
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
-        ADDI    r7, 48
+        ADDI    r7, 46
         RET     S7
         .endm
 
@@ -70,19 +66,12 @@ __mulsf3:
          * profile calls that leaf without moving r7, so its private scratch
          * must not overlap this routine's live words.
          */
-        ADDI    r7, -48
+        ADDI    r7, -46
         ST      r4, [r7 + 0]
-        LD      r3, [r7 + 48]           /* second operand */
-        LD      r4, [r7 + 50]
+        LD      r3, [r7 + 46]           /* second operand */
+        LD      r4, [r7 + 48]
         ST      r5, [r7 + 2]
         ST      r6, [r7 + 4]
-        MFS     r0, s5
-        ST      r0, [r7 + 6]
-        MFS     r0, s6
-        ST      r0, [r7 + 8]
-
-        ST     r5, [r7 + 34]
-        ST     r6, [r7 + 36]
         XOR     r0, r2, r4
         LUI     r5, 0x80
         AND     r0, r0, r5
@@ -206,14 +195,19 @@ __mulsf3:
         ST     r5, [r7 + 40]          /* signed biased result exponent */
 #ifdef __RISCC_FULL__
         /*
-         * The helper returns the exact 48-bit product in r3:r2:r1. Preserve
-         * the public link because this is the only non-tail call.
+         * The helper returns the exact 48-bit product in r3:r2:r1. Use a
+         * caller-saved link with the MDU. Standard Full needs S2 as multiply
+         * scratch, so use S6 as the link and preserve its ABI value locally.
          */
-        MFS     r0, s7
-        ST     r0, [r7 + 42]
-        JALL    s7, __riscc_umul24x24
-        LD     r0, [r7 + 42]
-        MTS     s7, r0
+#ifdef __RISCC_MULHU__
+        JALL    s2, __riscc_umul24x24
+#else
+        MFS     r0, s6
+        ST      r0, [r7 + 42]
+        JALL    s6, __riscc_umul24x24
+        LD      r0, [r7 + 42]
+        MTS     s6, r0
+#endif
 #else
         MOV     r6, r4                 /* preserve multiplier high */
 
@@ -238,14 +232,14 @@ __mulsf3:
         LDI     r3, 0
         LUI     r6, 0x80
         LDI     r0, 12
-        ST     r0, [r7 + 42]
+        MTS     s2, r0
 .Lmultiply:
         .rept 2
         MUL_ROUND
         .endr
-        LD     r0, [r7 + 42]
+        MFS     r0, s2
         ADDI    r0, -1
-        ST     r0, [r7 + 42]
+        MTS     s2, r0
         BNEZ    .Lmultiply
 #endif
 

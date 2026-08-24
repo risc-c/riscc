@@ -13,8 +13,16 @@
 .Ladd_qnan:
         .long   0x7fc00000
 #ifndef __RISCC_FULL__
-.Ladd_shr23_target:
+#ifdef __RISCC_SYS__
+.Ladd_shr23_target_1:
+        .long   call_target(__riscc_lshrsi23)
+.Ladd_shr23_target_2:
+        .long   call_target(__riscc_lshrsi23)
+#else
+.Ladd_shr23_target_1:
+.Ladd_shr23_target_2:
         .long   __riscc_lshrsi23
+#endif
 #endif
 
         .p2align 1
@@ -22,20 +30,20 @@
         .hidden __addsf3
         .type __addsf3,@function
 __addsf3:
-        ADDI    r7, -32
+        ADDI    r7, -12
         ST      r4, [r7 + 0]
         ST      r5, [r7 + 4]
         ST      r6, [r7 + 8]
-        ST      r1, [r7 + 12]
-        ST      r2, [r7 + 16]
+#ifndef __RISCC_FULL__
+        MTS     s2, r1
+        MTS     s4, r2
+#endif
         MFS     r0, s7
         MTS     s3, r0
 
         LDPC    r3, .Ladd_sign_mask
         AND     r5, r1, r3
         AND     r6, r2, r3
-        ST      r5, [r7 + 20]
-        ST      r6, [r7 + 24]
 
 #ifdef __RISCC_FULL__
         MOV     r3, r1
@@ -49,17 +57,23 @@ __addsf3:
         SRLI    r4, r4, 7
         ANDI    r4, 255
 #else
-        LDPC    r0, .Ladd_shr23_target
+#ifdef __RISCC_SYS__
+        .reloc  ., R_RISCC_RELAX_CALL, .Ladd_shr23_target_1
+#endif
+        LDPC    r0, .Ladd_shr23_target_1
         JALR    s7, r0
         MOV     r3, r1
         ANDI    r3, 255
-        LD      r1, [r7 + 16]
-        LDPC    r0, .Ladd_shr23_target
+        MFS     r1, s4
+#ifdef __RISCC_SYS__
+        .reloc  ., R_RISCC_RELAX_CALL, .Ladd_shr23_target_2
+#endif
+        LDPC    r0, .Ladd_shr23_target_2
         JALR    s7, r0
         MOV     r4, r1
         ANDI    r4, 255
-        LD      r1, [r7 + 12]
-        LD      r2, [r7 + 16]
+        MFS     r1, s2
+        MFS     r2, s4
 #endif
 
         LDI     r0, 255
@@ -74,9 +88,7 @@ __addsf3:
         LDPC    r0, .Ladd_fraction_mask
         AND     r0, r2, r0
         BNEZ    .Ladd_quiet_right
-        LD      r0, [r7 + 20]
-        LD      r5, [r7 + 24]
-        XOR     r0, r0, r5
+        XOR     r0, r5, r6
         BNEZ    .Ladd_return_qnan
         JMP8    .Ladd_return
 
@@ -107,7 +119,7 @@ __addsf3:
         LD      r4, [r7 + 0]
         LD      r5, [r7 + 4]
         LD      r6, [r7 + 8]
-        ADDI    r7, 32
+        ADDI    r7, 12
         RET     S7
 
 .Ladd_finite:
@@ -118,9 +130,8 @@ __addsf3:
         MOV     r0, r2
         ADD     r0, r0, r0
         BNEZ    .Ladd_return_right
-        LD      r1, [r7 + 20]
-        LD      r0, [r7 + 24]
-        AND     r1, r1, r0
+        MOV     r1, r5
+        AND     r1, r1, r6
         JMP8    .Ladd_return
 .Ladd_return_right:
         MOV     r1, r2
@@ -149,9 +160,6 @@ __addsf3:
         LDPC    r0, .Ladd_hidden
         OR      r2, r2, r0
 .Ladd_right_ready:
-        LD      r5, [r7 + 20]
-        LD      r6, [r7 + 24]
-
         SLTU    r0, r3, r4
         BNEZ    .Ladd_swap
         SUB     r0, r3, r4
@@ -170,7 +178,7 @@ __addsf3:
         MOV     r6, r0
 .Ladd_ordered:
         XOR     r0, r5, r6
-        ST      r0, [r7 + 28]
+        MTS     s2, r0
         .rept 3
         ADD     r1, r1, r1
         ADD     r2, r2, r2
@@ -194,7 +202,7 @@ __addsf3:
         BNEZ    .Ladd_align_loop
         OR      r2, r2, r6
 .Ladd_aligned:
-        LD      r0, [r7 + 28]
+        MFS     r0, s2
         BNEZ    .Ladd_subtract
 
         ADD     r1, r1, r2
@@ -229,7 +237,7 @@ __addsf3:
         LD      r4, [r7 + 0]
         LD      r5, [r7 + 4]
         LD      r6, [r7 + 8]
-        ADDI    r7, 32
+        ADDI    r7, 12
         RET     S7
 
 .Ladd_pack:
@@ -239,7 +247,10 @@ __addsf3:
         LD      r4, [r7 + 0]
         LD      r5, [r7 + 4]
         LD      r6, [r7 + 8]
-        ADDI    r7, 32
+        ADDI    r7, 12
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .reloc  ., R_RISCC_RELAX_TAIL, .Ladd_pack_target
+#endif
         LDPC    r0, .Ladd_pack_target
         JMP     r0
 .Ladd_end:
@@ -251,4 +262,8 @@ __addsf3:
 .Ladd_extended_overflow:
         .long   0x08000000
 .Ladd_pack_target:
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .long   call_target(__riscc_pack_sf)
+#else
         .long   __riscc_pack_sf
+#endif

@@ -13,13 +13,21 @@
 #endif
 
         .macro SAVE_R4
+#ifdef __RISCC_NANO__
         ADDI    r7, -2
         ST      r4, [r7 + 0]
+#else
+        MTS     s2, r4
+#endif
         .endm
 
         .macro RESTORE_R4
+#ifdef __RISCC_NANO__
         LD      r4, [r7 + 0]
         ADDI    r7, 2
+#else
+        MFS     r4, s2
+#endif
         .endm
 
         .macro FUNCTION name

@@ -108,10 +108,10 @@ __udivmodsi4:
         MTS     s4, r0
 
 .Ludiv_common:
-        ADDI    r7, -12
-        ST      r4, [r7 + 0]
-        ST      r5, [r7 + 4]
-        ST      r6, [r7 + 8]
+        MTS     s2, r4
+        ADDI    r7, -8
+        ST      r5, [r7 + 0]
+        ST      r6, [r7 + 4]
 
         MFS     r0, s4
         ANDI    r0, 4
@@ -180,9 +180,9 @@ __udivmodsi4:
 .Ludiv_remainder:
         MOV     r1, r4
 .Ludiv_return:
-        LD      r4, [r7 + 0]
-        LD      r5, [r7 + 4]
-        LD      r6, [r7 + 8]
-        ADDI    r7, 12
+        MFS     r4, s2
+        LD      r5, [r7 + 0]
+        LD      r6, [r7 + 4]
+        ADDI    r7, 8
         RET     s7
         .size __udivmodsi4, . - __udivmodsi4

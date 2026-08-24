@@ -7,12 +7,11 @@
         .type __muldi3,@function
 __muldi3:
         /* The second i64 argument is stack-passed as low, high words. */
-        ADDI    r7, -12
-        ST      r4, [r7 + 0]
-        ST      r5, [r7 + 4]
-        ST      r6, [r7 + 8]
-        LD      r5, [r7 + 12]
-        LD      r6, [r7 + 16]
+        MTS     s2, r4
+        MTS     s3, r5
+        MTS     s4, r6
+        LD      r5, [r7 + 0]
+        LD      r6, [r7 + 4]
         LDI     r3, 0
         LDI     r4, 0
 
@@ -38,9 +37,8 @@ __muldi3:
 .Lmuldi_done:
         MOV     r1, r3
         MOV     r2, r4
-        LD      r4, [r7 + 0]
-        LD      r5, [r7 + 4]
-        LD      r6, [r7 + 8]
-        ADDI    r7, 12
+        MFS     r4, s2
+        MFS     r5, s3
+        MFS     r6, s4
         RET     S7
         .size __muldi3, . - __muldi3

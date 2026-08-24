@@ -36,17 +36,12 @@
          * and keep the remaining count in caller-saved r0.
          */
         .macro WIDE_DI_SAVE
-        ADDI    r7, -6
-        ST      r4, [r7 + 0]
-        MFS     r0, s5
-        ST      r0, [r7 + 2]
-        MFS     r0, s6
-        ST      r0, [r7 + 4]
+        MTS     s2, r4
         MTS     s3, r1
-        LD      r1, [r7 + 6]
-        LD      r2, [r7 + 8]
-        LD      r3, [r7 + 10]
-        LD      r4, [r7 + 12]
+        LD      r1, [r7 + 0]
+        LD      r2, [r7 + 2]
+        LD      r3, [r7 + 4]
+        LD      r4, [r7 + 6]
         .endm
 
         .macro WIDE_DI_RETURN
@@ -55,12 +50,7 @@
         ST      r2, [r0 + 2]
         ST      r3, [r0 + 4]
         ST      r4, [r0 + 6]
-        LD      r4, [r7 + 0]
-        LD      r0, [r7 + 2]
-        MTS     s5, r0
-        LD      r0, [r7 + 4]
-        MTS     s6, r0
-        ADDI    r7, 6
+        MFS     r4, s2
         RET     S7
         .endm
 #endif
@@ -174,7 +164,7 @@
         ST     r0, [r7 - 4]
 #else
         WIDE_DI_SAVE
-        LD      r0, [r7 + 14]
+        LD      r0, [r7 + 8]
 #endif
         BEQZ    .Lshldi_done
 .Lshldi_loop:
@@ -231,7 +221,7 @@
         LUI     r5, 128
 #else
         WIDE_DI_SAVE
-        LD      r0, [r7 + 14]
+        LD      r0, [r7 + 8]
 #endif
         BEQZ    .Llshrdi_done
 .Llshrdi_loop:
@@ -290,7 +280,7 @@
         LUI     r5, 128
 #else
         WIDE_DI_SAVE
-        LD      r0, [r7 + 14]
+        LD      r0, [r7 + 8]
 #endif
         BEQZ    .Lashrdi_done
 .Lashrdi_loop:

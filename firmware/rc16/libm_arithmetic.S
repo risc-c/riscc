@@ -57,10 +57,9 @@
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
 #else
-        ADDI    r7, -4
-        ST      r4, [r7 + 0]
+        MTS     s2, r4
         MFS     r0, s5
-        ST      r0, [r7 + 2]
+        MTS     s3, r0
         MTS     s4, r5
         MTS     s5, r6
 #endif
@@ -89,10 +88,9 @@
 #else
         MFS     r6, s5
         MFS     r5, s4
-        LD      r0, [r7 + 2]
+        MFS     r0, s3
         MTS     s5, r0
-        LD      r4, [r7 + 0]
-        ADDI    r7, 4
+        MFS     r4, s2
 #endif
         MATH_RETURN
         .size __riscc_math_subtract, . - __riscc_math_subtract

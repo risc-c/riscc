@@ -14,10 +14,13 @@ main:
         JALL    S7, irq_smoke_install
         JALL    S7, riscc_irq_enable
 
-        // S3 retains the ordinary stack; S4 retains the TLS anchor.  S7 is
-        // an interrupted caller-saved link/scratch value.
+        // S3 holds a normal-stack save area. Exercise caller-saved S2/S4 and
+        // callee-saved S5/S6 while S7 holds interrupted link state.
+        ADDI    r7, -32
         MTS     S3, r7
-        MFS     r0, S2
+        LDI     r0, 0x2a
+        MTS     S2, r0
+        LDI     r0, 0x4a
         MTS     S4, r0
         LDI     r0, 0x5a
         MTS     S5, r0
@@ -31,32 +34,21 @@ main:
         LDI     r2, 0x33
         LDI     r3, 0x44
         LDI     r4, 0x55
-        LDI     r5, 0x66
-        LDPC    r6, .Lirq_cause
+        LDPC    r5, .Lirq_cause
+        MFS     r6, S3
         LDI     r7, 0x77
-        LDI     r5, 1
-        STH     r5, [r6]          // Testbench IRQ raise register.
+        STH     r4, [r5]          // Testbench IRQ raise register.
 
-        // The IRQ is accepted before this instruction.  S1 is
-        // interrupt-clobbered and therefore safe for retaining resumed r7.
-        MTS     S1, r7
-
-        // Resume with the ordinary stack and retain the resumed GPRs in a
-        // normal data-stack frame for comparison.
+        // Save every resumed GPR before reclaiming r7 as the stack pointer.
+        ST      r0, [r6+0]
+        ST      r1, [r6+4]
+        ST      r2, [r6+8]
+        ST      r3, [r6+12]
+        ST      r4, [r6+16]
+        ST      r5, [r6+20]
+        ST      r6, [r6+24]
+        ST      r7, [r6+28]
         MFS     r7, S3
-        ADDI    r7, -28
-        ST      r0, [r7+0]
-        ST      r1, [r7+4]
-        ST      r2, [r7+8]
-        ST      r3, [r7+12]
-        ST      r4, [r7+16]
-        ST      r5, [r7+20]
-        ST      r6, [r7+24]
-
-        LDI     r0, 0x77
-        MFS     r1, S1
-        SUB     r0, r1, r0
-        BNEZ    .Lfail
 
         LDPC    r0, .Lirq_count
         LD      r0, [r0+0]
@@ -84,21 +76,27 @@ main:
         SUB     r0, r0, r1
         BNEZ    .Lfail
         LD      r0, [r7+20]
-        LDI     r1, 1
-        SUB     r0, r0, r1
-        BNEZ    .Lfail
-        LD      r0, [r7+24]
         LDPC    r1, .Lirq_cause
         SUB     r0, r0, r1
         BNEZ    .Lfail
+        LD      r0, [r7+24]
+        SUB     r0, r0, r7
+        BNEZ    .Lfail
+        LD      r0, [r7+28]
+        LDI     r1, 0x77
+        SUB     r0, r0, r1
+        BNEZ    .Lfail
 
-        // Check ordinary-stack, TLS, and callee-saved state.
+        // Check ordinary-stack and interrupted S-register state.
         MFS     r0, S3
-        ADDI    r0, -28
         SUB     r0, r7, r0
         BNEZ    .Lfail
         MFS     r0, S2
-        MFS     r1, S4
+        LDI     r1, 0x2a
+        SUB     r0, r0, r1
+        BNEZ    .Lfail
+        MFS     r0, S4
+        LDI     r1, 0x4a
         SUB     r0, r0, r1
         BNEZ    .Lfail
         MFS     r0, S5
@@ -114,7 +112,7 @@ main:
         SUB     r0, r0, r1
         BNEZ    .Lfail
 
-        ADDI    r7, 28
+        ADDI    r7, 32
         JALL    S7, riscc_irq_disable
         LDPC    r0, .Lpass_code
         LDPC    r1, .Lirq_cause
@@ -143,7 +141,7 @@ main:
 .Lfail_code:
         .long   0x0000dead
 
-        // Exercise caller-saved S3/S4 in the C handler while preserving
+        // Exercise caller-saved S2..S4 in the C handler while preserving
         // callee-saved r4, S5, and S6 in this ABI-conforming helper.
         .section .text.irq_smoke_clobber_s,"ax",@progbits
         .p2align 1
@@ -158,6 +156,8 @@ irq_smoke_clobber_s:
         ST      r0, [r7+8]
 
         LDI     r4, 5
+        LDI     r0, 2
+        MTS     S2, r0
         LDI     r0, 3
         MTS     S3, r0
         LDI     r0, 4

@@ -51,23 +51,15 @@
         .macro ABI_SAVE
         /* Reserve the local scratch area for a nested ABI frame. */
         ADDI    r7, -32
-        ST      r4, [r7 + 0]
+        MTS     s2, r4
         ST      r5, [r7 + 2]
         ST      r6, [r7 + 4]
-        MFS     r0, s5
-        ST      r0, [r7 + 6]
-        MFS     r0, s6
-        ST      r0, [r7 + 8]
         .endm
 
         .macro ABI_RETURN
-        LD      r4, [r7 + 0]
+        MFS     r4, s2
         LD      r5, [r7 + 2]
         LD      r6, [r7 + 4]
-        LD      r0, [r7 + 6]
-        MTS     s5, r0
-        LD      r0, [r7 + 8]
-        MTS     s6, r0
         ADDI    r7, 32
         RET     S7
         .endm
@@ -119,8 +111,10 @@
         LD     r3, [r7 + 36]
         LD     r4, [r7 + 38]
 #endif
+#ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
+#endif
 
         LDI     r0, 0
         ST     r0, [r7 - 6]            /* result, low to high */
@@ -271,9 +265,9 @@
         LD     r2, [r7 - 8]
         LD     r3, [r7 - 10]
         LD     r4, [r7 - 12]
+#ifdef __RISCC_NANO__
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-#ifdef __RISCC_NANO__
         NANO_RETURN64
 #else
         ABI_RETURN64
@@ -319,24 +313,15 @@
          *   high = (a0 * b0)[31:16] + a0*b1 + a1*b0.
          *
          * Form the cross terms before MULHU overwrites r1 with the high half
-         * of a0*b0.  r5/r6 are callee-saved and become temporary registers;
-         * MDU's paired result otherwise needs no S-register scratch space.
+         * of a0*b0. The common epilogue restores temporary r5/r6.
          */
-        MTS     s5, r5
-        MTS     s6, r6
         MUL     r5, r1, r4              /* a0*b1, low half */
         MUL     r6, r2, r3              /* a1*b0, low half */
         MULHU   r0, r1, r3              /* r0:p0lo, r1:p0hi */
         ADD     r2, r1, r5
         ADD     r2, r2, r6
         MOV     r1, r0
-        MFS     r6, s6
-        MFS     r5, s5
 #else
-        /* Preserve callee-saved GPRs in call-clobbered cache registers. */
-        MTS     s5, r5
-        MTS     s6, r6
-
         /* Cross terms contribute directly to result word one. */
         MUL     r5, r1, r4
         MUL     r6, r2, r3
@@ -380,8 +365,6 @@
         ANDI    r0, 255
         OR      r1, r0, r4
 
-        MFS     r6, s6
-        MFS     r5, s5
 #endif
         MUL_RETURN
         .size __mulsi3, . - __mulsi3
@@ -397,9 +380,6 @@
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
-#else
-        MTS     s5, r5
-        MTS     s6, r6
 #endif
         LDI     r5, 0                   /* result low */
         LDI     r6, 0                   /* result high */
@@ -448,9 +428,6 @@
 #ifdef __RISCC_NANO__
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-#else
-        MFS     r6, s6
-        MFS     r5, s5
 #endif
         MUL_RETURN
         .size __mulsi3, . - __mulsi3

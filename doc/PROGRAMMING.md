@@ -277,9 +277,9 @@ make -j32 firmware-all
 ### Startup and memory
 
 The default image contains `vectors.o`, `crt0.o`, application code, and static
-libraries. Startup initializes the stack, clears `.bss` and `.tbss`, sets the
-mainline TLS anchor, calls `main`, and halts if `main` returns. Nano omits TLS
-and interrupt setup.
+libraries. Startup initializes the stack, clears `.bss` and `.tbss`, provides
+the mainline current-context pointer, calls `main`, and halts if `main`
+returns. Nano omits TLS and interrupt setup.
 
 The linker scripts are:
 
@@ -386,9 +386,12 @@ before the first call to `time()`.
 
 ### Thread-local storage
 
-RC16 and RC32 mainline startup create one initial TLS instance and keep its
-base in `S2`. An RTOS must allocate and initialize one TLS block per thread and
-restore `S2` during context switches. Nano has no TLS support.
+RC16 and RC32 mainline startup create one initial TLS instance and initialize
+the writable native-width pointer `__riscc_current_context` to its base. An
+RTOS allocates and initializes one TLS block per thread and updates that
+pointer before resuming a thread. The supplied interrupt wrapper uses the same
+pointer to find its interrupted-context prefix; it does not reserve an S
+register. Nano has no TLS support.
 
 ### Interrupts
 
@@ -402,11 +405,12 @@ void riscc_irq_enable(void);
 void riscc_irq_disable(void);
 ```
 
-Install the handler before enabling interrupts. The handler must acknowledge
-every level-sensitive source that it services. The supplied wrapper does not
-support nested interrupts and owns one global handler slot; applications that
-need dispatching or context switching should provide a strong assembly
-definition of `__riscc_irq_vector` instead.
+Install a non-null handler before enabling interrupts. The handler must
+acknowledge every level-sensitive source that it services. The supplied wrapper
+does not support nested interrupts and owns one global handler slot initialized
+to the default halt handler. Applications that need dispatching or context
+switching should provide a strong assembly definition of `__riscc_irq_vector`
+instead.
 
 ## 6. Validation targets
 

@@ -26,14 +26,10 @@
         .endm
 
         .macro ABI_RETURN
-        LD      r0, [r7 + 8]
-        MTS     s6, r0
-        LD      r0, [r7 + 6]
-        MTS     s5, r0
         LD      r6, [r7 + 4]
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
-        ADDI    r7, 48
+        ADDI    r7, 46
         RET     S7
         .endm
 
@@ -43,25 +39,18 @@
         .hidden __addsf3
         .type __addsf3,@function
 __addsf3:
-        ADDI    r7, -48
+        ADDI    r7, -46
         ST      r4, [r7 + 0]
-        LD      r3, [r7 + 48]           /* second operand */
-        LD      r4, [r7 + 50]
+        LD      r3, [r7 + 46]           /* second operand */
+        LD      r4, [r7 + 48]
         ST      r5, [r7 + 2]
         ST      r6, [r7 + 4]
-        MFS     r0, s5
-        ST      r0, [r7 + 6]
-        MFS     r0, s6
-        ST      r0, [r7 + 8]
-
-        ST     r5, [r7 + 36]
-        ST     r6, [r7 + 38]
 
         LUI     r5, 0x80
         AND     r0, r2, r5
-        ST     r0, [r7 + 40]          /* left sign */
+        MTS     s3, r0                 /* left sign */
         AND     r0, r4, r5
-        ST     r0, [r7 + 42]          /* right sign */
+        MTS     s4, r0                 /* right sign */
 
         MOV     r5, r2
         MOV     r6, r4
@@ -85,8 +74,8 @@ __addsf3:
         ANDI    r0, 0x7f
         OR      r0, r0, r3
         BNEZ    .Lquiet_right
-        LD     r0, [r7 + 40]
-        LD     r5, [r7 + 42]
+        MFS     r0, s3
+        MFS     r5, s4
         XOR     r0, r0, r5
         BLTZ    .Lqnan
         JMP8    .Lspecial_return
@@ -129,8 +118,8 @@ __addsf3:
         OR      r0, r0, r3
         OR      r0, r0, r6
         BNEZ    .Lreturn_right
-        LD     r2, [r7 + 40]
-        LD     r0, [r7 + 42]
+        MFS     r2, s3
+        MFS     r0, s4
         AND     r2, r2, r0
         LDI     r1, 0
         JMP8    .Lspecial_return
@@ -184,12 +173,12 @@ __addsf3:
         MOV     r0, r5
         MOV     r5, r6
         MOV     r6, r0
-        LD     r0, [r7 + 40]
-        ST     r0, [r7 + 44]
-        LD     r0, [r7 + 42]
-        ST     r0, [r7 + 40]
-        LD     r0, [r7 + 44]
-        ST     r0, [r7 + 42]
+        MFS     r0, s3
+        MTS     s2, r0
+        MFS     r0, s4
+        MTS     s3, r0
+        MFS     r0, s2
+        MTS     s4, r0
 
 .Lordered:
         /* Add GRS bits before aligning the smaller operand. */
@@ -201,35 +190,31 @@ __addsf3:
         .endr
 
         SUB     r6, r5, r6
-        LDI     r0, 0
-        ST     r0, [r7 + 44]          /* alignment sticky */
-        LDI     r0, 32
-        SLTU    r0, r6, r0
-        BNEZ    .Lalign_test
+        MTS     s2, r6                 /* remaining alignment count */
+        LDI     r6, 0                  /* alignment sticky */
+        MFS     r0, s2
+        CMPI    r0, 32
+        BLTZ    .Lalign_test
         LDI     r3, 1
         LDI     r4, 0
         JMP8    .Laligned
 .Lalign_loop:
-        LD     r0, [r7 + 44]
-        MOV     r6, r3
-        ANDI    r6, 1
-        OR      r0, r0, r6
-        ST     r0, [r7 + 44]
+        MOV     r0, r3
+        ANDI    r0, 1
+        OR      r6, r6, r0
         FSR1    r3, r4
         SRLI    r4, r4, 1
-        LD     r6, [r7 + 46]
-        ADDI    r6, -1
-        ST     r6, [r7 + 46]
+        MFS     r0, s2
+        ADDI    r0, -1
+        MTS     s2, r0
 .Lalign_test:
-        ST     r6, [r7 + 46]
-        MOV     r0, r6
+        MFS     r0, s2
         BNEZ    .Lalign_loop
-        LD     r0, [r7 + 44]
-        OR      r3, r3, r0
+        OR      r3, r3, r6
 .Laligned:
 
-        LD     r6, [r7 + 40]
-        LD     r0, [r7 + 42]
+        MFS     r6, s3
+        MFS     r0, s4
         XOR     r0, r6, r0
         BLTZ    .Lsubtract
 
@@ -273,7 +258,7 @@ __addsf3:
         ABI_RETURN
 
 .Lpack:
-        LD     r3, [r7 + 40]
+        MFS     r3, s3
         MOV     r4, r5
         JUMP_PACK                      /* preserve the caller's link */
         .size __addsf3, . - __addsf3

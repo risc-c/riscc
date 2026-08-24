@@ -41,7 +41,7 @@ def main() -> int:
     require(c_wrapper, "libirq.a(irq_control.o)", "C IRQ image")
     require(c_wrapper, "libirq.a(irq.o)", "C IRQ image")
     require(c_wrapper, ".riscc.irq_context", "C IRQ image")
-    require(c_wrapper, ".bss.riscc_irq_handler", "C IRQ image")
+    require(c_wrapper, ".data.riscc_irq_state", "C IRQ image")
     require(c_wrapper, ".bss.riscc_irq_stack", "C IRQ image")
     forbid(c_wrapper, ".text.__riscc_irq_unhandled", "C IRQ image")
 
@@ -50,7 +50,7 @@ def main() -> int:
     forbid(custom, ".text.__riscc_irq_unhandled", "custom-vector image")
     forbid(custom, "libirq.a(irq.o)", "custom-vector image")
     forbid(custom, ".riscc.irq_context", "custom-vector image")
-    forbid(custom, ".bss.riscc_irq_handler", "custom-vector image")
+    forbid(custom, ".data.riscc_irq_state", "custom-vector image")
     forbid(custom, ".bss.riscc_irq_stack", "custom-vector image")
     return 0
 

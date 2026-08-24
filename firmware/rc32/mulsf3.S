@@ -15,8 +15,16 @@
 .Lmul_infinity:
         .long   0x7f800000
 #ifndef __RISCC_FULL__
-.Lmul_shr23_target:
+#ifdef __RISCC_SYS__
+.Lmul_shr23_target_1:
+        .long   call_target(__riscc_lshrsi23)
+.Lmul_shr23_target_2:
+        .long   call_target(__riscc_lshrsi23)
+#else
+.Lmul_shr23_target_1:
+.Lmul_shr23_target_2:
         .long   __riscc_lshrsi23
+#endif
 #endif
 
         .p2align 1
@@ -24,19 +32,20 @@
         .hidden __mulsf3
         .type __mulsf3,@function
 __mulsf3:
-        ADDI    r7, -24
+        ADDI    r7, -12
         ST      r4, [r7 + 0]
         ST      r5, [r7 + 4]
         ST      r6, [r7 + 8]
-        ST      r1, [r7 + 12]
-        ST      r2, [r7 + 16]
+#ifndef __RISCC_FULL__
+        MTS     s2, r1
+        MTS     s4, r2
+#endif
         MFS     r0, s7
         MTS     s3, r0
 
         XOR     r0, r1, r2
         LDPC    r3, .Lmul_sign_mask
-        AND     r0, r0, r3
-        ST      r0, [r7 + 20]
+        AND     r5, r0, r3
 
 #ifdef __RISCC_FULL__
         MOV     r3, r1
@@ -50,17 +59,23 @@ __mulsf3:
         SRLI    r4, r4, 7
         ANDI    r4, 255
 #else
-        LDPC    r0, .Lmul_shr23_target
+#ifdef __RISCC_SYS__
+        .reloc  ., R_RISCC_RELAX_CALL, .Lmul_shr23_target_1
+#endif
+        LDPC    r0, .Lmul_shr23_target_1
         JALR    s7, r0
         MOV     r3, r1
         ANDI    r3, 255
-        LD      r1, [r7 + 16]
-        LDPC    r0, .Lmul_shr23_target
+        MFS     r1, s4
+#ifdef __RISCC_SYS__
+        .reloc  ., R_RISCC_RELAX_CALL, .Lmul_shr23_target_2
+#endif
+        LDPC    r0, .Lmul_shr23_target_2
         JALR    s7, r0
         MOV     r4, r1
         ANDI    r4, 255
-        LD      r1, [r7 + 12]
-        LD      r2, [r7 + 16]
+        MFS     r1, s2
+        MFS     r2, s4
 #endif
 
         LDI     r0, 255
@@ -107,15 +122,14 @@ __mulsf3:
         JMP8    .Lmul_return
 .Lmul_return_infinity:
         LDPC    r1, .Lmul_infinity
-        LD      r0, [r7 + 20]
-        OR      r1, r1, r0
+        OR      r1, r1, r5
 .Lmul_return:
         MFS     r0, s3
         MTS     s7, r0
         LD      r4, [r7 + 0]
         LD      r5, [r7 + 4]
         LD      r6, [r7 + 8]
-        ADDI    r7, 24
+        ADDI    r7, 12
         RET     S7
 
 .Lmul_finite:
@@ -164,6 +178,7 @@ __mulsf3:
         JMP8    .Lmul_normalize_right
 
 .Lmul_multiply_ready:
+        MTS     s2, r5                 // preserve result sign
         LDI     r4, 0                  // multiplicand high
         LDI     r5, 0                  // product low
         LDI     r6, 0                  // product high
@@ -203,13 +218,12 @@ __mulsf3:
         MOV     r0, r4
         BNEZ    .Lmul_product_shift
         OR      r1, r5, r2
-        LD      r2, [r7 + 20]
+        MFS     r2, s2
         JMP8    .Lmul_pack
 
 .Lmul_zero:
         LDI     r1, 0
-        LD      r0, [r7 + 20]
-        OR      r1, r1, r0
+        OR      r1, r1, r5
         JMP8    .Lmul_return
 
 .Lmul_pack:
@@ -218,7 +232,10 @@ __mulsf3:
         LD      r4, [r7 + 0]
         LD      r5, [r7 + 4]
         LD      r6, [r7 + 8]
-        ADDI    r7, 24
+        ADDI    r7, 12
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .reloc  ., R_RISCC_RELAX_TAIL, .Lmul_pack_target
+#endif
         LDPC    r0, .Lmul_pack_target
         JMP     r0
 .Lmul_end:
@@ -228,4 +245,8 @@ __mulsf3:
 .Lmul_bit47:
         .long   0x00008000
 .Lmul_pack_target:
+#if defined(__RISCC_SYS__) || defined(__RISCC_FULL__)
+        .long   call_target(__riscc_pack_sf)
+#else
         .long   __riscc_pack_sf
+#endif

@@ -1,6 +1,6 @@
 // RC16 IRQ control instructions are independent of the optional C IRQ wrapper.
 // A custom assembly __riscc_irq_vector can use these helpers without pulling
-// in the wrapper, its C handler, or its S2-relative context prefix.
+// in the wrapper, its C handler, or its interrupted-context prefix.
 
         .section .text.riscc_irq_enable,"ax",@progbits
         .p2align 1

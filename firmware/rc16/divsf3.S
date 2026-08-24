@@ -25,15 +25,21 @@
 #endif
         .endm
 
-        .macro ABI_RETURN
+        .macro RESTORE_SREGS
+#ifdef __RISCC_MDU__
         LD      r0, [r7 + 8]
         MTS     s6, r0
         LD      r0, [r7 + 6]
         MTS     s5, r0
+#endif
+        .endm
+
+        .macro ABI_RETURN
+        RESTORE_SREGS
         LD      r6, [r7 + 4]
         LD      r5, [r7 + 2]
         LD      r4, [r7 + 0]
-        ADDI    r7, 48
+        ADDI    r7, 46
         RET     S7
         .endm
 
@@ -74,10 +80,10 @@
         MTS     s6, r3
         ST     r2, [r7 + 36]           /* preserve appended limb */
         DIVU    r4, r3, r6              /* r4:r3 -> estimate remainder:q */
-        ST     r3, [r7 + 34]
+        MTS     s2, r3
 
 .Lmdu_div_check\@:
-        LD     r1, [r7 + 34]
+        MFS     r1, s2
         MULHU   r0, r1, r5              /* r0:p.lo, r1:p.hi for q*vlo */
         ST     r0, [r7 + 32]
         ST     r1, [r7 + 30]
@@ -92,9 +98,9 @@
         JMP8    .Lmdu_div_ready\@
 
 .Lmdu_div_correct\@:
-        LD     r1, [r7 + 34]
+        MFS     r1, s2
         ADDI    r1, -1
-        ST     r1, [r7 + 34]
+        MTS     s2, r1
         ADD     r4, r4, r6              /* estimate remainder += vhi */
         SLTU    r0, r4, r6
         BNEZ    .Lmdu_div_ready\@      /* carry: no further correction */
@@ -102,7 +108,7 @@
 
 .Lmdu_div_ready\@:
         /* q * (vhi:vlo), represented as three 16-bit product limbs. */
-        LD     r1, [r7 + 34]
+        MFS     r1, s2
         MULHU   r0, r1, r6              /* p1 = q*vhi */
         LD     r3, [r7 + 30]
         ADD     r3, r3, r0              /* middle product limb */
@@ -135,19 +141,19 @@
         .hidden __divsf3
         .type __divsf3,@function
 __divsf3:
-        ADDI    r7, -48
+        ADDI    r7, -46
         ST      r4, [r7 + 0]
-        LD      r3, [r7 + 48]           /* second operand */
-        LD      r4, [r7 + 50]
+        LD      r3, [r7 + 46]           /* second operand */
+        LD      r4, [r7 + 48]
         ST      r5, [r7 + 2]
         ST      r6, [r7 + 4]
+#ifdef __RISCC_MDU__
         MFS     r0, s5
         ST      r0, [r7 + 6]
         MFS     r0, s6
         ST      r0, [r7 + 8]
+#endif
 
-        ST     r5, [r7 + 38]
-        ST     r6, [r7 + 40]
         XOR     r0, r2, r4
         LUI     r5, 0x80
         AND     r0, r0, r5
@@ -328,7 +334,7 @@ __divsf3:
         /* The two digits share one local helper; both appended limbs are zero. */
         LDI     r2, 0
         JALL    s3, .Lmdu_div_digit
-        LD     r0, [r7 + 34]
+        MFS     r0, s2
         ST     r0, [r7 + 28]
 
         MFS     r5, s4
@@ -336,13 +342,14 @@ __divsf3:
         JALL    s3, .Lmdu_div_digit
 
         LD     r2, [r7 + 28]
-        LD     r1, [r7 + 34]
+        MFS     r1, s2
         OR      r0, r3, r4
         BEQZ    .Lmdu_exact
         ORI     r1, 1                   /* sticky */
 .Lmdu_exact:
         LD     r3, [r7 + 42]
         LD     r4, [r7 + 44]
+        RESTORE_SREGS
         JUMP_PACK
 #else
         ST     r5, [r7 + 44]
@@ -376,14 +383,14 @@ __divsf3:
         LDI     r1, 1
         LDI     r2, 0
         LDI     r0, 13
-        ST     r0, [r7 + 46]
+        MTS     s2, r0
 .Ldivide:
         .rept 2
         DIV_ROUND
         .endr
-        LD     r0, [r7 + 46]
+        MFS     r0, s2
         ADDI    r0, -1
-        ST     r0, [r7 + 46]
+        MTS     s2, r0
         BNEZ    .Ldivide
 
         OR      r0, r3, r4
@@ -392,6 +399,7 @@ __divsf3:
 .Lexact:
         LD     r3, [r7 + 42]
         LD     r4, [r7 + 44]
+        RESTORE_SREGS
         JUMP_PACK                      /* preserve the caller's link */
 #endif
 #ifdef __RISCC_MDU__

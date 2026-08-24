@@ -8,6 +8,7 @@
  *
  * Arguments: r1:r2, r3:r4 (high limbs contain only eight significant bits)
  * Result:    r1:r2:r3
+ * Link:      S2 with MDU, S6 with standard Full
  */
 
 #ifdef __RISCC_FULL__
@@ -63,8 +64,12 @@ __riscc_umul24x24:
 
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        RET     S7
+        RET     S2
 #else
+
+        /* S2 is caller-saved scratch; preserve the one callee-saved temp. */
+        MFS     r0, s5
+        ST      r0, [r7 - 6]
 
         /*
          * Byte layout after extraction:
@@ -72,7 +77,7 @@ __riscc_umul24x24:
          */
         MOV     r0, r2
         ANDI    r0, 255
-        MTS     s6, r0
+        MTS     s2, r0
         MOV     r2, r1
         SRLI    r2, r2, 8
         ANDI    r1, 255
@@ -82,7 +87,7 @@ __riscc_umul24x24:
         MOV     r6, r4
         ANDI    r6, 255
         MOV     r4, r3
-        MFS     r3, s6
+        MFS     r3, s2
 
         /* Byte column zero: a0*b0 is the initial low result word. */
         MUL     r0, r1, r4
@@ -96,7 +101,7 @@ __riscc_umul24x24:
         MUL     r0, r1, r5
         MTS     s4, r0
         MUL     r0, r2, r4
-        MTS     s6, r3                  /* free r3 while preserving a2 */
+        MTS     s2, r3                  /* free r3 while preserving a2 */
         MFS     r3, s4
         ADD     r0, r3, r0
         SLTU    r3, r0, r3             /* carry from the 16-bit sum */
@@ -119,14 +124,14 @@ __riscc_umul24x24:
         MTS     s4, r0
         LDI     r0, 0
         MTS     s5, r0
-        MFS     r3, s6
+        MFS     r3, s2
 
         /*
          * Byte column two maps directly to result word one.  Accumulate
          * its three products and increment word two after each overflow.
          */
         MUL     r0, r1, r6
-        MTS     s6, r3
+        MTS     s2, r3
         MFS     r3, s4
         ADD     r0, r3, r0
         SLTU    r3, r0, r3
@@ -134,10 +139,10 @@ __riscc_umul24x24:
         MFS     r0, s5
         ADD     r0, r0, r3
         MTS     s5, r0
-        MFS     r3, s6
+        MFS     r3, s2
 
         MUL     r0, r2, r5
-        MTS     s6, r3
+        MTS     s2, r3
         MFS     r3, s4
         ADD     r0, r3, r0
         SLTU    r3, r0, r3
@@ -145,10 +150,10 @@ __riscc_umul24x24:
         MFS     r0, s5
         ADD     r0, r0, r3
         MTS     s5, r0
-        MFS     r3, s6
+        MFS     r3, s2
 
         MUL     r0, r3, r4
-        MTS     s6, r3
+        MTS     s2, r3
         MFS     r3, s4
         ADD     r0, r3, r0
         SLTU    r3, r0, r3
@@ -156,27 +161,27 @@ __riscc_umul24x24:
         MFS     r0, s5
         ADD     r0, r0, r3
         MTS     s5, r0
-        MFS     r3, s6
+        MFS     r3, s2
 
         /*
          * Byte column three is shifted eight within result word one:
          * a1*b2 + a2*b1.
          */
         MUL     r0, r2, r6
-        MTS     s6, r0
+        MTS     s2, r0
         MUL     r0, r3, r5
         MOV     r4, r0                  /* b0 is dead; r4 is now scratch */
-        MFS     r0, s6
+        MFS     r0, s2
         ADD     r4, r0, r4
         SLTU    r0, r4, r0             /* column-sum carry */
-        MTS     s6, r4
+        MTS     s2, r4
         SLLI    r4, r4, 8
         MFS     r1, s4                 /* a0 is dead; r1 is now scratch */
         ADD     r4, r1, r4
         SLTU    r1, r4, r1             /* carry into result word two */
         MTS     s4, r4
         SLLI    r0, r0, 8
-        MFS     r4, s6
+        MFS     r4, s2
         SRLI    r4, r4, 8
         ADD     r0, r0, r4
         ADD     r0, r0, r1
@@ -191,9 +196,11 @@ __riscc_umul24x24:
         MFS     r1, s3
         MFS     r2, s4
 
+        LD     r0, [r7 - 6]
+        MTS     s5, r0
         LD     r6, [r7 - 4]
         LD     r5, [r7 - 2]
-        RET     S7
+        RET     S6
 #endif
         .size __riscc_umul24x24, . - __riscc_umul24x24
 #endif

@@ -59,8 +59,8 @@ SECTIONS
     __data_end = .;
   } > RAM
 
-  /* Present only when libirq's C wrapper is extracted.  S2 points immediately
-   * above this per-thread interrupt prefix. */
+  /* Present only when libirq's C wrapper is extracted. The active context
+   * pointer addresses the TLS block immediately above this prefix. */
   .riscc.irq_context ALIGN(2) (NOLOAD) :
   {
     KEEP(*(.riscc.irq_context))
