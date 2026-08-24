@@ -1,0 +1,19 @@
+// RC32 IRQ enable/disable entry points.
+
+        .section .text.riscc_irq_enable,"ax",@progbits
+        .p2align 1
+        .global riscc_irq_enable
+        .type riscc_irq_enable,@function
+riscc_irq_enable:
+        STI
+        RET     S7
+        .size riscc_irq_enable, . - riscc_irq_enable
+
+        .section .text.riscc_irq_disable,"ax",@progbits
+        .p2align 1
+        .global riscc_irq_disable
+        .type riscc_irq_disable,@function
+riscc_irq_disable:
+        CLI
+        RET     S7
+        .size riscc_irq_disable, . - riscc_irq_disable

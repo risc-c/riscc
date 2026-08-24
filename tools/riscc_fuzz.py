@@ -10,13 +10,15 @@ binary then runs unchanged under any RTL core's testbench -- a divergence
 between the RTL and the ISS shows up as a FAIL with a distinct code per
 checked item.
 
-Program shape (per seed): random straight-line ALU/imm/memory ops over
-r1..r6 with a high-RAM data window,
-forward-branch blocks, bounded counted loops, explicit-link subroutines,
-MTS/MFS spills, and -- in sys
-configs -- STI/CLI and testbench-IRQ triggers (counted in S1) with a
-save/restore handler. Vector layout follows the exception model: reset
-enters at word 0 and IRQ at word 2; min images have no vector table.
+Program shape (per seed): a deterministic block that executes every operation
+implemented by the selected profile, followed by random straight-line
+ALU/imm/memory ops over r1..r6 with a high-RAM data window, forward-branch
+blocks, bounded counted loops, and explicit-link subroutines. Sys configurations
+also vary STI/CLI around the random blocks.  After the normal differential run,
+each RTL core reruns the image with IRQ asserted externally at a seeded random
+cycle before an end-of-body marker.  Vector layout follows the exception model:
+reset enters at word 0 and IRQ at word 2; Min and Nano images have no vector
+table.
 
 Usage:
   riscc_fuzz.py --seed 42 --config sys
@@ -29,12 +31,15 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import os
 import random
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -49,24 +54,34 @@ RC32_WIN = 0xFC00         # 4-byte aligned RC32 data window
 RC32_WIN_WORDS = 16
 TEST_IRQ = 0xFFFA         # I/O page: write trigger, read acknowledge
 RESULT = 0xFFFE           # I/O page: result register
+IRQ_MARKER = 0x7EF0       # end of externally interruptible fuzz body
 FAILBASE = 0x0B00         # fail codes 0x0B01.. per checked item
 
-RC16_CONFIGS = ("min", "sys", "full")
 NANO_CONFIGS = ("nano",)
-# Sys executes this Min-subset corpus on its own RTL; the dedicated RC32 Sys
-# smoke test covers IE, IRQ, RETI, JALL, and JMPL until the ISS models them.
-RC32_CONFIGS = ("min", "sys")
+RC32_CONFIGS = ("min", "sys", "full")
 RC32_WIDTHS = (1, 2, 4, 8, 16)
+RC16_CONFIGS = ("min", "sys", "full", "full-mulh", "full-muldiv")
+
+
+def available_cpu_count():
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
 
 
 def parse_config(config):
     if config not in RC16_CONFIGS:
         raise ValueError("unknown config: %s" % config)
+    profile, _, extension = config.partition("-")
     return {
-        "sys": config != "min",
-        "shifts": config == "full",
-        "long_calls": config in ("sys", "full"),
-        "full": config == "full",
+        "profile": profile,
+        "sys": profile != "min",
+        "shifts": profile == "full",
+        "long_calls": profile in ("sys", "full"),
+        "full": profile == "full",
+        "mulhu": extension in ("mulh", "muldiv"),
+        "divu": extension == "muldiv",
+        "mdu": bool(extension),
     }
 
 
@@ -92,6 +107,8 @@ class Gen:
         self.shifts = cfg["shifts"]
         self.long_calls = cfg["long_calls"]
         self.full = cfg["full"]
+        self.mulhu = cfg["mulhu"]
+        self.divu = cfg["divu"]
         self.label = 0
 
     def new_label(self, stem):
@@ -124,6 +141,28 @@ class Gen:
 
     def op_mul(self):
         return ["    MUL   %s, %s, %s" % (self.reg(), self.reg(), self.reg())]
+
+    def op_mdu(self):
+        if self.divu and self.rng.random() < 0.5:
+            rr, rq, rb = self.rng.sample(range(1, 7), 3)
+            divisor = self.rng.randint(1, 0xffff)
+            remainder = self.rng.randrange(divisor)
+            quotient = self.rng.randint(0, 0xffff)
+            return [
+                "    LDI16 r%d, 0x%04X" % (rr, remainder),
+                "    LDI16 r%d, 0x%04X" % (rq, quotient),
+                "    LDI16 r%d, 0x%04X" % (rb, divisor),
+                "    DIVU  r%d, r%d, r%d" % (rr, rq, rb),
+            ]
+        low, high = self.rng.sample(range(1, 7), 2)
+        source = self.rng.randint(1, 6)
+        high_value = self.rng.randint(0, 0xffff)
+        source_value = self.rng.randint(0, 0xffff)
+        lines = ["    LDI16 r%d, 0x%04X" % (high, high_value)]
+        if source != high:
+            lines.append("    LDI16 r%d, 0x%04X" % (source, source_value))
+        lines.append("    MULHU r%d, r%d, r%d" % (low, high, source))
+        return lines
 
     def op_mem(self):
         off = self.rng.randrange(0, WIN_WORDS) * 2
@@ -186,10 +225,107 @@ class Gen:
         return ["    LDI16 %s, %s" % (r, lab),
                 "    JALR S7, %s" % r]
 
-    def op_irq(self):
-        return ["    STI",
-                "    LDI16 r7, 0x%04X" % TEST_IRQ,
-                "    ST   r7, [r7+0]"]
+    def op_ie_window(self):
+        """Vary interrupt masking without generating an IRQ in-band."""
+        return ["    CLI"] + self.simple_op() + ["    STI"]
+
+    def supported_isa_ops(self):
+        """Execute every instruction implemented by this RC16 configuration."""
+        beq = self.new_label("cover_beq")
+        bne = self.new_label("cover_bne")
+        blt = self.new_label("cover_blt")
+        bge = self.new_label("cover_bge")
+        after_jmp = self.new_label("cover_after_jmp")
+        reg_sub = self.new_label("cover_reg_sub")
+        reg_done = self.new_label("cover_reg_done")
+        lines = [
+            "    LDI16 r7, 0x%04X" % WIN,
+            "    LDI16 r1, 0x80A5",
+            "    ST    r1, [r7+0]",
+            "    LD    r2, [r7+0]",
+            "    LDI   r3, 0",
+            "    LDX   r2, [r7+r3]",
+            "    LDB   r2, [r7]",
+            "    LDBS  r2, [r7]",
+            "    STB   r1, [r7]",
+            "    LDI   r1, 0x12",
+            "    LUI   r2, 0x34",
+            "    ADDI  r1, -1",
+            "    CMPI  r1, 0x11",
+            "    ANDI  r2, 0x7F",
+            "    ORI   r2, 0x40",
+            "    XORI  r2, 0x55",
+            "    ADD   r3, r1, r2",
+            "    SUB   r3, r3, r1",
+            "    SLT   r4, r1, r2",
+            "    SLTU  r4, r1, r2",
+            "    AND   r4, r1, r2",
+            "    OR    r4, r1, r2",
+            "    XOR   r4, r1, r2",
+            "    SRLI  r4, r2, 1",
+            "    SRAI  r4, r2, 1",
+            "    FSL1  r4, r1",
+            "    FSR1  r4, r1",
+            "    LDI   r0, 0",
+            "    BEQZ  %s" % beq,
+            "%s:" % beq,
+            "    BNEZ  %s" % bne,
+            "%s:" % bne,
+            "    ADDI  r0, -1",
+            "    BLTZ  %s" % blt,
+            "%s:" % blt,
+            "    BGEZ  %s" % bge,
+            "%s:" % bge,
+            "    JMP8  %s" % after_jmp,
+            "    LDI   r6, 0x5A",
+            "%s:" % after_jmp,
+            "    MTS   S5, r1",
+            "    MFS   r2, S5",
+            "    LDI16 r3, %s" % reg_sub,
+            "    JALR  S4, r3",
+            "    JMP8  %s" % reg_done,
+            "%s:" % reg_sub,
+            "    RET   S4",
+            "%s:" % reg_done,
+        ]
+        if self.full:
+            lines += [
+                "    SLLI  r4, r2, 4",
+                "    SRLI  r4, r2, 4",
+                "    SRAI  r4, r2, 4",
+                "    MUL   r4, r1, r2",
+            ]
+        if self.mulhu:
+            lines += [
+                "    LDI16 r3, 0x1234",
+                "    LDI16 r4, 0x4321",
+                "    MULHU r5, r3, r4",
+            ]
+        if self.divu:
+            lines += [
+                "    LDI   r3, 1",
+                "    LDI16 r4, 0x2345",
+                "    LDI16 r5, 0x0123",
+                "    DIVU  r3, r4, r5",
+            ]
+        if self.sys:
+            long_sub = self.new_label("cover_long_sub")
+            long_done = self.new_label("cover_long_done")
+            after_reti = self.new_label("cover_after_reti")
+            lines += [
+                "    JALL  S6, %s" % long_sub,
+                "    JMPL  %s" % long_done,
+                "%s:" % long_sub,
+                "    RET   S6",
+                "%s:" % long_done,
+                "    CLI",
+                "    LDI16 r3, %s" % after_reti,
+                "    MTS   S0, r3",
+                "    RETI  S0",
+                "%s:" % after_reti,
+                "    STI",
+            ]
+        return lines
 
     def simple_op(self, exclude=None):
         while True:
@@ -201,7 +337,8 @@ class Gen:
             elif k < 0.80:
                 lines = self.op_shift()
             elif k < 0.90 and self.full:
-                lines = self.op_mul()
+                lines = self.op_mdu() if self.mulhu and self.rng.random() < 0.5 \
+                    else self.op_mul()
             else:
                 lines = self.op_sreg()
             if exclude is None or not any((exclude + ",") in l or l.rstrip().endswith(exclude)
@@ -217,6 +354,7 @@ class Gen:
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
             lines.append("    ST   r1, [r7+%d]" % (w * 2))
+        lines += self.supported_isa_ops()
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
             if k < 0.45:
@@ -230,7 +368,7 @@ class Gen:
             elif k < 0.90:
                 lines += self.op_call(subs)
             elif self.sys:
-                lines += self.op_irq()
+                lines += self.op_ie_window()
             else:
                 lines += self.simple_op()
         return lines, subs
@@ -269,11 +407,8 @@ class Gen:
         ]
         if self.sys:
             head += [
-                "irq_h:",                       # count in S1, ack, resume
+                "irq_h:",                       # preserve, ack, resume
                 "    MTS   S2, r1",
-                "    MFS   r1, S1",
-                "    ADDI  r1, 1",
-                "    MTS   S1, r1",
                 "    LDI16 r1, 0x%04X" % TEST_IRQ,
                 "    LD   r1, [r1+0]",
                 "    MFS   r1, S2",
@@ -297,6 +432,14 @@ class Gen:
             head.append(lab)
             head += code_lines
         head.append("start:")
+        if self.sys:
+            head.append("    STI")
+
+        if self.sys:
+            body += [
+                "    LDI16 r7, 0x%04X" % IRQ_MARKER,
+                "    ST    r7, [r7+0]",
+            ]
 
         tail = []
         if expect is None:
@@ -441,12 +584,66 @@ class NanoGen:
         return ["    LDI16 r1, %s" % lab,
                 "    JALR  r7, r1"]
 
+    def supported_isa_ops(self):
+        """Execute every instruction implemented by Nano."""
+        beq = self.new_label("cover_beq")
+        bne = self.new_label("cover_bne")
+        blt = self.new_label("cover_blt")
+        bge = self.new_label("cover_bge")
+        after_jmp = self.new_label("cover_after_jmp")
+        sub = self.new_label("cover_sub")
+        done = self.new_label("cover_done")
+        return [
+            "    LDI16 r7, 0x%04X" % WIN,
+            "    LDI16 r1, 0x80A5",
+            "    ST    r1, [r7+0]",
+            "    LD    r2, [r7+0]",
+            "    LDI   r3, 0",
+            "    LDX   r2, [r7+r3]",
+            "    LDB   r2, [r7]",
+            "    STB   r1, [r7]",
+            "    LDI   r1, 0x12",
+            "    LUI   r2, 0x34",
+            "    ADDI  r1, -1",
+            "    ANDI  r2, 0x7F",
+            "    ORI   r2, 0x40",
+            "    XORI  r2, 0x55",
+            "    ADD   r3, r1, r2",
+            "    SUB   r3, r3, r1",
+            "    SLTU  r4, r1, r2",
+            "    AND   r4, r1, r2",
+            "    OR    r4, r1, r2",
+            "    XOR   r4, r1, r2",
+            "    SRLI  r4, r2, 1",
+            "    SRAI  r4, r2, 1",
+            "    LDI   r0, 0",
+            "    BEQZ  %s" % beq,
+            "%s:" % beq,
+            "    BNEZ  %s" % bne,
+            "%s:" % bne,
+            "    ADDI  r0, -1",
+            "    BLTZ  %s" % blt,
+            "%s:" % blt,
+            "    BGEZ  %s" % bge,
+            "%s:" % bge,
+            "    JMP8  %s" % after_jmp,
+            "    LDI   r6, 0x5A",
+            "%s:" % after_jmp,
+            "    LDI16 r1, %s" % sub,
+            "    JALR  r7, r1",
+            "    JMP8  %s" % done,
+            "%s:" % sub,
+            "    JMP   r7",
+            "%s:" % done,
+        ]
+
     def body(self):
         subs = []
         lines = ["    LDI16 r7, 0x%04X" % WIN]
         for w in range(WIN_WORDS):
             lines.append("    LDI16 r1, 0x%04X" % self.rng.randint(0, 0xFFFF))
             lines.append("    ST   r1, [r7+%d]" % (w * 2))
+        lines += self.supported_isa_ops()
         for _ in range(self.rng.randint(25, 45)):
             k = self.rng.random()
             if k < 0.48:
@@ -530,7 +727,7 @@ class NanoGen:
 
 
 class RC32Gen:
-    """Seeded RC32 Min-subset programs with local literal pools.
+    """Seeded RC32 programs with local literal pools.
 
     Every full-width constant goes through a nearby LDPC pool.  This keeps the
     programs valid independently of their random body length and continuously
@@ -541,6 +738,8 @@ class RC32Gen:
         self.rng = random.Random(seed)
         self.seed = seed
         self.config = config
+        self.sys = config != "min"
+        self.full = config == "full"
         self.label = 0
 
     def new_label(self, stem):
@@ -566,7 +765,10 @@ class RC32Gen:
         return self.literal(reg, "0x%08X" % (value & 0xffffffff))
 
     def op_alu(self):
-        op = self.rng.choice(["add", "sub", "slt", "sltu", "and", "or", "xor"])
+        ops = ["add", "sub", "slt", "sltu", "and", "or", "xor"]
+        if self.full:
+            ops.append("mul")
+        op = self.rng.choice(ops)
         return ["    %-5s %s, %s, %s" % (op, self.reg(), self.reg(), self.reg())]
 
     def op_imm(self):
@@ -578,8 +780,13 @@ class RC32Gen:
         return ["    %-5s %s, %d" % (op, self.reg(), value)]
 
     def op_shift(self):
-        op = self.rng.choice(["srli", "srai"])
-        return ["    %-5s %s, %s, 1" % (op, self.reg(), self.reg())]
+        ops = ["srli", "srai"]
+        if self.full:
+            ops.append("slli")
+        op = self.rng.choice(ops)
+        amount = self.rng.randint(1, 8) if self.full else 1
+        return ["    %-5s %s, %s, %d" %
+                (op, self.reg(), self.reg(), amount)]
 
     def op_mem(self):
         kind = self.rng.randrange(6)
@@ -604,6 +811,10 @@ class RC32Gen:
             lines += self.literal_value("r0", self.rng.randrange(RC32_WIN_WORDS * 2) * 2)
             lines += ["    add   r0, r7, r0", "    sth   %s, [r0]" % self.reg()]
         return lines
+
+    def op_ie_window(self):
+        """Vary interrupt masking without generating an IRQ in-band."""
+        return ["    cli"] + self.simple_op() + ["    sti"]
 
     def simple_op(self, exclude=None):
         while True:
@@ -643,11 +854,101 @@ class RC32Gen:
                  "    or    r0, %s, %s" % (count, count),
                  "    bnez  %s" % target])
 
+    def supported_isa_ops(self):
+        """Deterministically execute every operation in this RC32 profile.
+
+        Random bodies remain useful for operand and ordering coverage, but a
+        fixed regression seed must not decide whether an instruction is
+        exercised at all.  Keep this block side-effect-safe: the probe and
+        self-checking images deliberately append different tails.
+        """
+        beq = self.new_label("cover_beq")
+        bne = self.new_label("cover_bne")
+        blt = self.new_label("cover_blt")
+        bge = self.new_label("cover_bge")
+        after_jmp = self.new_label("cover_after_jmp")
+        jump_literal = self.new_label("cover_jump_literal")
+        lines = [
+            "    ldi   r1, 0x12",
+            "    ldi   r2, 0x34",
+            "    addi  r1, -1",
+            "    cmpi  r1, 0x11",
+            "    andi  r2, 0xf0",
+            "    ori   r2, 3",
+            "    xori  r2, 0x55",
+            "    add   r3, r1, r2",
+            "    sub   r3, r3, r1",
+            "    slt   r4, r1, r2",
+            "    sltu  r4, r1, r2",
+            "    and   r4, r1, r2",
+            "    or    r4, r1, r2",
+            "    xor   r4, r1, r2",
+            "    srli  r4, r2, 1",
+            "    srai  r4, r2, 1",
+            "    fsl1  r4, r1",
+            "    fsr1  r4, r1",
+            "    ldi   r5, 0",
+            "    st    r1, [r7]",
+            "    ld    r3, [r7]",
+            "    ldx   r3, [r7 + r5]",
+            "    ldb   r3, [r7]",
+            "    ldbs  r3, [r7]",
+            "    ldh   r3, [r7]",
+            "    ldhs  r3, [r7]",
+            "    stb   r3, [r7]",
+            "    sth   r3, [r7]",
+            "    mts   s5, r3",
+            "    mfs   r3, s5",
+            "    or    r0, r5, r5",
+            "    beqz  %s" % beq,
+            "%s:" % beq,
+            "    bnez  %s" % bne,
+            "%s:" % bne,
+            "    addi  r0, -1",
+            "    bltz  %s" % blt,
+            "%s:" % blt,
+            "    bgez  %s" % bge,
+            "%s:" % bge,
+            "    ldpc  r4, %s" % jump_literal,
+            "    jmp   r4",
+            "    .balign 4",
+            "%s:" % jump_literal,
+            "    .long %s" % after_jmp,
+            "%s:" % after_jmp,
+        ]
+        if self.sys:
+            long_sub = self.new_label("cover_long_sub")
+            long_done = self.new_label("cover_long_done")
+            after_reti = self.new_label("cover_after_reti")
+            lines += [
+                "    jall  s4, %s" % long_sub,
+                "    jmpl  %s" % long_done,
+                "%s:" % long_sub,
+                "    ret   s4",
+                "%s:" % long_done,
+                "    cli",
+            ] + self.literal("r3", after_reti) + [
+                "    mts   s0, r3",
+                "    reti  s0",
+                "%s:" % after_reti,
+                "    sti",
+            ]
+        if self.full:
+            for amount in range(1, 9):
+                lines += [
+                    "    slli  r4, r2, %d" % amount,
+                    "    srli  r4, r2, %d" % amount,
+                    "    srai  r4, r2, %d" % amount,
+                ]
+            lines.append("    mul   r4, r1, r2")
+        return lines
+
     def body(self):
         lines = self.literal_value("r7", RC32_WIN)
         for word in range(RC32_WIN_WORDS):
             lines += self.literal_value("r1", self.rng.getrandbits(32))
             lines.append("    st    r1, [r7 + %d]" % (word * 4))
+        lines += self.supported_isa_ops()
         for _ in range(self.rng.randint(20, 32)):
             chance = self.rng.random()
             if chance < 0.55:
@@ -656,6 +957,8 @@ class RC32Gen:
                 lines += self.op_mem()
             elif chance < 0.90:
                 lines += self.op_branch_block()
+            elif self.sys and chance < 0.95:
+                lines += self.op_ie_window()
             else:
                 lines += self.op_loop()
 
@@ -694,16 +997,37 @@ class RC32Gen:
                 self.store_result(code) + ["%s:" % ok])
 
     def emit(self, expect=None):
+        self.rng = random.Random(self.seed)
+        self.label = 0
         head = [
             "; generated by riscc_fuzz.py seed=%d family=rc32 config=%s" %
             (self.seed, self.config),
             ".text",
             ".globl start",
-            "start:",
         ]
-        self.rng = random.Random(self.seed)
-        self.label = 0
+        if self.sys:
+            # RC32 Sys resets at byte 0 and vectors IRQs through byte 4.
+            # Keep both vectors and the handler in .text so -Ttext=0 fixes
+            # their exact locations without a fuzzer-specific linker script.
+            head += [
+                "    jall  s7, start",
+                "    jmpl  .irq_handler",
+                ".irq_handler:",
+                "    mts   s1, r0",
+                "    mts   s2, r1",
+            ] + self.literal_value("r1", TEST_IRQ) + [
+                "    ldh   r0, [r1]",
+                "    mfs   r1, s2",
+                "    mfs   r0, s1",
+                "    reti  s0",
+            ]
+        head += ["start:"]
+        if self.sys:
+            head += ["    ldi   r0, 0", "    mts   s6, r0", "    sti"]
         body, (sub, sub_body) = self.body()
+        if self.sys:
+            body += self.literal_value("r7", IRQ_MARKER)
+            body += ["    sth   r7, [r7]"]
         if expect is None:
             tail = ["    mts   s4, r6", "    mts   s5, r7"] + self.store_result(0x600D)
         else:
@@ -712,7 +1036,8 @@ class RC32Gen:
             for index in range(1, 6):
                 code += 1
                 tail += self.check_reg("r%d" % index, expect["r"][index], code)
-            for sreg in (3, 4, 5):
+            checked_sregs = (3, 4, 5, 6) if self.sys else (3, 4, 5)
+            for sreg in checked_sregs:
                 code += 1
                 tail += ["    mfs   r6, s%d" % sreg]
                 tail += self.check_reg("r6", expect["s"][sreg], code)
@@ -725,10 +1050,12 @@ class RC32Gen:
         return "\n".join(head + body + tail + ["%s:" % sub] + sub_body) + "\n"
 
 
-def assemble(asm_path, bin_path, profile=None):
+def assemble(asm_path, bin_path, profile=None, mdu=False):
     cmd = [sys.executable, os.path.join(HERE, "riscc_asm.py")]
     if profile is not None:
         cmd += ["--profile", profile]
+    if mdu:
+        cmd.append("--mdu")
     cmd += [asm_path, "-o", bin_path]
     subprocess.run(cmd, check=True,
                    stdout=subprocess.DEVNULL)
@@ -749,7 +1076,8 @@ def assemble_rc32(asm_path, bin_path, config):
     mc, lld, objcopy = llvm_rc32_tools()
     obj_path = bin_path + ".o"
     elf_path = bin_path + ".elf"
-    subprocess.run([mc, "-triple=riscc-none-elf", "-mcpu=" + config, "-mattr=+rc32",
+    subprocess.run([mc, "-triple=riscc-none-elf", "-mcpu=" + config,
+                    "-mattr=+rc32",
                     "-filetype=obj", asm_path, "-o", obj_path], check=True,
                    stdout=subprocess.DEVNULL)
     subprocess.run([lld, "-m", "elf32lriscc", "-Ttext=0", "-e", "start",
@@ -821,7 +1149,7 @@ def make_rc16_case(seed, config, outdir):
     stem = os.path.join(outdir, "fuzz_%s_%d" % (config, seed))
     with open(stem + "_probe.asm", "w") as f:
         f.write(g.emit(None))
-    assemble(stem + "_probe.asm", stem + "_probe.bin", config)
+    assemble(stem + "_probe.asm", stem + "_probe.bin", cfg["profile"], cfg["mdu"])
     sim = rc16_state(stem + "_probe.bin", config)
     if sim["outcome"] != "DONE":
         raise RuntimeError("probe did not finish (seed %d)" % seed)
@@ -836,7 +1164,7 @@ def make_rc16_case(seed, config, outdir):
     g2 = Gen(seed, config)
     with open(stem + ".asm", "w") as f:
         f.write(g2.emit(expect))
-    assemble(stem + ".asm", stem + ".bin", config)
+    assemble(stem + ".asm", stem + ".bin", cfg["profile"], cfg["mdu"])
     chk = rc16_state(stem + ".bin", config, dump_window=False)
     if chk["outcome"] != "DONE" or chk["result"] != 0x600D:
         raise RuntimeError("self-check failed under ISS (seed %d, result 0x%04X)"
@@ -876,7 +1204,7 @@ def make_rc32_case(seed, config, outdir):
     with open(stem + "_probe.s", "w") as source:
         source.write(generator.emit(None))
     assemble_rc32(stem + "_probe.s", stem + "_probe.bin", config)
-    probe = rc32_state(stem + "_probe.bin", dump_window=True)
+    probe = rc32_state(stem + "_probe.bin", config, dump_window=True)
     if probe["outcome"] != "DONE" or probe["result"] != 0x600D:
         raise RuntimeError("RC32 probe did not finish (seed %d, result 0x%08X)" %
                            (seed, probe["result"]))
@@ -891,7 +1219,7 @@ def make_rc32_case(seed, config, outdir):
     with open(stem + ".s", "w") as source:
         source.write(checker.emit(expect))
     assemble_rc32(stem + ".s", stem + ".bin", config)
-    checked = rc32_state(stem + ".bin", dump_window=False)
+    checked = rc32_state(stem + ".bin", config, dump_window=False)
     if checked["outcome"] != "DONE" or checked["result"] != 0x600D:
         raise RuntimeError("RC32 self-check failed under ISS (seed %d, result 0x%08X)" %
                            (seed, checked["result"]))
@@ -911,7 +1239,8 @@ def shell_join(args):
 
 
 def replay_command(args, config, seed, core=None):
-    cmd = [sys.argv[0], "--campaign", "1", "--base-seed", seed,
+    cmd = [sys.executable, sys.argv[0],
+           "--campaign", "1", "--base-seed", seed,
            "--family", args.family, "--config", config]
     if core:
         cmd += ["--cores", core]
@@ -925,10 +1254,12 @@ def replay_command(args, config, seed, core=None):
 def trace_supported(family, core):
     return (family == "nano" and core == "nano") or (
         family == "rc16" and core in (
-            "rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16")) or (
+            "rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16",
+            "rc16-mulh", "rc16-muldiv")) or (
         family == "fast" and core in (
             "fast", "fast-dsp", "fast-ecp5", "fast-ecp5-dsp",
-            "fast-block", "fast-block-dsp")) or (
+            "fast-block", "fast-block-dsp", "fast-agilex",
+            "fast-agilex-dsp")) or (
         family == "rc32" and core in
         tuple("rc32-%d" % width for width in RC32_WIDTHS))
 
@@ -945,7 +1276,13 @@ def fast_iss_path():
 
 def sim_base_args(family, config, image, fast_iss):
     if family == "rc32":
-        return [fast_iss, image, "--rc32"]
+        rc32_flag = ("--rc32" if config == "min" else
+                     "--rc32-sys" if config == "sys" else
+                     "--rc32-full")
+        args = [fast_iss, image, rc32_flag]
+        if "-" in config:
+            args.append("--mdu")
+        return args
     if family == "nano":
         return [fast_iss, image, "--nano"]
 
@@ -955,6 +1292,8 @@ def sim_base_args(family, config, image, fast_iss):
         args.append("--min")
     if cfg["full"]:
         args.append("--full")
+    if cfg["mdu"]:
+        args.append("--mdu")
     return args
 
 
@@ -1037,10 +1376,10 @@ def nano_state(image, config, dump_window=True):
     return state
 
 
-def rc32_state(image, dump_window=True):
+def rc32_state(image, config, dump_window=True):
     if not dump_window:
-        return run_fast_state("rc32", "min", image)
-    state = run_fast_state("rc32", "min", image, dump_base=(RC32_WIN >> 1),
+        return run_fast_state("rc32", config, image)
+    state = run_fast_state("rc32", config, image, dump_base=(RC32_WIN >> 1),
                            dump_len=RC32_WIN_WORDS * 2)
     halves = state["mem"]
     state["mem"] = [halves[index * 2] | (halves[index * 2 + 1] << 16)
@@ -1056,11 +1395,25 @@ def memory_lines(output):
     return [line for line in output.splitlines() if line.startswith("MEM ")]
 
 
+def interrupt_supported(family, config):
+    if family == "rc32":
+        return config != "min"
+    if family in ("rc16", "fast", "faster"):
+        return parse_config(config)["sys"]
+    return False
+
+
+MARKER_RE = re.compile(r"MARKER cycle=(\d+)")
+
+
 def compare_trace(core, family, config, seed, image, tb):
     iss_run = subprocess.run(sim_trace_args(family, config, image),
                              capture_output=True, text=True)
     rtl_args = [tb, image, "--trace", "--dump-written",
                 "--max-cycles", "400000"]
+    irq_cycle = None
+    if interrupt_supported(family, config):
+        rtl_args += ["--report-write", "0x%04X" % IRQ_MARKER]
     if family in ("rc16", "rc32", "nano", "fast"):
         rtl_args += ["--mem-stall-seed", str(seed)]
     rtl_run = subprocess.run(rtl_args,
@@ -1109,11 +1462,117 @@ def compare_trace(core, family, config, seed, image, tb):
     last = rtl_run.stdout.strip().splitlines()[-1] if rtl_run.stdout else "?"
     if "PASS" not in last:
         return False, "RTL self-check failed: %s" % last, iss_output, rtl_run.stdout
-    return True, "PASS", iss_output, rtl_run.stdout
+
+    if interrupt_supported(family, config):
+        marker = MARKER_RE.search(rtl_run.stdout)
+        if marker is None:
+            return False, "RTL did not report the IRQ body marker", \
+                iss_output, rtl_run.stdout
+        marker_cycle = int(marker.group(1))
+        low_cycle = max(5, marker_cycle // 20)
+        high_cycle = marker_cycle - 1
+        if high_cycle < low_cycle:
+            return False, "IRQ body marker is too early at cycle %d" % marker_cycle, \
+                iss_output, rtl_run.stdout
+
+        core_tag = zlib.crc32(core.encode("utf-8"))
+        irq_rng = random.Random(seed ^ core_tag ^ 0x1A2B3C4D)
+        irq_cycle = irq_rng.randint(low_cycle, high_cycle)
+        irq_args = [tb, image, "--dump-written", "--max-cycles", "400000",
+                    "--irq-at", str(irq_cycle)]
+        if family in ("rc16", "rc32", "nano", "fast"):
+            irq_args += ["--mem-stall-seed", str(seed)]
+        irq_run = subprocess.run(irq_args, capture_output=True, text=True)
+        if irq_run.returncode != 0:
+            return False, "external IRQ failed at cycle %d" % irq_cycle, \
+                iss_output, irq_run.stdout + irq_run.stderr
+
+        irq_mem = memory_lines(irq_run.stdout)
+        if irq_mem != iss_mem:
+            limit = min(len(iss_mem), len(irq_mem))
+            mismatch = next((index for index in range(limit)
+                             if iss_mem[index] != irq_mem[index]), limit)
+            detail = "external IRQ final memory mismatch at cycle %d" % irq_cycle
+            if mismatch < limit:
+                detail += ("\n  ISS: %s\n  RTL: %s" %
+                           (iss_mem[mismatch], irq_mem[mismatch]))
+            else:
+                detail += " (ISS=%d words RTL=%d words)" % (len(iss_mem), len(irq_mem))
+            return False, detail, iss_output, irq_run.stdout
+    detail = ("PASS external IRQ at cycle %d" % irq_cycle
+              if irq_cycle is not None else "PASS")
+    return True, detail, iss_output, rtl_run.stdout
+
+
+def compare_final_state(core, family, config, seed, image, tb):
+    """Compare self-checked final state when a core has no retirement trace."""
+    iss_args = sim_base_args(family, config, image, fast_iss_path())
+    iss_args += ["--dump-written"]
+    iss_run = subprocess.run(iss_args, capture_output=True, text=True)
+    rtl_args = [tb, image, "--dump-written", "--max-cycles", "400000",
+                "--mem-stall-seed", str(seed)]
+    if interrupt_supported(family, config):
+        rtl_args += ["--report-write", "0x%04X" % IRQ_MARKER]
+    rtl_run = subprocess.run(rtl_args, capture_output=True, text=True)
+    iss_output = iss_run.stdout + iss_run.stderr
+    iss_mem = memory_lines(iss_output)
+    rtl_mem = memory_lines(rtl_run.stdout)
+
+    if iss_run.returncode != 0:
+        return False, "ISS final-state run failed", iss_output, rtl_run.stdout
+    if rtl_run.returncode != 0:
+        return False, "RTL final-state run failed", iss_output, rtl_run.stdout
+    if iss_mem != rtl_mem:
+        limit = min(len(iss_mem), len(rtl_mem))
+        mismatch = next((index for index in range(limit)
+                         if iss_mem[index] != rtl_mem[index]), limit)
+        detail = "final memory mismatch"
+        if mismatch < limit:
+            detail += "\n  ISS: %s\n  RTL: %s" % (
+                iss_mem[mismatch], rtl_mem[mismatch])
+        else:
+            detail += " (ISS=%d words RTL=%d words)" % (
+                len(iss_mem), len(rtl_mem))
+        return False, detail, iss_output, rtl_run.stdout
+
+    last = rtl_run.stdout.strip().splitlines()[-1] if rtl_run.stdout else "?"
+    if "PASS" not in last:
+        return False, "RTL self-check failed: %s" % last, \
+            iss_output, rtl_run.stdout
+
+    irq_cycle = None
+    if interrupt_supported(family, config):
+        marker = MARKER_RE.search(rtl_run.stdout)
+        if marker is None:
+            return False, "RTL did not report the IRQ body marker", \
+                iss_output, rtl_run.stdout
+        marker_cycle = int(marker.group(1))
+        low_cycle = max(5, marker_cycle // 20)
+        if marker_cycle - 1 < low_cycle:
+            return False, "IRQ body marker is too early at cycle %d" % marker_cycle, \
+                iss_output, rtl_run.stdout
+        core_tag = zlib.crc32(core.encode("utf-8"))
+        irq_rng = random.Random(seed ^ core_tag ^ 0x1A2B3C4D)
+        irq_cycle = irq_rng.randint(low_cycle, marker_cycle - 1)
+        irq_args = [tb, image, "--dump-written", "--max-cycles", "400000",
+                    "--irq-at", str(irq_cycle),
+                    "--mem-stall-seed", str(seed)]
+        irq_run = subprocess.run(irq_args, capture_output=True, text=True)
+        if irq_run.returncode != 0:
+            return False, "external IRQ failed at cycle %d" % irq_cycle, \
+                iss_output, irq_run.stdout + irq_run.stderr
+        irq_mem = memory_lines(irq_run.stdout)
+        if irq_mem != iss_mem:
+            return False, "external IRQ final memory mismatch at cycle %d" % \
+                irq_cycle, iss_output, irq_run.stdout
+
+    detail = ("PASS external IRQ at cycle %d" % irq_cycle
+              if irq_cycle is not None else "PASS")
+    return True, detail, iss_output, rtl_run.stdout
 
 
 def build_tb(core, family, config, outdir):
-    if not trace_supported(family, core):
+    if family != "faster" and not trace_supported(family, core):
         raise ValueError("trace compare does not support %s" % core)
 
     if family == "rc32":
@@ -1124,9 +1583,9 @@ def build_tb(core, family, config, outdir):
         if width not in RC32_WIDTHS:
             raise ValueError("unsupported RC32 datapath width: %d" % width)
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
-        top = "riscc32_sys" if config == "sys" else "riscc32_min"
-        rtl = os.path.join(RTL, "riscc32_sys.v" if config == "sys" else
-                           "riscc32_min.v")
+        suffix = config.replace("-", "_")
+        top = "riscc32_" + suffix
+        rtl = os.path.join(RTL, "riscc32_" + suffix + ".v")
         defs = ["-GW=%d" % width]
     elif family == "nano":
         d = os.path.join(outdir, "v_trace_nano")
@@ -1144,31 +1603,56 @@ def build_tb(core, family, config, outdir):
             defs.append("-DRISCC_ECP5")
         if "block" in core:
             defs.append("-DRISCC_FAST_SYNC_RF")
+        if "agilex" in core:
+            defs.append("-DRISCC_FAST_AGILEX")
+    elif family == "faster":
+        if core not in ("faster", "faster-dsp"):
+            raise ValueError("invalid Faster core name: %s" % core)
+        d = os.path.join(outdir, "v_state_%s" % core)
+        top = "riscc16_faster"
+        rtl = os.path.join(RTL, "riscc16_faster.v")
+        defs = ["-DRISCC_FASTER_BLOCK_RF"]
+        if core == "faster":
+            defs.append("-DRISCC_FASTER_SOFT_MUL")
     else:
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
-        width = int(core.removeprefix("rc16-"))
-        if width == 16 and config == "min":
-            top = "riscc16_min"
-            rtl = os.path.join(RTL, "riscc16_min.v")
-            width_args = []
-        elif width == 16:
+        if core in ("rc16-mulh", "rc16-muldiv"):
+            required = "full-" + core.removeprefix("rc16-")
+            if config != required:
+                raise ValueError("%s requires --config %s" % (core, required))
             top = "riscc16"
-            rtl = os.path.join(RTL, "riscc16_full.v" if config == "full" else "riscc16_sys.v")
+            rtl = os.path.join(
+                RTL, "riscc16_full_%s.v" % core.removeprefix("rc16-"))
             width_args = []
-        elif config == "min":
-            top = "riscc_min"
-            rtl = os.path.join(RTL, "riscc_min.v")
-            width_args = ["-GW=%d" % width]
         else:
-            top = "riscc"
-            rtl = os.path.join(RTL, "riscc_full.v" if config == "full" else "riscc_sys.v")
-            width_args = ["-GW=%d" % width]
+            width = int(core.removeprefix("rc16-"))
+            if parse_config(config)["mdu"]:
+                raise ValueError("%s requires an MDU core" % config)
+            if width == 16 and config == "min":
+                top = "riscc16_min"
+                rtl = os.path.join(RTL, "riscc16_min.v")
+                width_args = []
+            elif width == 16:
+                top = "riscc16"
+                rtl = os.path.join(RTL, "riscc16_full.v" if config == "full" else "riscc16_sys.v")
+                width_args = []
+            elif config == "min":
+                top = "riscc_min"
+                rtl = os.path.join(RTL, "riscc_min.v")
+                width_args = ["-GW=%d" % width]
+            else:
+                top = "riscc"
+                rtl = os.path.join(RTL, "riscc_full.v" if config == "full" else "riscc_sys.v")
+                width_args = ["-GW=%d" % width]
         defs = config_defs(config).split()
         defs += width_args
-    defs.append("-DRISCC_TRACE")
+    with_trace = family != "faster"
+    if with_trace:
+        defs.append("-DRISCC_TRACE")
     tb = os.path.join(d, "tb")
     trace_rtl = os.path.join(RTL, "test")
-    newest_src = max(os.path.getmtime(rtl),
+    rtl_dependencies = [rtl]
+    newest_src = max(*(os.path.getmtime(path) for path in rtl_dependencies),
                      os.path.getmtime(__file__),
                      os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_ports.vh")),
                      os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_state.vh")),
@@ -1190,14 +1674,15 @@ def build_tb(core, family, config, outdir):
         "-I%s" % trace_rtl,
     ] + defs + [
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
-        " -DRISCC_TB_TRACE" +
+        (" -DRISCC_TB_TRACE" if with_trace else "") +
         (" -DRISCC_TB_MEM_HANDSHAKE"
-         if family in ("rc16", "rc32", "fast") else "") +
+         if family in ("rc16", "rc32", "fast", "faster") else "") +
         (" -DRISCC_TB_MEM_OE_N" if family == "nano" else "") +
         (" -DRISCC_TB_RC32" if family == "rc32" else "") +
         (" -DRISCC_TB_TRACE_DRAIN=1" if family == "fast" else
          " -DRISCC_TB_TRACE_DRAIN=0"
-        if family == "rc16" and core == "rc16-16" else ""),
+        if family == "rc16" and core in
+        ("rc16-16", "rc16-mulh", "rc16-muldiv") else ""),
         "-o", "tb",
         rtl,
         os.path.join(TEST, "riscc_test.cpp"),
@@ -1216,20 +1701,28 @@ def main():
                     help="first deterministic campaign seed")
     ap.add_argument("--random-seed", action="store_true",
                     help="choose and print a fresh random campaign base seed")
-    ap.add_argument("--family", default="rc16", choices=["rc16", "nano", "fast", "rc32"])
+    ap.add_argument("--family", default="rc16",
+                    choices=["rc16", "nano", "fast", "faster", "rc32"])
     ap.add_argument("--config")
     ap.add_argument("--cores")
+    ap.add_argument("-j", "--jobs", type=int, default=available_cpu_count(),
+                    help="parallel generator/simulator jobs (default: all CPUs)")
     ap.add_argument("--outdir", default=os.path.join(ROOT, "build", "fuzz"))
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
     valid_configs = (NANO_CONFIGS if args.family == "nano" else
                      RC32_CONFIGS if args.family == "rc32" else
-                     ("full",) if args.family == "fast" else RC16_CONFIGS)
+                     ("full",) if args.family in ("fast", "faster") else
+                     RC16_CONFIGS)
     if args.config is not None and args.config not in valid_configs:
         ap.error("--config must be one of: %s" % ", ".join(valid_configs))
     if args.random_seed and args.base_seed is not None:
         ap.error("--random-seed and --base-seed are mutually exclusive")
+    if args.jobs < 1:
+        ap.error("--jobs must be positive")
+    if args.campaign is not None and args.campaign < 1:
+        ap.error("--campaign must be positive")
 
     if args.campaign is None:
         if args.seed is None:
@@ -1240,46 +1733,96 @@ def main():
         print("OK (ISS self-check): %s" % b)
         return
 
-    cores = args.cores.split(",") if args.cores else (
-        ["nano"] if args.family == "nano" else
-        ["rc32-%d" % width for width in RC32_WIDTHS]
-        if args.family == "rc32" else
-        ["fast", "fast-dsp"] if args.family == "fast" else
-        ["rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16"])
+    requested_cores = args.cores.split(",") if args.cores else None
     configs = [args.config] if args.config else valid_configs
     base_seed = (args.base_seed if args.base_seed is not None
                  else random.SystemRandom().randrange(0, 1 << 31))
-    print("campaign seeds: base=%d count=%d" % (base_seed, args.campaign))
+    print("campaign seeds: base=%d count=%d jobs=%d" %
+          (base_seed, args.campaign, args.jobs))
     fails = 0
     total = 0
+    external_irqs = 0
     first_failure = None
     for config in configs:
-        bins = []
-        for seed_idx in range(args.campaign):
-            seed = base_seed + seed_idx
+        cores = requested_cores
+        if cores is None:
+            if args.family == "nano":
+                cores = ["nano"]
+            elif args.family == "rc32":
+                cores = ["rc32-%d" % width for width in RC32_WIDTHS]
+            elif args.family == "fast":
+                cores = ["fast", "fast-dsp"]
+            elif args.family == "faster":
+                cores = ["faster", "faster-dsp"]
+            elif config == "full-mulh":
+                cores = ["rc16-mulh"]
+            elif config == "full-muldiv":
+                cores = ["rc16-muldiv"]
+            else:
+                cores = ["rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16"]
+        seeds = [base_seed + seed_idx for seed_idx in range(args.campaign)]
+
+        def generate(seed):
             try:
-                bins.append((seed, make_case(seed, args.family, config, args.outdir)))
-            except Exception as e:
+                return seed, make_case(seed, args.family, config, args.outdir), None
+            except Exception as error:
+                return seed, None, error
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(args.jobs, len(seeds))) as executor:
+            generated = list(executor.map(generate, seeds))
+        bins = []
+        for seed, image, error in generated:
+            if error is not None:
                 print("GENFAIL %s/%s seed=%d: %s" %
-                      (args.family, config, seed, e))
+                      (args.family, config, seed, error))
                 print("replay: %s" % replay_command(args, config, seed))
                 sys.exit(1)
-        for core in cores:
-            tb = build_tb(core, args.family, config, args.outdir)
-            for seed, b in bins:
+            bins.append((seed, image))
+
+        def build_core(core):
+            return core, build_tb(core, args.family, config, args.outdir)
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(args.jobs, len(cores))) as executor:
+            testbenches = list(executor.map(build_core, cores))
+
+        comparisons = [
+            (core, tb, seed, image)
+            for core, tb in testbenches
+            for seed, image in bins
+        ]
+
+        def compare(item):
+            core, tb, seed, image = item
+            checker = (compare_final_state if args.family == "faster"
+                       else compare_trace)
+            return (core, seed, image,
+                    checker(core, args.family, config, seed, image, tb))
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(args.jobs, len(comparisons))) as executor:
+            results = executor.map(compare, comparisons)
+            for core, seed, image, result in results:
                 total += 1
-                ok, detail, _, _ = compare_trace(core, args.family, config, seed, b, tb)
+                ok, detail, _, _ = result
                 if not ok:
                     fails += 1
-                    print("TRACE-DIVERGE %s %s/%s seed=%d: %s\n%s"
-                          % (core, args.family, config, seed,
-                             os.path.basename(b), detail))
+                    divergence = ("STATE-DIVERGE" if args.family == "faster"
+                                  else "TRACE-DIVERGE")
+                    print("%s %s %s/%s seed=%d: %s\n%s"
+                          % (divergence, core, args.family, config, seed,
+                             os.path.basename(image), detail))
                     if first_failure is None:
                         first_failure = (core, config, seed)
                         print("replay: %s" %
                               replay_command(args, config, seed, core))
+                elif detail.startswith("PASS external IRQ"):
+                    external_irqs += 1
         print("config %s/%s done" % (args.family, config))
     print("campaign: %d runs, %d divergences" % (total, fails))
+    if external_irqs:
+        print("external IRQ injections: %d" % external_irqs)
     if first_failure is not None:
         core, config, seed = first_failure
         print("first failing seed: family=%s config=%s core=%s seed=%d"

@@ -11,9 +11,9 @@ RISC-C Nano is the smallest practical C/C++-programmable FPGA soft
 CPU, using 94 ECP5 LUT4 sites plus one EBR. Despite its size, it is a
 conventional register-based CPU supported by LLVM/Clang. A version with
 interrupts, preemptive RTOS support, 32-bit registers, and a 32-bit
-address space still uses only 178 ECP5 LUT4 sites plus one EBR, while keeping
-the compact instruction set. Optional hardware multiplication and division
-are also available.
+address space still uses only 180 ECP5 LUT4 sites plus one EBR, while keeping
+the compact instruction set. RC16 also has optional paired multiply and divide
+hardware; RC32 Full currently implements low-half multiplication only.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
@@ -167,16 +167,16 @@ Run `make help` for the complete list of user targets and selection variables.
 The usual complete non-interactive check is:
 
 ```sh
-make -j16 all
-make -j16 test-compiler
+make -j16 test-all
 ```
 
 | Command | Purpose |
 |---|---|
-| `make -j16 test-all` | Deterministic Verilator RTL regression for RC16/Nano, RC32 Min/Sys at every width, all Fast target variants, and ECP5/Agilex Faster DSP/soft. |
+| `make -j16 test-rtl` | Deterministic Verilator RTL and application regression across the implemented cores, profiles, widths, and memory variants. |
+| `make -j16 test-all` | Complete deterministic correctness gate: LLVM/Clang/lld, supported ISA and IRQ timing, compiler/ABI/runtime, ISS, and RTL. |
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
-| `make -j16 all` | Deterministic RTL regression and architecture benchmarks; it does not require Quartus or include the compiler suite. |
+| `make -j16 all` | Runs `test-all`, then the architecture benchmarks; it does not require Quartus. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
 | `make -j16 tables-lattice` | Tunes and regenerates ECP5 area/Fmax tables and benchmarks without Quartus. |
 | `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |

@@ -3,9 +3,14 @@
 ; four, IRQ acknowledgement, and return through saved S0 continuation.
 
 .text
-        ; JALL S7, 0x10000 + main.  The fixture aliases the physical 64 KiB
-        ; RAM window, so this also checks JALL's five header address bits.
+        ; The RTL image deliberately enters the fixture's aliased high window
+        ; to check JALL's five header address bits.  The ISS image stays in its
+        ; sparse low window; both execute the same defined JALL form.
+.ifdef RISCC_ISS
+        .short 0x3834
+.else
         .short 0x3874
+.endif
         .short main
 
 irq_vector:
@@ -46,9 +51,21 @@ after_jmpl:
 
         ; Enter the same physical window with nonzero architectural PC high
         ; bits before enabling IRQ.  RETI must preserve the full 32-bit EPC.
+.ifdef RISCC_ISS
+        .short  0x0034             ; JMPL irq_wait_high
+.else
         .short  0x0074             ; JMPL 0x10000 + irq_wait_high
+.endif
         .short  irq_wait_high
 irq_wait_high:
+.ifdef RISCC_ISS
+        ; The RTL testbench injects a held external IRQ.  Give the atomic ISS
+        ; the equivalent pending level through the shared test MMIO register.
+        LDI     r2, 0
+        ADDI    r2, -6
+        LDI     r1, 1
+        STH     r1, [r2]
+.endif
         STI
 loop:
         CMPI    r1, 1

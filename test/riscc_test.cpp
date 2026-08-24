@@ -16,7 +16,8 @@
 //   0xFFFE (word 0x7FFF)  result word: 0x600D pass, anything else fail
 // Usage: tb <image.bin> [max_cycles] [--max-cycles N] [--irq-at N]
 //           [--trace] [--dump-written] [--uart-expect-line TEXT]
-//           [--mem-stall-seed N]
+//           [--mem-stall-seed N] [--stop-at-write BYTE_ADDR]
+//           [--report-write BYTE_ADDR] [--report-stalls]
 // --irq-at raises one IRQ at cycle N (deterministic IRQ tests without the
 // store-to-0xFFFA trigger). A read from 0xFFFA acknowledges it. Exit status
 // follows the result word.
@@ -117,6 +118,9 @@ int main(int argc, char **argv)
     int irq_at_fired = 0;
     int trace = 0;
     int dump_written = 0;
+    int64_t stop_at_write = -1;
+    int64_t report_at_write = -1;
+    int report_stalls = 0;
     uint32_t mem_stall_seed = 0;
     const char *uart_expect_line = nullptr;
     for (int i = 2; i < argc; i++)
@@ -129,6 +133,12 @@ int main(int argc, char **argv)
             trace = 1;
         else if (!strcmp(argv[i], "--dump-written"))
             dump_written = 1;
+        else if (!strcmp(argv[i], "--stop-at-write") && i + 1 < argc)
+            stop_at_write = strtoll(argv[++i], nullptr, 0);
+        else if (!strcmp(argv[i], "--report-write") && i + 1 < argc)
+            report_at_write = strtoll(argv[++i], nullptr, 0);
+        else if (!strcmp(argv[i], "--report-stalls"))
+            report_stalls = 1;
         else if (!strcmp(argv[i], "--mem-stall-seed") && i + 1 < argc)
             mem_stall_seed = strtoul(argv[++i], nullptr, 0);
         else if (!strcmp(argv[i], "--uart-expect-line") && i + 1 < argc)
@@ -174,6 +184,9 @@ int main(int argc, char **argv)
     int uart_done = 0;
     int done_trace_age = 0;
     int trace_printed = 0;
+    int marker_done = 0;
+    int external_irq_pending = 0;
+    int external_irq_acked = 0;
     std::string uart_line;
     for (; cyc < max_cycles; cyc++)
     {
@@ -184,6 +197,7 @@ int main(int argc, char **argv)
         if (!irq_at_fired && irq_at >= 0 && cyc >= (uint64_t)irq_at) {
             irq = 1;
             irq_at_fired = 1;
+            external_irq_pending = 1;
         }
         top->irq = irq;
 
@@ -245,6 +259,8 @@ int main(int argc, char **argv)
             top->eval();
             request_complete = 1;
         } else if (mem_pending) {
+            if (report_stalls)
+                printf("STALL cycle=%llu\n", (unsigned long long)cyc);
             mem_wait--;
         }
 #else
@@ -280,8 +296,13 @@ int main(int argc, char **argv)
         const int test_irq_read = request_complete &&
             !we && !top->rst && fixture_addr == 0x7FFD;
         const uint16_t test_irq_cause = top->irq ? 1 : 0;
-        if (test_irq_read)
+        if (test_irq_read) {
+            if (external_irq_pending) {
+                external_irq_pending = 0;
+                external_irq_acked = 1;
+            }
             irq = 0;
+        }
 
         if (request_complete && we && !top->rst)
         {
@@ -293,6 +314,12 @@ int main(int argc, char **argv)
             mem_written[fixture_addr] = 1;
             if (fixture_addr == 0x7FFD) irq = 1; // byte 0xFFFA: raise irq
             if (fixture_addr == 0x7FFF) done = 1; // byte 0xFFFE: result word
+            if (stop_at_write >= 0 && fixture_addr ==
+                    ((static_cast<uint64_t>(stop_at_write) >> 1) & 0x7fff))
+                marker_done = 1;
+            if (report_at_write >= 0 && fixture_addr ==
+                    ((static_cast<uint64_t>(report_at_write) >> 1) & 0x7fff))
+                printf("MARKER cycle=%llu\n", (unsigned long long)cyc);
             if (uart_expect_line && fixture_addr == 0x7FF8 && (wmask & 1))
             {
                 const char ch = char(wdata & 0xFF);
@@ -331,6 +358,13 @@ int main(int argc, char **argv)
         top->clk = 0;
         top->eval();
 
+        if (marker_done)
+        {
+            printf("MARKER cycle=%llu\n", (unsigned long long)cyc);
+            delete top;
+            return 0;
+        }
+
         // A pipelined core can commit the result store before its trace
         // record reaches the trace output.  Allow two drain cycles; memory
         // serialization prevents a younger instruction from overtaking it.
@@ -358,6 +392,13 @@ int main(int argc, char **argv)
     {
         printf("TIMEOUT after %llu cycles, result=0x%04X\n",
             (unsigned long long)cyc, result);
+        delete top;
+        return 1;
+    }
+    if (irq_at >= 0 && !external_irq_acked)
+    {
+        printf("IRQ NOT ACKNOWLEDGED: requested cycle=%lld fired=%d\n",
+            (long long)irq_at, irq_at_fired);
         delete top;
         return 1;
     }

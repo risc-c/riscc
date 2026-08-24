@@ -20,7 +20,18 @@ FIT_SEED = 1
 TARGET_NS = 4.0
 AREA_OPTIMIZATION = "AGGRESSIVE AREA"
 PERFORMANCE_OPTIMIZATION = "HIGH PERFORMANCE EFFORT"
-AREA_PROFILES = {"full", "mulh", "muldiv"}
+AREA_PROFILES = {"full", "rc32full", "mulh", "muldiv"}
+AUTO_CONFIG_MEMORY_KIB = 3 * 1024 * 1024
+
+
+def available_memory_kib():
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 def project_specs(root: Path, family: str):
@@ -54,6 +65,7 @@ def project_specs(root: Path, family: str):
         for profile, rtl, macro in (
             ("rc32min", root / "rtl/riscc32_min.v", "RISCC_FMAX_RC32_MIN"),
             ("rc32sys", root / "rtl/riscc32_sys.v", "RISCC_FMAX_RC32_SYS"),
+            ("rc32full", root / "rtl/riscc32_full.v", "RISCC_FMAX_RC32_FULL"),
         ):
             for width in (1, 2, 4, 8, 16):
                 specs.append((
@@ -171,16 +183,18 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument(
-        "--parallel-configs", type=int, default=1,
-        help="independent Quartus projects to compile concurrently")
+        "--parallel-configs", type=int, default=0,
+        help=("independent Quartus projects to compile concurrently; "
+              "0 selects one project per two --jobs threads, capped by "
+              "available memory"))
     parser.add_argument("--family", choices=("rc16", "rc32", "other", "all"),
                         default="rc16")
     parser.add_argument("--only", action="append", default=[], metavar="NAME",
                         help="characterize only this configuration (repeatable)")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
-    if args.jobs < 1 or args.parallel_configs < 1:
-        parser.error("--jobs and --parallel-configs must be positive")
+    if args.jobs < 1 or args.parallel_configs < 0:
+        parser.error("--jobs must be positive and --parallel-configs nonnegative")
 
     root = Path(__file__).resolve().parents[1]
     output_dir = args.out.resolve()
@@ -210,9 +224,21 @@ def main():
         if args.only or args.family != "all"
         else {}
     )
-    project_jobs = max(1, args.jobs // args.parallel_configs)
+    if args.parallel_configs:
+        parallel_configs = args.parallel_configs
+    else:
+        parallel_configs = max(1, (args.jobs + 1) // 2)
+        memory_kib = available_memory_kib()
+        if memory_kib is not None:
+            parallel_configs = min(
+                parallel_configs,
+                max(1, memory_kib // AUTO_CONFIG_MEMORY_KIB))
+    parallel_configs = min(parallel_configs, len(specs))
+    project_jobs = max(1, args.jobs // parallel_configs)
+    print(f"Quartus concurrency: {parallel_configs} projects, "
+          f"{project_jobs} threads/project ({args.jobs} total jobs)", flush=True)
     with concurrent.futures.ThreadPoolExecutor(
-            max_workers=args.parallel_configs) as executor:
+            max_workers=parallel_configs) as executor:
         pending = [
             executor.submit(
                 characterize, spec, output_dir, root, quartus_syn,

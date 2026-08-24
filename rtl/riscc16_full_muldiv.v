@@ -601,8 +601,11 @@ module riscc16 #(
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = 16;
     wire        tr_op_done_i = shift_complete;
+    // MULHU writes its high half in MDR-writeback and retires after the low
+    // half is written in Execute.  The trace state accumulates both writes,
+    // so only execute_complete must publish the architectural step.
     wire        tr_commit_i = execute_complete | in_compare_writeback |
-                              mulhu_high_write | tr_op_done_i |
+                              tr_op_done_i |
                               (in_decode && (branch_op | interrupt_enable_op)) |
                               memory_write_cycle | in_jump_commit | in_irq_entry;
     wire [14:0] tr_pc_i = pc_q;

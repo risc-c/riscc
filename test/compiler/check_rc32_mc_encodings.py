@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Seeded RC32 MC encoding differential fuzzer.
+"""Deterministically compare every implemented RC32 encoding field to LLVM MC.
 
-The test emits a mixed RC32 Min stream, assembles it with LLVM MC, and checks
-the raw .text bytes against this small, independent encoder.  It covers random
-register/immediate operands as well as forward and backward branch and LDPC
-fixups, including their rotated signed-halfword fields.
+Compact formats enumerate every legal register and immediate combination.
+JALL's much larger 21-bit address is covered independently by every S-register
+value, every high-field value, every aligned low-16 value, and cross-field
+boundaries. Optional MDU forms are exhaustive over their three register fields.
 """
 
 from __future__ import annotations
 
 import argparse
-import random
+import bisect
 import subprocess
 import sys
 import tempfile
+from array import array
 from pathlib import Path
 
 
@@ -26,8 +27,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llvm-mc", type=Path, default=default_bin / "llvm-mc")
     parser.add_argument("--llvm-objcopy", type=Path,
                         default=default_bin / "llvm-objcopy")
-    parser.add_argument("--seed", type=lambda text: int(text, 0), default=0x5A17C32)
-    parser.add_argument("--iterations", type=int, default=4096)
     return parser.parse_args()
 
 
@@ -49,181 +48,328 @@ def rotated_rel8(rel: int) -> int:
     return ((encoded << 1) & 0xfe) | (encoded >> 7)
 
 
-def mem(rd: int, base: int, disp: int, store: bool) -> bytes:
+def mem(reg: int, base: int, disp: int, store: bool) -> bytes:
     assert disp % 4 == 0 and -256 <= disp <= 252
     words = (disp // 4) & 0x7f
     encoded = ((words & 0x3f) << 2) | ((words & 0x40) >> 5)
-    return word(0x4000 | (rd << 11) | (base << 8) | encoded | int(store))
+    return word(0x4000 | (reg << 11) | (base << 8) |
+                encoded | int(store))
 
 
-def direct(rd: int, base: int, func: int, width: int) -> bytes:
-    return rr(rd, base, func, width)
+def sysop(sd: int, ra: int, sub: int) -> bytes:
+    return word(0xc0f8 | (sd << 11) | (ra << 8) | sub)
 
 
-def fail(message: str, expected: bytes, actual: bytes,
-         emitted: list[tuple[int, str]]) -> int:
+def jall(sd: int, target: int) -> bytes:
+    assert target % 2 == 0 and 0 <= target <= 0x1ffffe
+    head = (sd << 11) | (((target >> 16) & 0x1f) << 6) | 0x34
+    return word(head) + word(target)
+
+
+class Corpus:
+    def __init__(self, name: str, cpu: str, attributes: str = "+rc32"):
+        self.name = name
+        self.cpu = cpu
+        self.attributes = attributes
+        self.lines = [".text"]
+        self.expected = bytearray()
+        self.offsets = array("I")
+        self.contexts: list[str] = []
+        self.instructions = 0
+        self.label_id = 0
+
+    def emit(self, spelling: str, encoding: bytes) -> None:
+        self.offsets.append(len(self.expected))
+        self.contexts.append(spelling)
+        self.lines.append("  " + spelling)
+        self.expected.extend(encoding)
+        self.instructions += 1
+
+    def space(self, size: int) -> None:
+        if size:
+            self.lines.append(f"  .space {size}, 0")
+            self.expected.extend(bytes(size))
+
+    def align(self, alignment: int) -> None:
+        self.lines.append(f"  .balign {alignment}, 0")
+        while len(self.expected) % alignment:
+            self.expected.append(0)
+
+    def label(self, name: str) -> None:
+        self.lines.append(name + ":")
+
+    def fresh(self, stem: str) -> str:
+        self.label_id += 1
+        return f".{stem}_{self.label_id}"
+
+
+def emit_relative(corpus: Corpus, mnemonic: str, encoding_rd: int,
+                  encoding_op: int, rel: int, prefix: str = "") -> None:
+    label = corpus.fresh(mnemonic)
+    encoding = ri(encoding_rd, encoding_op, rotated_rel8(rel))
+    if rel < 0:
+        corpus.label(label)
+        corpus.space(-2 * rel - 2)
+        corpus.emit(f"{prefix}{mnemonic} {label}", encoding)
+    else:
+        corpus.emit(f"{prefix}{mnemonic} {label}", encoding)
+        corpus.space(2 * rel)
+        corpus.label(label)
+
+
+def emit_ldpc(corpus: Corpus, rd: int, rel: int) -> None:
+    label = corpus.fresh("ldpc")
+    encoding = ri(rd, 1, rotated_rel8(rel))
+    if rel < 0:
+        corpus.align(4)
+        corpus.label(label)
+        corpus.space(-2 * rel - 2)
+        corpus.emit(f"ldpc r{rd}, {label}", encoding)
+    else:
+        if (len(corpus.expected) + 2 + 2 * rel) & 3:
+            corpus.space(2)
+        corpus.emit(f"ldpc r{rd}, {label}", encoding)
+        corpus.space(2 * rel)
+        corpus.label(label)
+        corpus.lines.append("  .long 0")
+        corpus.expected.extend(b"\0\0\0\0")
+
+
+def make_min_corpus() -> Corpus:
+    corpus = Corpus("min", "min")
+
+    for mnemonic, store in (("ld", False), ("st", True)):
+        for reg in range(8):
+            for base in range(8):
+                for disp in range(-256, 256, 4):
+                    corpus.emit(f"{mnemonic} r{reg}, [r{base} + {disp}]",
+                                mem(reg, base, disp, store))
+
+    for mnemonic, opcode, signed in (
+            ("ldi", 0, False), ("addi", 2, True), ("cmpi", 3, True),
+            ("andi", 4, False), ("ori", 5, False), ("xori", 6, False)):
+        values = range(-128, 128) if signed else range(256)
+        for rd in range(8):
+            for immediate in values:
+                corpus.emit(f"{mnemonic} r{rd}, {immediate}",
+                            ri(rd, opcode, immediate))
+
+    for rd in range(8):
+        for rel in range(-128, 128):
+            emit_ldpc(corpus, rd, rel)
+
+    for condition, mnemonic in enumerate(
+            ("beqz", "bnez", "bltz", "bgez", "jmp8")):
+        for rel in range(-128, 128):
+            emit_relative(corpus, mnemonic, condition, 7, rel)
+
+    for mnemonic, func in (
+            ("add", 0), ("sub", 1), ("slt", 2), ("sltu", 3),
+            ("and", 4), ("or", 5), ("xor", 6)):
+        for rd in range(8):
+            for ra in range(8):
+                for rb in range(8):
+                    corpus.emit(f"{mnemonic} r{rd}, r{ra}, r{rb}",
+                                rr(rd, ra, func, rb))
+
+    for rd in range(8):
+        for ra in range(8):
+            for rb in range(8):
+                corpus.emit(f"ldx r{rd}, [r{ra} + r{rb}]",
+                            rr(rd, ra, 8, rb))
+
+    for mnemonic, func, selector in (
+            ("ldb", 0x0a, 0), ("ldbs", 0x0e, 0),
+            ("stb", 0x0b, 0), ("ldh", 0x0a, 2),
+            ("ldhs", 0x0e, 2), ("sth", 0x0b, 2)):
+        for rd in range(8):
+            for ra in range(8):
+                corpus.emit(f"{mnemonic} r{rd}, [r{ra}]",
+                            rr(rd, ra, func, selector))
+
+    for mnemonic, selector in (("fsl1", 0), ("fsr1", 1)):
+        for rd in range(8):
+            for ra in range(8):
+                corpus.emit(f"{mnemonic} r{rd}, r{ra}",
+                            rr(rd, ra, 0x11, selector))
+
+    for mnemonic, func in (("srli", 0x0c), ("srai", 0x0d)):
+        for rd in range(8):
+            for ra in range(8):
+                corpus.emit(f"{mnemonic} r{rd}, r{ra}, 1",
+                            rr(rd, ra, func, 0))
+
+    for sreg in range(8):
+        corpus.emit(f"ret s{sreg}", sysop(0, sreg, 0))
+    for sd in range(8):
+        for ra in range(8):
+            corpus.emit(f"jalr s{sd}, r{ra}", sysop(sd, ra, 1))
+    for rd in range(8):
+        for sa in range(8):
+            corpus.emit(f"mfs r{rd}, s{sa}", sysop(rd, sa, 2))
+    for sd in range(8):
+        for ra in range(8):
+            corpus.emit(f"mts s{sd}, r{ra}", sysop(sd, ra, 3))
+
+    for rd in range(8):
+        for ra in range(8):
+            corpus.emit(f"mov r{rd}, r{ra}", rr(rd, ra, 5, ra))
+    for ra in range(8):
+        corpus.emit(f"jmp r{ra}", sysop(0, ra, 1))
+    corpus.emit("nop", rr(0, 0, 5, 0))
+    corpus.emit("halt", ri(4, 7, rotated_rel8(-1)))
+    return corpus
+
+
+def make_sys_corpus() -> Corpus:
+    corpus = Corpus("sys", "sys")
+    for sreg in range(8):
+        corpus.emit(f"reti s{sreg}", sysop(5, sreg, 0))
+    corpus.emit("cli", sysop(2, 0, 0))
+    corpus.emit("sti", sysop(7, 0, 0))
+
+    cases = {(sd, 0) for sd in range(8)}
+    cases.update((7, high << 16) for high in range(32))
+    cases.update((7, low) for low in range(0, 0x10000, 2))
+    for sd in range(8):
+        for target in (0, 2, 0xfffe, 0x10000, 0x10002, 0x1ffffe):
+            cases.add((sd, target))
+    for sd, target in sorted(cases):
+        corpus.emit(f"jall s{sd}, {target}", jall(sd, target))
+    for target in (0, 2, 0xfffe, 0x10000, 0x10002, 0x1ffffe):
+        corpus.emit(f"jmpl {target}", jall(0, target))
+    return corpus
+
+
+def make_full_corpus() -> Corpus:
+    corpus = Corpus("full", "full")
+    for rd in range(8):
+        for ra in range(8):
+            for rb in range(8):
+                corpus.emit(f"mul r{rd}, r{ra}, r{rb}", rr(rd, ra, 7, rb))
+    for mnemonic, func, amounts in (
+            ("slli", 0x0f, range(1, 9)),
+            ("srli", 0x0c, range(2, 9)),
+            ("srai", 0x0d, range(2, 9))):
+        for rd in range(8):
+            for ra in range(8):
+                for amount in amounts:
+                    corpus.emit(f"{mnemonic} r{rd}, r{ra}, {amount}",
+                                rr(rd, ra, func, amount - 1))
+    return corpus
+
+
+def make_mdu_corpus() -> Corpus:
+    corpus = Corpus("mdu", "full", "+rc32,+mdu")
+    for mnemonic, func in (("divu", 0x10), ("mulhu", 0x14)):
+        for first in range(8):
+            for second in range(8):
+                for source in range(8):
+                    corpus.emit(
+                        f"{mnemonic} r{first}, r{second}, r{source}",
+                        rr(first, second, func, source),
+                    )
+    return corpus
+
+
+def assemble(corpus: Corpus, llvm_mc: Path, llvm_objcopy: Path,
+             tmp: Path) -> tuple[bool, str]:
+    source_path = tmp / f"rc32-{corpus.name}.s"
+    object_path = tmp / f"rc32-{corpus.name}.o"
+    binary_path = tmp / f"rc32-{corpus.name}.bin"
+    source_path.write_text("\n".join(corpus.lines) + "\n", encoding="ascii")
+    mc = subprocess.run(
+        [str(llvm_mc), "-triple=riscc-none-elf", f"-mcpu={corpus.cpu}",
+         f"-mattr={corpus.attributes}", "-filetype=obj", "-o",
+         str(object_path), str(source_path)],
+        capture_output=True, text=True,
+    )
+    if mc.returncode:
+        return False, mc.stderr
+    objcopy = subprocess.run(
+        [str(llvm_objcopy), "-O", "binary", "--only-section=.text",
+         str(object_path), str(binary_path)],
+        capture_output=True, text=True,
+    )
+    if objcopy.returncode:
+        return False, objcopy.stderr
+    actual = binary_path.read_bytes()
+    expected = corpus.expected
     mismatch = next((index for index, (want, got) in
-                     enumerate(zip(expected, actual)) if want != got),
-                    min(len(expected), len(actual)))
+                     enumerate(zip(expected, actual)) if want != got), None)
+    if mismatch is None and len(expected) != len(actual):
+        mismatch = min(len(expected), len(actual))
+    if mismatch is None:
+        return True, ""
+    index = bisect.bisect_right(corpus.offsets, mismatch) - 1
+    context = corpus.contexts[index] if index >= 0 else "section padding"
     lo = max(0, mismatch - 8)
     hi = mismatch + 10
-    context = next((line for offset, line in reversed(emitted)
-                    if offset <= mismatch), "section padding")
-    print(
-        f"{message} at .text+0x{mismatch:x}\n"
+    return False, (
+        f"{corpus.name} encoding mismatch at .text+0x{mismatch:x}\n"
         f"near: {context}\n"
         f"oracle: {expected[lo:hi].hex(' ')}\n"
-        f"llvm-mc: {actual[lo:hi].hex(' ')}",
-        file=sys.stderr,
+        f"llvm-mc: {actual[lo:hi].hex(' ')}\n"
     )
-    return 1
+
+
+def expect_rejection(llvm_mc: Path, tmp: Path, cpu: str,
+                     instruction: str) -> tuple[bool, str]:
+    output = tmp / "reject.o"
+    result = subprocess.run(
+        [str(llvm_mc), "-triple=riscc-none-elf", f"-mcpu={cpu}",
+         "-mattr=+rc32", "-filetype=obj", "-o", str(output)],
+        input=".text\n  " + instruction + "\n",
+        capture_output=True, text=True,
+    )
+    if result.returncode:
+        return True, ""
+    return False, f"{cpu} unexpectedly accepted `{instruction}`\n"
 
 
 def main() -> int:
     args = parse_args()
-    if args.iterations < 1:
-        print("--iterations must be positive", file=sys.stderr)
-        return 2
     for tool in (args.llvm_mc, args.llvm_objcopy):
         if not tool.is_file():
             print(f"tool not found: {tool}", file=sys.stderr)
             return 2
 
-    rng = random.Random(args.seed)
-    expected = bytearray()
-    instruction_count = 0
-    label_id = 0
-    emitted: list[tuple[int, str]] = []
-
+    corpora = (make_min_corpus(), make_sys_corpus(),
+               make_full_corpus(), make_mdu_corpus())
+    total_instructions = 0
+    total_bytes = 0
     with tempfile.TemporaryDirectory(prefix="riscc-rc32-mc-") as tmp_name:
         tmp = Path(tmp_name)
-        source_path = tmp / "rc32-fuzz.s"
-        object_path = tmp / "rc32-fuzz.o"
-        binary_path = tmp / "rc32-fuzz.bin"
+        for corpus in corpora:
+            ok, detail = assemble(corpus, args.llvm_mc, args.llvm_objcopy, tmp)
+            if not ok:
+                print(detail, file=sys.stderr, end="")
+                return 1
+            total_instructions += corpus.instructions
+            total_bytes += len(corpus.expected)
 
-        with source_path.open("w", encoding="ascii") as source:
-            def emit(line: str, encoding: bytes) -> None:
-                nonlocal instruction_count
-                emitted.append((len(expected), line))
-                source.write(f"  {line}\n")
-                expected.extend(encoding)
-                instruction_count += 1
+        for cpu, instruction in (
+                ("min", "jall s0, 0"),
+                ("min", "reti s0"),
+                ("min", "slli r0, r0, 1"),
+                ("min", "srli r0, r0, 2"),
+                ("min", "srai r0, r0, 8"),
+                ("sys", "mul r0, r0, r0"),
+                ("sys", "slli r0, r0, 1"),
+                ("sys", "srli r0, r0, 2"),
+                ("sys", "srai r0, r0, 8"),
+                ("full", "ldi16 r0, 0"),
+                ("full", "slli r0, r0, 0"),
+                ("full", "srai r0, r0, 9")):
+            ok, detail = expect_rejection(args.llvm_mc, tmp, cpu, instruction)
+            if not ok:
+                print(detail, file=sys.stderr, end="")
+                return 1
 
-            def space(size: int) -> None:
-                source.write(f"  .space {size}\n")
-                expected.extend(bytes(size))
-
-            def label(name: str) -> None:
-                source.write(name + ":\n")
-
-            def fresh(stem: str) -> str:
-                nonlocal label_id
-                label_id += 1
-                return f".{stem}_{label_id}"
-
-            source.write(".text\n")
-            for _ in range(args.iterations):
-                rd, ra, rb = (rng.randrange(8) for _ in range(3))
-                kind = rng.randrange(16)
-                if kind == 0:
-                    imm = rng.randrange(256)
-                    emit(f"ldi r{rd}, {imm}", ri(rd, 0, imm))
-                elif kind == 1:
-                    imm = rng.randrange(-128, 128)
-                    emit(f"addi r{rd}, {imm}", ri(rd, 2, imm))
-                elif kind == 2:
-                    imm = rng.randrange(-128, 128)
-                    emit(f"cmpi r{rd}, {imm}", ri(rd, 3, imm))
-                elif kind in (3, 4, 5):
-                    op, opcode = (("andi", 4), ("ori", 5), ("xori", 6))[kind - 3]
-                    imm = rng.randrange(256)
-                    emit(f"{op} r{rd}, {imm}", ri(rd, opcode, imm))
-                elif kind in (6, 7):
-                    disp = rng.randrange(-64, 64) * 4
-                    op = "st" if kind == 7 else "ld"
-                    emit(f"{op} r{rd}, [r{ra} + {disp}]",
-                         mem(rd, ra, disp, kind == 7))
-                elif kind == 8:
-                    op, func = rng.choice((("add", 0), ("sub", 1), ("slt", 2),
-                                           ("sltu", 3), ("and", 4), ("or", 5),
-                                           ("xor", 6)))
-                    emit(f"{op} r{rd}, r{ra}, r{rb}", rr(rd, ra, func, rb))
-                elif kind == 9:
-                    emit(f"ldx r{rd}, [r{ra} + r{rb}]", rr(rd, ra, 8, rb))
-                elif kind in (10, 11, 12, 13, 14, 15):
-                    op, func, width = (
-                        ("ldb", 0x0a, 0), ("ldbs", 0x0e, 0),
-                        ("stb", 0x0b, 0), ("ldh", 0x0a, 2),
-                        ("ldhs", 0x0e, 2), ("sth", 0x0b, 2),
-                    )[kind - 10]
-                    emit(f"{op} r{rd}, [r{ra}]", direct(rd, ra, func, width))
-
-            for opcode, mnemonic in enumerate(("beqz", "bnez", "bltz", "bgez", "jmp8")):
-                for _ in range(32):
-                    rel = rng.randrange(-128, 128)
-                    target = fresh("branch")
-                    if rel < 0:
-                        label(target)
-                        space(-2 * rel - 2)
-                        emit(f"{mnemonic} {target}",
-                             ri(opcode, 7, rotated_rel8(rel)))
-                    else:
-                        emit(f"{mnemonic} {target}",
-                             ri(opcode, 7, rotated_rel8(rel)))
-                        space(2 * rel)
-                        label(target)
-
-            # LDPC shares the rotated field but requires a word-aligned
-            # target.  Exercise both signs with offsets at the field limits.
-            for rel in (-128, -127, -2, -1, 0, 1, 2, 126, 127):
-                rd = rng.randrange(8)
-                target = fresh("literal")
-                if rel < 0:
-                    # Specify a zero fill: otherwise MC uses the target's
-                    # executable-text NOP pattern for the alignment gap.
-                    source.write("  .balign 4, 0\n")
-                    while len(expected) & 3:
-                        expected.append(0)
-                    label(target)
-                    space(-2 * rel - 2)
-                    emit(f"ldpc r{rd}, {target}",
-                         ri(rd, 1, rotated_rel8(rel)))
-                else:
-                    # Make pc_next + 2*rel word aligned without changing rel.
-                    if ((len(expected) + 2 + 2 * rel) & 3) != 0:
-                        source.write("  .space 2\n")
-                        expected.extend(b"\0\0")
-                    emit(f"ldpc r{rd}, {target}",
-                         ri(rd, 1, rotated_rel8(rel)))
-                    space(2 * rel)
-                    label(target)
-                    source.write("  .long 0\n")
-                    expected.extend(b"\0\0\0\0")
-
-        mc = subprocess.run(
-            [str(args.llvm_mc), "-triple=riscc-none-elf", "-mcpu=min",
-             "-mattr=+rc32", "-filetype=obj", "-o", str(object_path),
-             str(source_path)],
-            capture_output=True, text=True,
-        )
-        if mc.returncode:
-            print(mc.stderr, file=sys.stderr, end="")
-            return mc.returncode
-        objcopy = subprocess.run(
-            [str(args.llvm_objcopy), "-O", "binary", "--only-section=.text",
-             str(object_path), str(binary_path)],
-            capture_output=True, text=True,
-        )
-        if objcopy.returncode:
-            print(objcopy.stderr, file=sys.stderr, end="")
-            return objcopy.returncode
-        actual = binary_path.read_bytes()
-        if expected != actual:
-            return fail("RC32 LLVM MC encoding mismatch", expected, actual,
-                        emitted)
-
-    print(f"RC32 MC fuzz: seed=0x{args.seed:x}, {instruction_count} instructions, "
-          f"{len(expected)} bytes matched")
+    print(
+        f"RC32 MC encoding oracle: {total_instructions:,} instructions, "
+        f"{total_bytes:,} .text bytes matched; profile rejection PASS"
+    )
     return 0
 
 

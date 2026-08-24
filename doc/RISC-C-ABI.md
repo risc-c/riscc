@@ -134,12 +134,13 @@ Both then call through `JALR`. An RC32X caller whose indirect target is in an
 `x` register may use `JALR S7,
 [xN+0]`. Link values and function pointers are ordinary byte addresses.
 
-A compiler may give a direct-only local function an object-private S-register
-link convention (the current compiler selects `S3`); all direct callers and
-the callee then use that same register. Architecturally, no S register other
-than `S0` has a private-link-only function. Externally visible, address-taken,
-and indirectly called functions always use the public `S7` convention. A
-private convention is internal to one object and does not change its ABI.
+For RC16, a compiler may give a direct-only local function an object-private
+S-register link convention (the current compiler selects `S3`); all direct
+callers and the callee then use that same register. RC32 currently uses `S7`
+for every function. Architecturally, no S register other than `S0` has a
+private-link-only function. Externally visible, address-taken, and indirectly
+called functions always use the public `S7` convention. A private convention
+is internal to one object and does not change its ABI.
 
 Nano calls use `JALR r6, register`; direct calls materialize the instruction
 address in `r0`. A Nano return uses `JMP register`.
@@ -243,15 +244,23 @@ literal: native_word value
 
 `R_RISCC_PCREL8_WORD` encodes the halfword-scaled displacement from
 `pc_next` to the literal. RC32 literal entries are four-byte aligned; the
-compiler or assembler places pools at reachable safe points. The literal
-itself uses `R_RISCC_ABS16` or `R_RISCC_ABS32` when it contains an address.
+compiler or assembler places pools at reachable safe points. A literal
+normally uses `R_RISCC_ABS16` or `R_RISCC_ABS32` when it contains an address.
 After loading a function address, a call uses `JALR`. There is no PIC code
 model.
 
-The `sys` and `full` profiles may use `JALL` for aligned absolute targets that
-fit its field. Min has no direct long call. RC32X may additionally
-materialize constants with its I16 operations and PC-relative targets with
-`AUIPC` plus long `JALR`.
+An RC32 direct call initially uses a compiler-placed `R_RISCC_CALL_TARGET`
+literal and `LDPC` plus `JALR`. Sys and Full objects attach
+`R_RISCC_RELAX_CALL` or `R_RISCC_RELAX_TAIL` to that instruction pair. At the
+final static link, an aligned target at or below `0x1ffffe` is rewritten to
+`JALL` or `JMPL`. Its now-unused literal is normally removed. When debug or
+unwind address metadata is present and the literal lies inside a function,
+the linker instead retains its four bytes as unreachable padding so function
+addresses and ranges remain stable. A farther target retains the original
+full-width sequence. RC32 Min always retains the literal form because it has
+no `JALL`. This decision is made separately for every direct call; there is no
+RC32 code-model selection. RC32X may additionally materialize constants with
+its I16 operations and PC-relative targets with `AUIPC` plus long `JALR`.
 
 ## 7. ELF object ABI
 
@@ -314,7 +323,20 @@ shared or PIC link.
 | `R_RISCC_JALL21` | 17 | RC32: split 21-bit absolute byte address in `JALL` |
 | `R_RISCC_PCREL13_WORD` | 18 | RC32X: signed long-branch displacement in halfwords from `pc_next` |
 | `R_RISCC_TPOFF32` | 19 | RC32: 32-bit `TPOFF(symbol)` literal |
-| reserved | 20 | reserved |
+| `R_RISCC_CALL_TARGET` | 20 | RC32: aligned 32-bit direct-call target literal |
+| `R_RISCC_RELAX_CALL` | 21 | RC32 Sys/Full: call-site relaxation marker naming its target literal |
+| `R_RISCC_RELAX_TAIL` | 22 | RC32 Sys/Full: sibling-call relaxation marker naming its target literal |
+
+Each relaxation marker is located at the first halfword of an `LDPC r0`
+followed by `JALR S7,r0` for a call or `JALR S0,r0` for a sibling call. Its
+symbol identifies exactly one four-byte `R_RISCC_CALL_TARGET` literal. A
+linker may replace those four instruction bytes with the corresponding
+`JALL`/`JMPL` only when the final target fits `R_RISCC_JALL21`. It normally
+removes the target literal and adjusts subsequent symbols and relocations. If
+debug or unwind address metadata is present, a literal inside a function is
+instead converted to unreachable four-byte padding to preserve address-based
+metadata. A relocatable link or a link with relaxation disabled preserves both
+markers and literals.
 
 For `R_RISCC_PCREL8_WORD`, let `P` be the byte address of the compact
 instruction and let `D = (S + A - P - 2) / 2`. `D` must fit signed eight

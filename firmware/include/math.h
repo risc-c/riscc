@@ -1,6 +1,8 @@
 #ifndef RISCC_MATH_H
 #define RISCC_MATH_H
 
+#include <limits.h>
+
 #define HUGE_VAL (__builtin_huge_val())
 #define HUGE_VALF (__builtin_huge_valf())
 #define HUGE_VALL ((long double)__builtin_huge_val())
@@ -17,8 +19,8 @@
 #define MATH_ERREXCEPT 2
 #define math_errhandling 0
 
-#define FP_ILOGB0 (-32767 - 1)
-#define FP_ILOGBNAN 32767
+#define FP_ILOGB0 INT_MIN
+#define FP_ILOGBNAN INT_MAX
 
 typedef float float_t;
 typedef double double_t;

@@ -233,8 +233,9 @@ module riscc #(
     wire [W-1:0] rf_rdata;
     wire [W-1:0] rf_wdata;
 
-    // High-lane byte loads rotate on the write side: slices leave
-    // data_stream_q in place and land in rd two counts later.
+    // High-lane byte loads rotate on the write side.  Clear the saved lane
+    // after writeback so a later trap always writes EPC to the native S0
+    // slice address.
     wire load_high_byte = (W != 1) & byte_access & load_op & memory_lane_q;
 
     riscc_rf #(
@@ -390,6 +391,8 @@ module riscc #(
                            (address_stream_q[0] ?
                                 mem_response_q[15] : mem_response_q[7]);
         end
+        if (in_execute & last_slice)
+            memory_lane_q <= 1'b0;
         if (in_init & first_slice)
             funnel_bit_q <= data_stream_q[0];
     end

@@ -300,7 +300,7 @@ module riscc32_sys #(
         end else begin : g_byte_write_rotate
             wire byte_load_lane = address_stream_q[0];
             assign rf_write_lane_offset = {
-                1'b0, byte_load & byte_load_lane,
+                1'b0, ~state_q[0] & byte_load & byte_load_lane,
                 {(SLICE_BITS-2){1'b0}}};
             assign byte_load_unselected = byte_load & ~upper_half &
                 (slice_idx_q[SLICE_BITS-2] ^ byte_load_lane);
@@ -421,12 +421,12 @@ module riscc32_sys #(
                 r0_negative_q <= rf_wdata[W-1];
         end
 
-    wire use_pc_offset =
-        (branch_group &
+    wire use_pc_offset = ~trap_active &
+        ((branch_group &
          (ddd[2] ? 1'b1 :
           ((ddd[1] ? r0_negative_q : r0_zero_q) ^ ddd[0]))) |
-        deferred_ldpc_pre;
-    wire restore_pc_after_ldpc = deferred_ldpc_restore;
+        deferred_ldpc_pre);
+    wire restore_pc_after_ldpc = deferred_ldpc_restore & ~trap_active;
     wire [W-1:0] pc_step_slice =
         {{(W-1){1'b0}}, first_slice & ~trap_active};
     wire [W-1:0] pc_offset_slice = restore_pc_after_ldpc ?
@@ -609,7 +609,7 @@ module riscc32_sys #(
     // Direct IE controls never assert rf_we, so the full compact control plane
     // is a safe don't-care superset of the PC writeback instructions. Keeping
     // that shared decode out of the result mux is both simpler and shallower.
-    assign rf_wdata = any_shift_op ? shift_result_slice :
+    assign rf_wdata = (any_shift_op & ~trap_active) ? shift_result_slice :
         in_mem_xfer ? direct_load_slice :
         (trap_active | control_plane | jall_phase_q) ? pc_sum :
         alu_result;
@@ -779,8 +779,13 @@ module riscc32_sys #(
     // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
+    // At /8 an interrupted LDPC still asserts its deferred-decode helper.
+    // Trap entry retires independently of that unexecuted instruction, so it
+    // must publish the EPC/IE transition instead of being hidden as an LDPC
+    // pre-pass.
     wire tr_commit_i = pc_execute & last_slice &
-        ~deferred_ldpc_pre & ~(jall_op & ~jall_phase_q);
+        ~(deferred_ldpc_pre & ~trap_active) &
+        ~(jall_op & ~jall_phase_q) & ~instr_pc_q[0];
     wire [31:0] tr_pc_i = instr_pc_q;
     wire [15:0] tr_ir_i = instr_q;
     wire tr_ie_i = ie_q;

@@ -1,5 +1,26 @@
 MEASURE_RULES := Makefile mk/measure.mk
 
+REGRESSION_LIMITS := test/regression_limits.json
+REGRESSION_CHECK := tools/check_regression_limits.py
+REGRESSION_TBS := \
+	$(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
+	build/test/nano/tb \
+	$(foreach multiplier,$(MULTIPLIERS),build/test/fast/ecp5-block/$(multiplier)/tb) \
+	$(foreach multiplier,$(MULTIPLIERS),build/test/faster/ecp5-block/$(multiplier)/tb)
+REGRESSION_PPA := \
+	build/area/ecp5-block/rc16/sys/2.lut \
+	build/area/ecp5-block/rc32/sys/2.lut \
+	$(foreach width,$(WIDTHS),build/area/ecp5-block/rc32/full/$(width).lut) \
+	build/area/ecp5-block/nano.lut \
+	build/area/ecp5-block/fast/soft.resources \
+	build/area/ecp5-block/faster/soft.resources \
+	build/fmax/ecp5/rc16/sys/2.mhz \
+	build/fmax/ecp5/rc32/sys/2.mhz \
+	$(foreach width,$(WIDTHS),build/fmax/ecp5/rc32/full/$(width).mhz) \
+	build/fmax/ecp5/nano.mhz \
+	build/fmax/ecp5/fast/soft.mhz \
+	build/fmax/ecp5/faster/soft.mhz
+
 # Area defaults to one policy for serial/RC32 cores and the normal mapper for
 # the separate wide implementation. Measured RC32 cases override the default.
 AREA_OPTIONS_ecp5_serial := -abc2
@@ -11,7 +32,9 @@ RC16_AREA_OPTIONS_ecp5_1 := -noccu2 -dff
 # they change mapping only, not the RTL or routing seed.
 AREA_RECIPE_OPTIONS_abc2 := -abc2
 AREA_RECIPE_OPTIONS_abc2-dff := -abc2 -dff
+AREA_RECIPE_OPTIONS_dff := -dff
 AREA_RECIPE_OPTIONS_noccu2 := -noccu2
+AREA_RECIPE_OPTIONS_noccu2-dff := -noccu2 -dff
 AREA_RECIPE_OPTIONS_default :=
 RC32_AREA_RECIPE_ecp5-lutram_min_2 := noccu2
 RC32_AREA_RECIPE_ecp5-block_min_2 := noccu2
@@ -24,6 +47,16 @@ RC32_AREA_RECIPE_ecp5-lutram_sys_4 := abc2-dff
 RC32_AREA_RECIPE_ecp5-block_sys_4 := abc2-dff
 RC32_AREA_RECIPE_ecp5-lutram_sys_8 := abc2-dff
 RC32_AREA_RECIPE_ecp5-block_sys_8 := abc2-dff
+RC32_AREA_RECIPE_ecp5-lutram_full_1 := noccu2
+RC32_AREA_RECIPE_ecp5-block_full_1 := noccu2
+RC32_AREA_RECIPE_ecp5-lutram_full_2 := noccu2
+RC32_AREA_RECIPE_ecp5-block_full_2 := noccu2
+RC32_AREA_RECIPE_ecp5-lutram_full_4 := dff
+RC32_AREA_RECIPE_ecp5-block_full_4 := dff
+RC32_AREA_RECIPE_ecp5-lutram_full_8 := dff
+RC32_AREA_RECIPE_ecp5-block_full_8 := dff
+RC32_AREA_RECIPE_ecp5-lutram_full_16 := abc2-dff
+RC32_AREA_RECIPE_ecp5-block_full_16 := abc2-dff
 rc32_area_options = $(AREA_RECIPE_OPTIONS_$(or \
     $(RC32_AREA_RECIPE_$(1)_$(2)_$(3)),abc2))
 PIPELINE_AREA_OPTIONS_ecp5_fast := -dff
@@ -33,9 +66,23 @@ rc16_area_options = $(or $(RC16_AREA_OPTIONS_$(1)_$(2)), \
 RC16_FMAX_OPTIONS_ecp5_1 := -abc2
 RC16_FMAX_OPTIONS_ecp5_4 := -noccu2 -dff
 RC16_FMAX_OPTIONS_ecp5_8 := -abc9
-RC32_FMAX_OPTIONS_ecp5 := -abc9
+RC32_FMAX_RECIPE_ecp5_full_1 := noccu2-dff
+RC32_FMAX_RECIPE_ecp5_full_2 := abc9
+RC32_FMAX_RECIPE_ecp5_full_4 := noccu2-dff
+RC32_FMAX_RECIPE_ecp5_full_8 := abc2
+RC32_FMAX_RECIPE_ecp5_full_16 := abc2-dff
+RC32_FMAX_OPTIONS_default :=
+RC32_FMAX_OPTIONS_dff := -dff
+RC32_FMAX_OPTIONS_abc2 := -abc2
+RC32_FMAX_OPTIONS_abc2-dff := -abc2 -dff
+RC32_FMAX_OPTIONS_abc9 := -abc9
+RC32_FMAX_OPTIONS_noccu2-dff := -noccu2 -dff
+rc32_fmax_options = $(RC32_FMAX_OPTIONS_$(or \
+    $(RC32_FMAX_RECIPE_$(1)_$(2)_$(3)),abc9))
 FAST_FMAX_OPTIONS_ecp5_soft := -abc9
 FAST_FMAX_OPTIONS_ecp5_dsp := -abc2
+FAST_FMAX_PNR_OPTIONS_ecp5_soft := --placer-heap-timingweight 20
+FAST_FMAX_PNR_OPTIONS_ecp5_dsp := --placer-heap-timingweight 25
 FASTER_FMAX_OPTIONS_ecp5 := -abc9
 
 # Agilex tables consume only generated Quartus results. Published snapshots
@@ -44,7 +91,11 @@ AGILEX_CHARACTERIZE_DIR := build/agilex
 AGILEX_RESULTS := $(AGILEX_CHARACTERIZE_DIR)/results.tsv
 AGILEX_REPORT := tools/agilex_results.py
 AGILEX_CHARACTERIZE := tools/agilex_core_characterize.py
-AGILEX_PARALLEL_CONFIGS ?= 4
+# Zero lets the driver choose one independent Quartus project per two CPU
+# threads, capped by available memory. Independent projects use this machine
+# much better than assigning a large thread count to one tiny core; callers can
+# still set an explicit cap.
+AGILEX_PARALLEL_CONFIGS ?= 0
 AREA_RTL := $(wildcard rtl/riscc*.v rtl/riscc*.vh)
 AGILEX_RTL := $(AREA_RTL) $(RTL_TEST_DIR)/riscc_fmax_top.v $(TRACE_RTL)
 
@@ -226,13 +277,15 @@ FMAX_WIDTH_8 := -DRISCC_FMAX_WIDTH=8
 FMAX_WIDTH_16 :=
 RC32_FMAX_DEFINES_min := -DRISCC_FMAX_RC32_MIN
 RC32_FMAX_DEFINES_sys := -DRISCC_FMAX_RC32_SYS
+RC32_FMAX_DEFINES_full := -DRISCC_FMAX_RC32_FULL
 rc16_fmax_defines = \
 	$(FMAX_DEFINES_$(call rc16_implementation,$(2))_$(1)) $(FMAX_WIDTH_$(2))
 FMAX_AWK = '/Max frequency for clock/ { \
 	for (i = 1; i < NF; i++) if ($$(i + 1) == "MHz") value = $$i \
 	} END { print value }'
 
-# ECP5_FMAX(output, definitions_and_source, synthesis_options, target_mhz)
+# ECP5_FMAX(output, definitions_and_source, synthesis_options, target_mhz,
+#           nextpnr_options)
 define ECP5_FMAX
 $(1): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
@@ -241,6 +294,7 @@ $(1): $$(FMAX_RTL)
 	  -json $$(@:.mhz=.json)"
 	@$$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 \
 	  --lpf-allow-unconstrained --freq $(4) --seed $$(PNR_SEED) \
+	  $(5) \
 	  --json $$(@:.mhz=.json) --textcfg $$(@:.mhz=.config) >$$(@:.mhz=.log) 2>&1
 	@awk $$(FMAX_AWK) $$(@:.mhz=.log) > $$@
 endef
@@ -255,7 +309,7 @@ $(foreach profile,$(RC32_PROFILES),$(foreach width,$(WIDTHS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/rc32/$(profile)/$(width).mhz, \
     -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF $(RC32_FMAX_DEFINES_$(profile)) \
     -DRISCC_FMAX_WIDTH=$(width) \
-    $(call rc32_source,$(profile)),$(RC32_FMAX_OPTIONS_ecp5),40))))
+    $(call rc32_source,$(profile)),$(call rc32_fmax_options,ecp5,$(profile),$(width)),40))))
 
 $(eval $(call ECP5_FMAX,build/fmax/ecp5/nano.mhz, \
   -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF -DRISCC_FMAX_NANO rtl/riscc_nano.v,,40))
@@ -269,7 +323,8 @@ $(foreach multiplier,$(MULTIPLIERS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/fast/$(multiplier).mhz, \
     -DRISCC_FMAX_FAST $(call fast_defines,ecp5-block,$(multiplier)) \
     rtl/riscc16_fast.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_ecp5_$(multiplier)),40)) \
+    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_ecp5_$(multiplier)),40, \
+    $(FAST_FMAX_PNR_OPTIONS_ecp5_$(multiplier)))) \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/faster/$(multiplier).mhz, \
     -DRISCC_FMAX_FASTER -DRISCC_FASTER_BLOCK_RF \
     $(FASTER_DEFINES_$(multiplier)) rtl/riscc16_faster.v, \
@@ -328,3 +383,9 @@ tables-lattice:
 	$(PYTHON) tools/lattice_tune.py ecp5 all \
 	  --seeds $(TUNE_SEEDS) -j $(RISCC_BUILD_JOBS)
 	+$(MAKE) --no-print-directory bench
+
+.PHONY: check-regressions
+check-regressions: $(BENCH_BIN) $(NANO_BENCH_BIN) $(REGRESSION_TBS) \
+		$(REGRESSION_PPA) compiler-libc-size \
+		$(REGRESSION_LIMITS) $(REGRESSION_CHECK)
+	$(PYTHON) $(REGRESSION_CHECK) $(REGRESSION_LIMITS)

@@ -217,7 +217,7 @@ module icepi_zero_soc #(
         end else begin
             mmio_rdata_q <= uart_rdata | timer_rdata | irq_rdata;
             read_source_q <= ram_sel ? READ_RAM :
-                             fb_sel ? READ_FB : READ_MMIO;
+                             mmio_sel ? READ_MMIO : READ_FB;
 
             if (cpu_write_commit) begin
 `ifdef VERILATOR

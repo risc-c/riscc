@@ -48,6 +48,7 @@ module riscc16_faster #(
     wire core_advance;
 
     reg interrupt_enable_q;
+    reg interrupt_request_q;
 
     // ------------------------------------------------------------------
     // IF and Decode/RF stages
@@ -251,9 +252,10 @@ module riscc16_faster #(
     wire [15:0] rf_b;
 
     wire run_x = in_run & x_valid_q;
-    // Interrupts are sampled before the populated X instruction executes.
-    // Side states are indivisible; the following instruction is sampled.
-    wire take_irq = run_x & irq & interrupt_enable_q;
+    // Interrupts are sampled only when the core advances. An already-visible
+    // bus request is therefore indivisible; its handshake completes before
+    // the request can interrupt the following X instruction.
+    wire take_irq = run_x & interrupt_request_q & interrupt_enable_q;
     wire normal_x = run_x & ~take_irq;
 
     // The DSP build has an independent registered multiply result and uses a
@@ -541,13 +543,8 @@ module riscc16_faster #(
     // ------------------------------------------------------------------
     // Unified memory and IF bookkeeping
     // ------------------------------------------------------------------
-    // Preserve the type of an already-visible X-side request when an IRQ
-    // arrives during its wait. Side-state fetches remain selected by the
-    // default fetch arm and need only the valid hold below.
-    wire held_x_request = bus_wait_q & take_irq;
-    wire x_memory_request = (normal_x | held_x_request) & x_memory;
-    wire x_long_request = x_long_start |
-                          (held_x_request & x_jall);
+    wire x_memory_request = normal_x & x_memory;
+    wire x_long_request = x_long_start;
     wire x_port_request = x_memory_request | x_long_request;
 
     wire fetch_request = ~x_port_request & d_can_accept & ~frontend_flush;
@@ -560,8 +557,7 @@ module riscc16_faster #(
     assign mem_wdata = x_load_byte ? {2{rf_b[7:0]}} : rf_b;
     assign mem_wmask = (x_memory_request & x_load_byte) ?
                        {alu_result[0], ~alu_result[0]} : 2'b11;
-    assign mem_valid = ~rst &
-                       (held_x_request | x_port_request | fetch_request);
+    assign mem_valid = ~rst & (x_port_request | fetch_request);
     assign core_advance = ~mem_valid | mem_ready;
 
     always @(posedge clk) begin
@@ -569,6 +565,13 @@ module riscc16_faster #(
             bus_wait_q <= 1'b0;
         else
             bus_wait_q <= mem_valid & ~mem_ready;
+    end
+
+    always @(posedge clk) begin
+        if (rst)
+            interrupt_request_q <= 1'b0;
+        else if (core_advance)
+            interrupt_request_q <= irq;
     end
 
     // ------------------------------------------------------------------

@@ -40,7 +40,11 @@ module riscc16_fast #(
     localparam [1:0] ST_MUL   = 2'd2;
     reg [1:0] state_q;
     wire core_advance;
+`ifdef RISCC_FAST_AGILEX
     reg bus_wait_q;
+`else
+    reg irq_pending_q;
+`endif
     wire in_run   = state_q == ST_RUN;
     wire in_shift = state_q == ST_SHIFT;
     wire in_mul   = state_q == ST_MUL;
@@ -241,7 +245,14 @@ module riscc16_fast #(
 `else
     wire run_x = in_run & x_valid_q;
 `endif
-    wire take_irq = run_x & irq & interrupt_enable_q;
+`ifdef RISCC_FAST_AGILEX
+    // Quartus maps the direct stalled-request mask without a PPA penalty.
+    wire take_irq = run_x & irq & interrupt_enable_q & ~bus_wait_q;
+`else
+    // Sampling on an advancing edge keeps ECP5 stall status out of the
+    // execute-stage interrupt-select cone.
+    wire take_irq = run_x & irq_pending_q & interrupt_enable_q;
+`endif
     wire normal_x = run_x & ~take_irq;
     wire x_imm_arithmetic = x_imm_alu & ~x_aaa[2] & x_aaa[1];
     wire x_reg_arithmetic = x_reg_alu_group & ~x_f5[2];
@@ -474,11 +485,14 @@ module riscc16_fast #(
     // ------------------------------------------------------------------
     // Unified memory and fetch arbitration
     // ------------------------------------------------------------------
-    // bus_wait_q keeps a data request selected even if a newly asserted IRQ
-    // suppresses normal_x. Fetch requests need only the valid hold below;
-    // their address is already the default memory-port selection.
+`ifdef RISCC_FAST_AGILEX
+    // Quartus retains a smaller soft core with this explicit held-request
+    // arbitration term than with its algebraically simplified form.
     wire hold_irq_request = bus_wait_q & take_irq;
     wire run_data_port = (normal_x | hold_irq_request) & x_memory;
+`else
+    wire run_data_port = normal_x & x_memory;
+`endif
 `ifdef RISCC_FAST_SYNC_RF
 `ifdef RISCC_FAST_DSP
     wire rf_wait_cycle = in_run & x_rf_wait_q;
@@ -518,8 +532,12 @@ module riscc16_fast #(
     assign mem_wdata = store_byte ? {2{store_value[7:0]}} : store_value;
     assign mem_wmask = (run_data_port & store_byte) ?
                        {store_lane, ~store_lane} : 2'b11;
+`ifdef RISCC_FAST_AGILEX
     assign mem_valid = ~rst &
                        (hold_irq_request | run_data_port | issue_fetch);
+`else
+    assign mem_valid = ~rst & (run_data_port | issue_fetch);
+`endif
     wire memory_stall = mem_valid & ~mem_ready;
     assign core_advance = ~memory_stall;
 
@@ -527,8 +545,19 @@ module riscc16_fast #(
         if (mem_valid & mem_ready)
             mem_response_q <= mem_rdata;
 
+`ifdef RISCC_FAST_AGILEX
     always @(posedge clk)
         bus_wait_q <= ~core_advance;
+`else
+    // A stalled instruction cannot be interrupted until its transfer has
+    // completed. Sampling zero while stalled keeps take_irq inactive; the
+    // completion edge captures a still-asserted level for the next boundary.
+    always @(posedge clk)
+        if (rst)
+            irq_pending_q <= 1'b0;
+        else
+            irq_pending_q <= irq & core_advance;
+`endif
 
     // ------------------------------------------------------------------
     // Sequential pipeline and side states

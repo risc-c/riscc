@@ -1,8 +1,9 @@
 RTL_RULES := Makefile mk/rtl.mk
 
-.PHONY: all version check-version FORCE test test-all
+.PHONY: all version check-version FORCE test test-rtl test-all
 
-all: test-all bench
+all: test-all
+	+$(MAKE) --no-print-directory bench
 
 FORCE:
 
@@ -13,8 +14,16 @@ check-version:
 	@test "$$(sed -n 's/^Version: `\([^`]*\)`\.$$/\1/p' doc/RISC-C-ISA.md)" = "$(RISCC_VERSION)"
 
 test: test-core
-test-all: test-cores test-extensions test-nano test-rc32 \
-	test-fast-all test-faster test-peripherals test-funnel
+test-rtl: test-cores test-extensions test-nano test-rc32 \
+	test-applications \
+	test-fast-all test-faster test-peripherals test-funnel test-high-address
+
+# Run the three gates in order because they share the LLVM, firmware, and RTL
+# output trees. Each recursive make inherits the GNU Make jobserver, so every
+# gate still uses the caller's full -j parallelism internally.
+test-all: check-llvm-riscc
+	+$(MAKE) --no-print-directory test-isa
+	+$(MAKE) --no-print-directory test-compiler
 
 $(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
 	@mkdir -p $(@D)
@@ -65,9 +74,38 @@ build/bin/full-%.bin: test/test_mdu.asm test/flat.ld
 $(FUNNEL_BIN): test/test_funnel.asm test/flat.ld
 	$(call ASSEMBLE_IMAGE,test/test_funnel.asm,min,,$(ASM_DEFINES_min),test/flat.ld)
 
+$(ISA_IRQ_BIN): test/test_isa_irq.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_isa_irq.asm,full,, \
+	  $(ASM_DEFINES_full),test/flat.ld)
+
+$(ISA_IRQ_MDU_BIN): test/test_isa_irq.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_isa_irq.asm,full,$(EXTENSION_FLAGS_muldiv), \
+	  $(ASM_DEFINES_full) $(EXTENSION_ASM_DEFINES_muldiv),test/flat.ld)
+
+$(RC32_ISA_IRQ_BIN): test/test_rc32_isa_irq.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_rc32_isa_irq.asm,sys,--mattr=+rc32, \
+	  $(ASM_DEFINES_sys),test/flat.ld)
+
+$(RC32_FULL_ISA_IRQ_BIN): test/test_rc32_isa_irq.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_rc32_isa_irq.asm,full,--mattr=+rc32, \
+	  $(ASM_DEFINES_full),test/flat.ld)
+
+$(RC32_MDU_BIN): test/test_rc32_mdu.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_rc32_mdu.asm,full,--mattr=+rc32$(comma)+mdu, \
+	  $(ASM_DEFINES_full) $(EXTENSION_ASM_DEFINES_muldiv),test/flat.ld)
+
+$(RC32_MIN_TRACE_BIN): test/test_rc32_min_trace.asm test/flat.ld
+	$(call ASSEMBLE_IMAGE,test/test_rc32_min_trace.asm,min,--mattr=+rc32, \
+	  $(ASM_DEFINES_min),test/flat.ld)
+
 $(RC32_SYS_BIN): test/test_rc32_sys.asm test/flat.ld
 	$(call ASSEMBLE_IMAGE,test/test_rc32_sys.asm,sys,--mattr=+rc32, \
 	  $(ASM_DEFINES_sys),test/flat.ld)
+
+$(RC32_SYS_ISS_BIN): test/test_rc32_sys.asm test/flat.ld \
+		$(RISCC_MC) $(RISCC_LLD) $(RISCC_OBJCOPY)
+	$(call ASSEMBLE_IMAGE,test/test_rc32_sys.asm,sys,--mattr=+rc32, \
+	  $(ASM_DEFINES_sys) RISCC_ISS,test/flat.ld)
 
 $(BENCH_BIN): test/test_riscc_bench.asm test/flat.ld
 	$(call ASSEMBLE_IMAGE,test/test_riscc_bench.asm,full,, \
@@ -76,6 +114,10 @@ $(BENCH_BIN): test/test_riscc_bench.asm test/flat.ld
 $(NANO_BENCH_BIN): test/test_riscc_bench.asm test/flat.ld
 	$(call ASSEMBLE_IMAGE,test/test_riscc_bench.asm,nano,, \
 	  $(ASM_DEFINES_nano),test/flat.ld)
+
+$(HIGH_ADDRESS_BIN): test/linker/rc16/high_address.asm \
+		test/linker/rc16/high_address.ld
+	$(call ASSEMBLE_IMAGE,test/linker/rc16/high_address.asm,full,,,test/linker/rc16/high_address.ld)
 
 sim: build/bin/$(PROFILE).bin $(RISCC_SIM)
 	$(RISCC_SIM) $< $(SIM_FLAGS_$(PROFILE))
@@ -91,25 +133,36 @@ FAST_SIM_FLAGS_dsp := --fast-dsp
 sim-fast: build/bin/full.bin $(RISCC_SIM)
 	$(RISCC_SIM) $< $(FAST_SIM_FLAGS_$(MULTIPLIER))
 
-FUZZ_SEEDS ?= 100
+FUZZ_SEEDS ?= 300
 FUZZ_SEED_ARGS ?= --random-seed
+FUZZ_JOBS ?= $(shell nproc)
 FUZZ_CORES ?= $(foreach width,$(WIDTHS),rc16-$(width))
 FUZZ_CORE_ARG = $(call join_with_commas,$(FUZZ_CORES))
 RC32_FUZZ_CORES ?= $(foreach width,$(WIDTHS),rc32-$(width))
 RC32_FUZZ_CORE_ARG = $(call join_with_commas,$(RC32_FUZZ_CORES))
 
-.PHONY: fuzz fuzz-all fuzz-rc32 fuzz-fast test-rc32
+.PHONY: fuzz fuzz-all fuzz-rc32 fuzz-fast fuzz-faster test-rc32 \
+	test-applications test-rc16-application test-nano-application \
+	test-rc32-application
 fuzz: $(RISCC_SIM)
 	@for profile in $(RC16_PROFILES); do \
 	  RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
-	    --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config $$profile \
+	    --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --jobs $(FUZZ_JOBS) \
+	    --config $$profile \
 	    --cores $(FUZZ_CORE_ARG) --outdir build/fuzz/rc16 || exit; \
+	done
+	@for extension in mulh muldiv; do \
+	  RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
+	    --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
+	    --jobs $(FUZZ_JOBS) \
+	    --config full-$$extension --cores rc16-$$extension \
+	    --outdir build/fuzz/rc16 || exit; \
 	done
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family nano --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
-	  --config nano --outdir build/fuzz/nano
+	  --jobs $(FUZZ_JOBS) --config nano --outdir build/fuzz/nano
 
-fuzz-all: fuzz fuzz-rc32 fuzz-fast
+fuzz-all: fuzz fuzz-rc32 fuzz-fast fuzz-faster
 
 # llvm-riscc is declared later, after its binary paths are configured.  Use
 # the aggregate prerequisite here so this early fuzz rule still builds all
@@ -118,17 +171,77 @@ fuzz-rc32: $(RISCC_SIM) llvm-riscc
 	@for profile in $(RC32_PROFILES); do \
 	  RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_BIN)) \
 	    $(PYTHON) tools/riscc_fuzz.py --family rc32 --campaign $(FUZZ_SEEDS) \
-	    $(FUZZ_SEED_ARGS) --config $$profile --cores $(RC32_FUZZ_CORE_ARG) \
+	    $(FUZZ_SEED_ARGS) --jobs $(FUZZ_JOBS) --config $$profile \
+	    --cores $(RC32_FUZZ_CORE_ARG) \
 	    --outdir build/fuzz/rc32 || exit; \
 	done
+
+fuzz-faster: $(RISCC_SIM)
+	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
+	  --family faster --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
+	  --jobs $(FUZZ_JOBS) --config full --outdir build/fuzz/faster
 
 # Keep one deterministic differential RC32 program in the normal regression
 # gate.  The longer random campaign remains available through fuzz-rc32.
 test-rc32: $(RISCC_SIM) llvm-riscc \
-	$(foreach width,$(WIDTHS),build/test/rc32/sys/$(width).ok)
+	$(foreach width,$(WIDTHS),build/test/rc32/sys/$(width).ok) \
+	$(foreach width,$(WIDTHS),build/test/rc32/full/$(width).ok)
 	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_BIN)) \
 	  $(PYTHON) tools/riscc_fuzz.py --family rc32 --campaign 1 --base-seed 1 \
-	  --config min --cores $(RC32_FUZZ_CORE_ARG) --outdir build/test/rc32
+	  --jobs $(FUZZ_JOBS) --cores $(RC32_FUZZ_CORE_ARG) \
+	  --outdir build/test/rc32
+
+test-applications: test-rc16-application test-nano-application \
+	test-rc32-application
+
+test-rc16-application: $(RISCC_SIM) \
+		build/test/rc16/native/min/16/tb \
+		build/test/rc16/native/sys/16/tb
+	@for profile in min sys; do \
+	  $(MAKE) --no-print-directory RISCC_XLEN=16 PROFILE=$$profile firmware || exit; \
+	  build_dir=$(abspath build/test/application/rc16)/$$profile; \
+	  $(MAKE) --no-print-directory -C test/application \
+	    RISCC_ROOT=$(abspath .) RISCC_XLEN=16 PROFILE=$$profile \
+	    BUILD=$$build_dir all || exit; \
+	  image=$$build_dir/application.bin; \
+	  sim_flags=""; \
+	  test "$$profile" = min && sim_flags="--min"; \
+	  $(RISCC_SIM) $$image $$sim_flags --require-result \
+	    --max-insns 5000000 || exit; \
+	  build/test/rc16/native/$$profile/16/tb $$image \
+	    --max-cycles 50000000 || exit; \
+	done
+	@echo "RC16 riscc.mk application ISS/RTL PASS"
+
+test-nano-application: $(RISCC_SIM) build/test/nano/tb
+	+$(MAKE) --no-print-directory PROFILE=nano firmware
+	+$(MAKE) --no-print-directory -C test/application \
+	  RISCC_ROOT=$(abspath .) RISCC_XLEN=16 PROFILE=nano \
+	  BUILD=$(abspath build/test/application/nano) all
+	$(RISCC_SIM) build/test/application/nano/application.bin --nano \
+	  --require-result --max-insns 10000000
+	build/test/nano/tb build/test/application/nano/application.bin \
+	  --max-cycles 100000000
+	@echo "Nano riscc.mk application ISS/RTL PASS"
+
+test-rc32-application: $(RISCC_SIM) \
+		$(foreach profile,$(RC32_PROFILES),build/test/rc32/$(profile)/16/tb)
+	@for profile in $(RC32_PROFILES); do \
+	  $(MAKE) --no-print-directory RISCC_XLEN=32 PROFILE=$$profile firmware || exit; \
+	  build_dir=$(abspath build/test/application/rc32)/$$profile; \
+	  $(MAKE) --no-print-directory -C test/application \
+	    RISCC_ROOT=$(abspath .) RISCC_XLEN=32 PROFILE=$$profile \
+	    BUILD=$$build_dir all || exit; \
+	  image=$$build_dir/application.bin; \
+	  sim_flags="--rc32"; \
+	  test "$$profile" = sys && sim_flags="--rc32-sys"; \
+	  test "$$profile" = full && sim_flags="--rc32-full"; \
+	  $(RISCC_SIM) $$image $$sim_flags --require-result \
+	    --max-insns 5000000 || exit; \
+	  build/test/rc32/$$profile/16/tb $$image \
+	    --max-cycles 50000000 || exit; \
+	done
+	@echo "RC32 riscc.mk application ISS/RTL PASS"
 
 # RC32_SYS_TEST(width)
 define RC32_SYS_TEST
@@ -150,23 +263,74 @@ endef
 
 $(foreach width,$(WIDTHS),$(eval $(call RC32_SYS_TEST,$(width))))
 
+# RC32 Min uses the same black-box memory/trace testbench as Sys, but remains
+# a distinct top so compiler-generated Min images cannot accidentally pass by
+# relying on Sys-only decode or control state.
+define RC32_MIN_TB
+build/test/rc32/min/$(1)/tb: $(TB_SRC) rtl/riscc32_min.v $(RISCC_RF_RTL) $(RTL_RULES)
+	@mkdir -p $$(@D)
+	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc32_min -GW=$(1) -DRISCC_INFERRED_SYNC_RF \
+	  --prefix Vriscc -Mdir $$(@D) -I$$(abspath rtl) -I$$(abspath rtl/test) \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_RC32 \
+	    -DRISCC_TB_MEM_HANDSHAKE" -o tb \
+	  $$(abspath rtl/riscc32_min.v) $$(abspath $(TB_SRC))
+endef
+
+$(foreach width,$(WIDTHS),$(eval $(call RC32_MIN_TB,$(width))))
+
+# RC32 Full is an independent sibling with serial immediate shifts and
+# iterative low-half MUL.
+define RC32_FULL_TEST
+build/test/rc32/full/$(1)/tb: $(TB_SRC) rtl/riscc32_full.v \
+		$(RISCC_RF_RTL) $(RTL_RULES)
+	@mkdir -p $$(@D)
+	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc32_full -GW=$(1) -DRISCC_INFERRED_SYNC_RF \
+	  --prefix Vriscc -Mdir $$(@D) -I$$(abspath rtl) -I$$(abspath rtl/test) \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_RC32 \
+	    -DRISCC_TB_MEM_HANDSHAKE" -o tb \
+	  $$(abspath rtl/riscc32_full.v) $$(abspath $(TB_SRC))
+
+build/test/rc32/full/$(1).ok: build/test/rc32/full/$(1)/tb \
+		$$(RC32_FULL_ISA_IRQ_BIN) FORCE
+	@mkdir -p $$(@D)
+	$$< $$(RC32_FULL_ISA_IRQ_BIN) --irq-at 300 --mem-stall-seed 777 \
+	  --max-cycles 1000000
+	@touch $$@
+endef
+
+$(foreach width,$(WIDTHS),$(eval $(call RC32_FULL_TEST,$(width))))
+
 fuzz-fast: $(RISCC_SIM)
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config full \
+	  --jobs $(FUZZ_JOBS) \
 	  --cores fast,fast-dsp,fast-ecp5,fast-ecp5-dsp \
 	  --outdir build/fuzz/fast
 	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config full \
-	  --cores fast-block,fast-block-dsp --outdir build/fuzz/fast-block
+	  --jobs $(FUZZ_JOBS) --cores fast-block,fast-block-dsp \
+	  --outdir build/fuzz/fast-block
+	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
+	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --config full \
+	  --jobs $(FUZZ_JOBS) --cores fast-agilex,fast-agilex-dsp \
+	  --outdir build/fuzz/fast-agilex
 
 # Architectural traces
 
-.PHONY: trace trace-fast trace-nano
+.PHONY: trace trace-fast trace-nano trace-rc32
 TRACE_CXXFLAGS = $(TB_CXXFLAGS) -DRISCC_TB_TRACE
 rc16_handshake_cflags = -DRISCC_TB_MEM_HANDSHAKE
 
 TRACE_TB := build/trace/rc16/$(PROFILE)/$(WIDTH)/tb
 FAST_TRACE_TB := build/trace/fast/$(MEMORY)/$(MULTIPLIER)/tb
+RC32_TRACE_TB := build/trace/rc32/$(PROFILE)/$(WIDTH)/tb
+RC32_TRACE_BIN_min := $(RC32_MIN_TRACE_BIN)
+RC32_TRACE_BIN_sys := $(RC32_ISA_IRQ_BIN)
+RC32_TRACE_BIN_full := $(RC32_FULL_ISA_IRQ_BIN)
+RC32_TRACE_IRQ_sys := --irq-at 300
+RC32_TRACE_IRQ_full := --irq-at 300
 
 $(TRACE_TB): $(TB_SRC) $(call rc16_source,$(WIDTH),$(PROFILE)) $(TRACE_RTL) $(RISCC_RF_RTL)
 	@mkdir -p $(@D)
@@ -191,6 +355,20 @@ build/trace/nano/tb: $(TB_SRC) rtl/riscc_nano.v $(TRACE_RTL) $(RISCC_RF_RTL)
 trace-nano: build/trace/nano/tb build/bin/nano.bin
 	$< build/bin/nano.bin --trace --max-cycles 200000
 
+$(RC32_TRACE_TB): $(TB_SRC) rtl/riscc32_$(PROFILE).v $(TRACE_RTL) $(RISCC_RF_RTL)
+	@mkdir -p $(@D)
+	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc32_$(PROFILE) --prefix Vriscc -Mdir $(@D) \
+	  -GW=$(WIDTH) -DRISCC_INFERRED_SYNC_RF \
+	  -I$(abspath rtl) -I$(abspath rtl/test) -DRISCC_TRACE \
+	  -CFLAGS "$(TRACE_CXXFLAGS) -DRISCC_TB_RC32 \
+	    -DRISCC_TB_MEM_HANDSHAKE" -o tb \
+	  $(abspath rtl/riscc32_$(PROFILE).v) $(abspath $(TB_SRC))
+
+trace-rc32: $(RC32_TRACE_TB) $(RC32_TRACE_BIN_$(PROFILE))
+	$< $(RC32_TRACE_BIN_$(PROFILE)) $(RC32_TRACE_IRQ_$(PROFILE)) \
+	  --trace --max-cycles 1000000
+
 $(FAST_TRACE_TB): $(TB_SRC) rtl/riscc16_fast.v $(TRACE_RTL)
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
@@ -207,7 +385,7 @@ trace-fast: $(FAST_TRACE_TB) build/bin/full.bin
 # Verilator tests
 
 .PHONY: test-core test-cores test-extension test-extensions \
-	test-funnel test-nano test-fast test-fast-all test-faster
+	test-funnel test-high-address test-nano test-fast test-fast-all test-faster
 
 # RC16_TEST(mode, profile, width)
 define RC16_TEST
@@ -234,6 +412,18 @@ $(foreach mode,$(TEST_MODES),$(foreach profile,$(RC16_PROFILES),$(foreach width,
 test-core: build/test/rc16/$(MODE)/$(PROFILE)/$(WIDTH).ok
 test-cores: $(foreach mode,$(TEST_MODES),$(foreach profile,$(RC16_PROFILES), \
 	$(foreach width,$(WIDTHS),build/test/rc16/$(mode)/$(profile)/$(width).ok)))
+
+test-high-address: $(HIGH_ADDRESS_BIN) $(RISCC_SIM) \
+		$(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
+		test/linker/rc16/check_high_address.py
+	$(PYTHON) test/linker/rc16/check_high_address.py \
+	  --readobj $(LLVM_BIN)/llvm-readobj --nm $(LLVM_BIN)/llvm-nm \
+	  --object $(HIGH_ADDRESS_BIN).o --elf $(HIGH_ADDRESS_BIN).elf
+	$(RISCC_SIM) $(HIGH_ADDRESS_BIN) --full --max-insns 1000
+	@for width in $(WIDTHS); do \
+	  build/test/rc16/native/full/$$width/tb $(HIGH_ADDRESS_BIN) \
+	    --max-cycles 100000 || exit; \
+	done
 
 # EXTENSION_TEST(mode, extension)
 define EXTENSION_TEST

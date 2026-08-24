@@ -89,7 +89,12 @@ check-llvm-riscc: llvm-riscc-configure
 	$(LLVM_LIT) $(LIT_ARGS) $(LLVM_TESTS)
 
 # Artifacts depend on the individual tools, which are provided by llvm-riscc.
+# Aggregate targets build LLVM once before starting profile sub-makes; suppress
+# the phony order-only prerequisite there so several sub-makes cannot drive the
+# same Ninja tree concurrently.
+ifneq ($(RISCC_TOOLCHAIN_READY),1)
 $(RISCC_CLANG) $(RISCC_AR) $(RISCC_OBJCOPY) $(RISCC_MC) $(RISCC_LLD): | llvm-riscc
+endif
 
 $(foreach profile,$(PROFILES),build/bin/$(profile).bin) \
 		$(foreach extension,$(EXTENSIONS),build/bin/full-$(extension).bin) \

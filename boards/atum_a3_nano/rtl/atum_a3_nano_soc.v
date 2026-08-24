@@ -34,8 +34,8 @@ module atum_a3_nano_soc #(
     wire [1:0] cpu_wmask;
     wire cpu_we;
     wire cpu_irq;
-    // The expanded framebuffer leaves a 24 KiB CPU-visible firmware window.
-    (* ramstyle = "M20K" *) reg [15:0] ram [0:12287];
+    // Unified 32 KiB program/data memory.
+    (* ramstyle = "M20K" *) reg [15:0] ram [0:16383];
     reg [15:0] ram_rdata_q;
     reg [15:0] mmio_rdata_q;
     reg [1:0] rsel_q;
@@ -44,11 +44,11 @@ module atum_a3_nano_soc #(
     reg [31:0] fb_writes_q;
 `endif
 
-    // Firmware uses 0x0000..0x5fff; framebuffer and then MMIO fill the
-    // remaining CPU address space.
-    wire ram_sel = cpu_addr < 15'h3000;
+    // RAM occupies the lower half of the address space. The framebuffer is
+    // in the upper half, with MMIO restricted to the final eight words.
+    wire ram_sel = ~cpu_addr[14];
     wire fb_sel;
-    wire mmio_sel = !ram_sel && !fb_sel;
+    wire mmio_sel = &cpu_addr[14:3];
     wire cpu_mem_valid;
     reg  cpu_mem_ready_q;
     wire cpu_write_commit =
@@ -175,7 +175,7 @@ module atum_a3_nano_soc #(
         end else begin
             mmio_rdata_q <= uart_rdata | timer_rdata | irq_rdata;
             rsel_q <= ram_sel ? RSEL_RAM :
-                             fb_sel ? RSEL_FB : RSEL_MMIO;
+                      mmio_sel ? RSEL_MMIO : RSEL_FB;
             if (cpu_write_commit) begin
 `ifdef VERILATOR
                 if (fb_we)

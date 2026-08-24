@@ -66,7 +66,7 @@ long double modfl(long double value, long double *integral)
     return (long double)fraction;
 }
 
-float frexpf(float value, int16_t *result_exponent)
+float frexpf(float value, int *result_exponent)
 {
     riscc_float_shape shape = {value};
     uint16_t sign = shape.word[1] & UINT16_C(0x8000);
@@ -94,7 +94,7 @@ float frexpf(float value, int16_t *result_exponent)
     return shape.value;
 }
 
-double frexp(double value, int16_t *result_exponent)
+double frexp(double value, int *result_exponent)
 {
     riscc_double_shape shape = {value};
     uint16_t sign = shape.word[3] & UINT16_C(0x8000);
@@ -124,7 +124,7 @@ double frexp(double value, int16_t *result_exponent)
     return shape.value;
 }
 
-long double frexpl(long double value, int16_t *result_exponent)
+long double frexpl(long double value, int *result_exponent)
 {
     return (long double)frexp((double)value, result_exponent);
 }
@@ -143,7 +143,7 @@ static double multiply_double_power(double value, int16_t exponent)
     return value * power.value;
 }
 
-float scalbnf(float value, int16_t exponent)
+float scalbnf(float value, int exponent)
 {
     if (exponent > 127)
     {
@@ -172,7 +172,7 @@ float scalbnf(float value, int16_t exponent)
     return multiply_float_power(value, exponent);
 }
 
-double scalbn(double value, int16_t exponent)
+double scalbn(double value, int exponent)
 {
     if (exponent > 1023)
     {
@@ -201,27 +201,27 @@ double scalbn(double value, int16_t exponent)
     return multiply_double_power(value, exponent);
 }
 
-long double scalbnl(long double value, int16_t exponent)
+long double scalbnl(long double value, int exponent)
 {
     return (long double)scalbn((double)value, exponent);
 }
 
-float ldexpf(float value, int16_t exponent)
+float ldexpf(float value, int exponent)
 {
     return scalbnf(value, exponent);
 }
 
-double ldexp(double value, int16_t exponent)
+double ldexp(double value, int exponent)
 {
     return scalbn(value, exponent);
 }
 
-long double ldexpl(long double value, int16_t exponent)
+long double ldexpl(long double value, int exponent)
 {
     return (long double)scalbn((double)value, exponent);
 }
 
-float scalblnf(float value, int32_t exponent)
+float scalblnf(float value, long exponent)
 {
     if (exponent > INT16_MAX)
         exponent = INT16_MAX;
@@ -230,7 +230,7 @@ float scalblnf(float value, int32_t exponent)
     return scalbnf(value, (int16_t)exponent);
 }
 
-double scalbln(double value, int32_t exponent)
+double scalbln(double value, long exponent)
 {
     if (exponent > INT16_MAX)
         exponent = INT16_MAX;
@@ -239,12 +239,12 @@ double scalbln(double value, int32_t exponent)
     return scalbn(value, (int16_t)exponent);
 }
 
-long double scalblnl(long double value, int32_t exponent)
+long double scalblnl(long double value, long exponent)
 {
     return (long double)scalbln((double)value, exponent);
 }
 
-int16_t ilogbf(float value)
+int ilogbf(float value)
 {
     riscc_float_shape shape = {value};
     uint16_t exponent = (shape.word[1] >> 7) & 0xff;
@@ -265,7 +265,7 @@ int16_t ilogbf(float value)
     return result;
 }
 
-int16_t ilogb(double value)
+int ilogb(double value)
 {
     riscc_double_shape shape = {value};
     uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
@@ -287,7 +287,7 @@ int16_t ilogb(double value)
     return result;
 }
 
-int16_t ilogbl(long double value)
+int ilogbl(long double value)
 {
     return ilogb((double)value);
 }

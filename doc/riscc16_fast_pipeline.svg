@@ -89,15 +89,11 @@
 
   <rect class="panel" x="28" y="594" width="944" height="160"/>
   <rect class="state" x="425" y="638" width="150" height="38"/>
-  <rect class="state" x="70" y="700" width="150" height="38"/>
   <rect class="state" x="395" y="700" width="150" height="38"/>
   <rect class="state" x="750" y="700" width="150" height="38"/>
   <text class="text" x="481" y="662">RUN</text>
-  <text class="text" x="121" y="724">LOAD</text>
   <text class="text" x="444" y="724">SHIFT</text>
   <text class="text" x="804" y="724">MUL</text>
-  <path class="dash" d="M425,657 C350,657 260,673 145,700"/>
-  <path class="thin" d="M145,700 C260,675 350,665 425,671"/>
   <path class="dash" d="M500,676 V700"/>
   <path class="thin" d="M440,700 V676"/>
   <path class="dash" d="M575,657 C650,657 740,673 825,700"/>
@@ -105,7 +101,6 @@
   <path class="dash" d="M575,648 C625,620 625,688 575,666"/>
   <path class="dash" d="M545,710 C580,680 580,740 545,728"/>
   <path class="dash" d="M900,710 C940,680 940,740 900,728"/>
-  <text class="small" x="270" y="666">load</text>
   <text class="small" x="506" y="692">shift</text>
   <text class="small" x="653" y="666">soft MUL</text>
   <text class="small" x="590" y="638">ordinary</text>

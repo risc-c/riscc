@@ -32,7 +32,7 @@ def main() -> int:
     args = parser.parse_args()
 
     normal = read(args.normal)
-    require(normal, "libirq.a(irq_default.o)", "normal image")
+    require(normal, "vectors.o:(.text.__riscc_irq_unhandled)", "normal image")
     forbid(normal, "libirq.a(irq_control.o)", "normal image")
     forbid(normal, "libirq.a(irq.o)", "normal image")
     forbid(normal, ".riscc.irq_context", "normal image")
@@ -43,11 +43,11 @@ def main() -> int:
     require(c_wrapper, ".riscc.irq_context", "C IRQ image")
     require(c_wrapper, ".bss.riscc_irq_handler", "C IRQ image")
     require(c_wrapper, ".bss.riscc_irq_stack", "C IRQ image")
-    forbid(c_wrapper, "libirq.a(irq_default.o)", "C IRQ image")
+    forbid(c_wrapper, ".text.__riscc_irq_unhandled", "C IRQ image")
 
     custom = read(args.custom)
     require(custom, "libirq.a(irq_control.o)", "custom-vector image")
-    forbid(custom, "libirq.a(irq_default.o)", "custom-vector image")
+    forbid(custom, ".text.__riscc_irq_unhandled", "custom-vector image")
     forbid(custom, "libirq.a(irq.o)", "custom-vector image")
     forbid(custom, ".riscc.irq_context", "custom-vector image")
     forbid(custom, ".bss.riscc_irq_handler", "custom-vector image")

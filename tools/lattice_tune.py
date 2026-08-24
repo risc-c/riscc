@@ -30,12 +30,12 @@ RECIPES = {
 }
 
 CORES = (
-    "min", "sys", "full", "rc32-min", "rc32-sys", "nano",
+    "min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full", "nano",
     "mulh", "muldiv", "fast-soft", "fast-dsp",
     "faster-soft", "faster-dsp",
 )
 WIDTHS = (1, 2, 4, 8, 16)
-MATRIX_CORES = ("min", "sys", "full", "rc32-min", "rc32-sys")
+MATRIX_CORES = ("min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full")
 OTHER_CORES = ("nano", "mulh", "muldiv", "fast-soft", "fast-dsp",
                "faster-soft", "faster-dsp")
 
@@ -81,7 +81,7 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
             defines.extend(("RISCC_FMAX_RC16", f"RISCC_FMAX_WIDTH={width}"))
             if core == "min":
                 defines.append("RISCC_FMAX_MIN")
-    elif core in ("rc32-min", "rc32-sys"):
+    elif core in ("rc32-min", "rc32-sys", "rc32-full"):
         if width not in (1, 2, 4, 8, 16):
             raise ValueError("RC32 width must be 1, 2, 4, 8, or 16")
         profile = core.removeprefix("rc32-")
@@ -393,7 +393,8 @@ def main():
         return
     spec = core_spec(root, args.target, args.core, args.width)
     suffix = f"-{args.width}" if args.core in ("min", "sys", "full",
-                                                "rc32-min", "rc32-sys") else ""
+                                                "rc32-min", "rc32-sys",
+                                                "rc32-full") else ""
     out = (args.out or root / "build/tune" / args.target /
            f"{args.core}{suffix}").resolve()
     out.mkdir(parents=True, exist_ok=True)

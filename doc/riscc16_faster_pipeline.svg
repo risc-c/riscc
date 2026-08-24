@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="870" viewBox="0 0 1000 870"
      role="img" aria-labelledby="title desc">
   <title id="title">RISC-C/faster pipeline, synchronous register file, and Execute states</title>
-  <desc id="desc">RISC-C/faster has IF, Decode and synchronous register file, and Execute and commit stages. Decode drives a replicated two-read MLAB register file. At the D to X edge the register file captures source addresses and its registered outputs become the Execute operands alongside registered controls. A write-edge bypass supplies a producer's result to a dependent read. Every completed instruction writes back through the RF's one write port; ST_LOAD formats the synchronous memory response before using that port. A steady-state timing view shows independent instructions advancing one per clock. Execute owns LOAD, SHIFT, MUL, and long-form side states.</desc>
+  <desc id="desc">RISC-C/faster has IF, Decode and synchronous register file, and Execute and commit stages. Decode drives a replicated two-read MLAB register file. At the D to X edge the register file captures source addresses and its registered outputs become the Execute operands alongside registered controls. A write-edge bypass supplies a producer's result to a dependent read. Loads write their acknowledged memory response directly through the register file's write port. A steady-state timing view shows independent instructions advancing one per clock. Execute owns SHIFT and MUL side states; the fabric-multiplier build also uses LONG for a registered JALL target.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
@@ -79,7 +79,7 @@
   <text class="stage-title" x="859" y="197" text-anchor="middle">X: Execute + commit</text>
   <text class="body" x="859" y="225" text-anchor="middle">ALU · branch · memory</text>
   <text class="body" x="859" y="248" text-anchor="middle">commit → RF writeback</text>
-  <text class="body" x="859" y="267" text-anchor="middle">load response: ST_LOAD</text>
+  <text class="body" x="859" y="267" text-anchor="middle">load ACK → RF writeback</text>
 
   <path class="flow" d="M 440 222 H 465"/>
   <text class="small" x="452" y="211" text-anchor="middle">addr</text>
@@ -100,7 +100,7 @@
   <text class="small" x="315" y="306">response + tag</text>
   <path class="flow" d="M 859 275 V 303 H 610 V 321"/>
   <path class="memory-flow" d="M 685 352 H 935 V 275"/>
-  <text class="small" x="810" y="344" text-anchor="middle">load response → ST_LOAD</text>
+  <text class="small" x="810" y="344" text-anchor="middle">load response → direct commit</text>
 
   <rect class="panel" x="30" y="425" width="940" height="215" rx="12"/>
   <text class="panel-title" x="52" y="455">Steady-state timing</text>
@@ -151,15 +151,11 @@
   <text class="state-title" x="500" y="722" text-anchor="middle">RUN</text>
   <text class="small" x="500" y="740" text-anchor="middle">commit or dispatch</text>
 
-  <path class="bus" d="M 500 746 V 760 H 140 M 500 760 H 830"/>
-  <path class="dispatch" d="M 140 760 V 770"/>
+  <path class="bus" d="M 500 746 V 760 H 370 M 500 760 H 830"/>
   <path class="dispatch" d="M 370 760 V 770"/>
   <path class="dispatch" d="M 600 760 V 770"/>
   <path class="dispatch" d="M 830 760 V 770"/>
 
-  <rect class="side" x="45" y="770" width="190" height="54" rx="8"/>
-  <text class="state-title" x="140" y="792" text-anchor="middle">LOAD</text>
-  <text class="small" x="140" y="815" text-anchor="middle">response → RF write</text>
   <rect class="side" x="275" y="770" width="190" height="54" rx="8"/>
   <text class="state-title" x="370" y="792" text-anchor="middle">SHIFT</text>
   <text class="small" x="370" y="815" text-anchor="middle">repeat → commit</text>
@@ -168,5 +164,5 @@
   <text class="small" x="600" y="815" text-anchor="middle">DSP capture · soft 15 steps</text>
   <rect class="side" x="735" y="770" width="190" height="54" rx="8"/>
   <text class="state-title" x="830" y="792" text-anchor="middle">LONG</text>
-  <text class="small" x="830" y="815" text-anchor="middle">JALL target response</text>
+  <text class="small" x="830" y="815" text-anchor="middle">soft build JALL target</text>
 </svg>

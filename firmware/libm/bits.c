@@ -336,19 +336,19 @@ long double roundl(long double value)
     return (long double)round((double)value);
 }
 
-int32_t lroundf(float value)
+long lroundf(float value)
 {
-    return (int32_t)roundf(value);
+    return (long)roundf(value);
 }
 
-int32_t lround(double value)
+long lround(double value)
 {
-    return (int32_t)round(value);
+    return (long)round(value);
 }
 
-int32_t lroundl(long double value)
+long lroundl(long double value)
 {
-    return (int32_t)round((double)value);
+    return (long)round((double)value);
 }
 
 int64_t llroundf(float value)

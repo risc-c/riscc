@@ -21,7 +21,7 @@ this section describes how the RTL realizes them.
 | Nano | fixed one-bit serial controller and register file | [`riscc_nano.v`](../rtl/riscc_nano.v) |
 | RC16 serial `/1`–`/8` | `W`-bit sliced ALU and one-port register file | [`riscc_min.v`](../rtl/riscc_min.v), [`riscc_sys.v`](../rtl/riscc_sys.v), [`riscc_full.v`](../rtl/riscc_full.v) |
 | RC16 serial `/16` | 16-bit datapath with multi-cycle control | [`riscc16_min.v`](../rtl/riscc16_min.v), [`riscc16_sys.v`](../rtl/riscc16_sys.v), [`riscc16_full.v`](../rtl/riscc16_full.v) |
-| RC32 serial `/1`–`/16` | `W`-bit serial 32-bit datapath over a 16-bit memory port | [`riscc32_min.v`](../rtl/riscc32_min.v), [`riscc32_sys.v`](../rtl/riscc32_sys.v) |
+| RC32 serial `/1`–`/16` | `W`-bit serial 32-bit datapath over a 16-bit memory port | [`riscc32_min.v`](../rtl/riscc32_min.v), [`riscc32_sys.v`](../rtl/riscc32_sys.v), [`riscc32_full.v`](../rtl/riscc32_full.v) |
 | Fast | two-stage Fetch/Execute pipeline | [`riscc16_fast.v`](../rtl/riscc16_fast.v) |
 | Faster | three-stage Fetch/Decode/Execute pipeline | [`riscc16_faster.v`](../rtl/riscc16_faster.v) |
 
@@ -62,9 +62,11 @@ repeat an access while the address is held.
 The serial cores hold their request state until `mem_ready`, then latch each
 16-bit read and consume it a slice at a time. Fast and Faster freeze their
 pipelines while a request waits. No wrapper, request queue, or wider internal
-datapath is added. The in-tree SoCs acknowledge their synchronous RAM and MMIO
-one cycle after the request. Random-stall tests check both delayed responses
-and request stability.
+datapath is added. Faster samples its level IRQ only on a core-advance
+boundary, so an outstanding memory transfer completes before interrupt entry.
+The in-tree SoCs acknowledge their synchronous RAM and MMIO one cycle after
+the request. Random-stall tests check both delayed responses and request
+stability.
 
 ### Serial cores
 
@@ -85,14 +87,23 @@ extra execution pass.
 The sliced controllers capture an instruction on the acknowledged
 `FETCH_WAIT` edge and proceed directly to `DECODE`. Simple operations proceed
 to `EXECUTE`; forms needing staged operands use `INIT2` and `INIT`, and memory
-transfers add `MEM_WAIT` and `MEM_XFER`. Iterative operations repeat `EXECUTE`
-across slices, with the last pass writing the result before the next fetch.
+transfers add `MEM_WAIT` and `MEM_XFER`. Iterative operations repeat counted
+slice passes, with the last pass writing the result before the next fetch.
 
 The Sys controllers add saved control state and an interrupt-entry path to the
-same serial datapath. RC16 Full adds iterative arithmetic control. Nano is a
-separate fixed `/1` design: its one-bit register file, compact decode, and
-preparation phase are tailored to the minimal serial schedule rather than
-being a parameter setting of the RC16 or RC32 controllers.
+same serial datapath. The independent RC16 and RC32 Full controllers add
+fixed-count shift and iterative low-half multiplication control. RC32 Full
+uses the existing address stream as the high multiply accumulator and the data
+stream as the multiplier and low product. It alternates serial add and shift
+passes and writes the result during the final shift, avoiding a separate
+32-bit accumulator bank. Address and data stream rotations each use one
+shared enable plus a `W`-bit input selector, rather than replicating source
+selection across their 32-bit storage. Conditional branches read r0 in an
+operand pass instead of maintaining condition flags on every r0 write. RC32
+Full does not implement the optional MDU. Nano is a separate fixed `/1`
+design: its one-bit register file, compact decode, and preparation phase are
+tailored to the minimal serial schedule rather than being a parameter setting
+of the RC16 or RC32 controllers.
 
 RC16 `/16` is a separate multi-cycle implementation with a full-width
 datapath. Its single 17-bit ALU completes ordinary arithmetic,
@@ -159,6 +170,11 @@ controller; they are area/latency trade-offs rather than separate
 high-throughput execution units. Their architectural definition is in the
 [ISA specification](RISC-C-ISA.md#appendix-b-multiply-divide-instructions-mdu-extension).
 
+RC32 Full likewise implements fixed-count shifts and iterative low-half
+`MUL`, but it has no RC32 MulH or MulDiv RTL variant. The RC32 MDU encodings
+are supported by the toolchain and ISS only; they are not implemented in any
+current RC32 `.v` core.
+
 ### FPGA build selection
 
 The reference targets are ECP5 and Agilex 3. A single-case build uses
@@ -196,18 +212,20 @@ throughput, and efficiency use the EBR configuration.
 Reproduce the tables with:
 
 ```sh
-make -j16 tables-lattice
+make tables-lattice
 ```
 
-This searches 10 routing seeds by default. Set `TUNE_SEEDS=128` for a larger
-search; selected recipes, options, and seeds are recorded in
-`build/tune/ecp5/best.tsv`. Sequential-retiming recipes are excluded:
-post-synthesis gate regressions did not preserve the Fast core's behavior.
+This evaluates all mapping recipes at the common routing seed 1 by default;
+selected recipes, options, and the seed are recorded in
+`build/tune/ecp5/best.tsv`. `TUNE_SEEDS=128` is available for exploratory
+variation studies, but published comparisons use the identical default seed.
+Sequential-retiming recipes are excluded: post-synthesis gate regressions did
+not preserve the Fast core's behavior.
 
 Include Agilex 3 by providing Quartus Pro:
 
 ```sh
-make -j16 QUARTUS_SH=/path/to/quartus/bin/quartus_sh tables
+make -j$(nproc) QUARTUS_SH=/path/to/quartus/bin/quartus_sh tables
 ```
 
 Run a focused or whole-matrix tuning search directly with:
@@ -229,9 +247,10 @@ add `--resume` to continue an interrupted whole-matrix run.
 |---|---:|---:|---:|---:|---:|
 | `min` | 124 | 137 | 165 | 215 | 262 |
 | `sys` | 145 | 158 | 191 | 247 | 284 |
-| `full` | 172 | 202 | 233 | 300 | 342 |
+| `full` | 172 | 201 | 232 | 300 | 342 |
 | RC32 `min` | 153 | 166 | 186 | 230 | 312 |
-| RC32 `sys` | 178 | 193 | 213 | 267 | 346 |
+| RC32 `sys` | 180 | 196 | 216 | 268 | 349 |
+| RC32 `full` | 231 | 252 | 294 | 361 | 481 |
 
 | ECP5 LUT4 sites (LUTRAM RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
@@ -239,10 +258,13 @@ add `--resume` to continue an interrupted whole-matrix run.
 | `sys` | 187 | 199 | 226 | 280 | 310 |
 | `full` | 216 | 242 | 271 | 333 | 366 |
 | RC32 `min` | 233 | 246 | 265 | 298 | 378 |
-| RC32 `sys` | 260 | 273 | 288 | 335 | 412 |
+| RC32 `sys` | 262 | 275 | 292 | 336 | 415 |
+| RC32 `full` | 311 | 334 | 371 | 435 | 548 |
 
 With the ECP5 block RF, RC32 Min uses 7–23% more LUT4 sites than RC16 Min at
-the same width. RC32 Sys uses 25–37 more LUT4 sites than RC32 Min.
+the same width. RC32 Sys uses 27–38 more LUT4 sites than RC32 Min. RC32 Full
+adds 51–132 sites over RC32 Sys for its repeated shifts and 32-bit iterative
+low-half multiplier.
 
 | Agilex 3 ALMs (MLAB RF included) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
@@ -250,17 +272,18 @@ the same width. RC32 Sys uses 25–37 more LUT4 sites than RC32 Min.
 | `sys` | 96.5 | 105.2 | 107.9 | 123.5 | 121.9 |
 | `full` | 96.6 | 100.7 | 114.4 | 135.9 | 155.1 |
 | RC32 `min` | 122.6 | 131.7 | 138.5 | 155.8 | 187.4 |
-| RC32 `sys` | 127.5 | 136.7 | 142.9 | 158.3 | 201.1 |
+| RC32 `sys` | 127.5 | 136.6 | 145.7 | 157.2 | 197.7 |
+| RC32 `full` | 138.0 | 147.9 | 158.6 | 185.2 | 218.0 |
 
 | Other implementation area | ECP5 block RF LUT4 sites | ECP5 LUTRAM RF sites | Agilex 3 ALM, RF included |
 |---|---:|---:|---:|
 | nano | 94 | 115 | 86.6 |
 | Full paired MulH `/16` | 350 | 374 | 147.9 |
 | Full paired MulDiv `/16` | 381 | 405 | 173.4 |
-| Fast soft | 531 | 523 | 255.8 |
-| Fast DSP | 498 | 485 | 255.7 |
-| Faster DSP | 622 | 686 | 282.4 |
-| Faster soft | 709 | 782 | 329.1 |
+| Fast soft | 521 | 513 | 255.8 |
+| Fast DSP | 497 | 485 | 255.7 |
+| Faster DSP | 620 | 683 | 286.1 |
+| Faster soft | 703 | 760 | 324.5 |
 
 The table headings state whether LUT/ALM values include the register file.
 ECP5 Nano, serial, and paired Full cores use one RF EBR; Fast and Faster use
@@ -272,10 +295,15 @@ excluded.
 | ECP5 Fmax (MHz, EBR RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
 | `min` | 100.13 | 98.22 | 85.08 | 78.71 | 78.04 |
-| `sys` | 97.87 | 94.94 | 82.64 | 76.46 | 75.86 |
-| `full` | 96.53 | 92.17 | 81.51 | 77.21 | 78.07 |
+| `sys` | 99.87 | 95.11 | 84.13 | 75.82 | 75.86 |
+| `full` | 94.22 | 92.46 | 80.95 | 77.83 | 78.07 |
 | RC32 `min` | 97.85 | 87.86 | 80.32 | 81.03 | 75.13 |
-| RC32 `sys` | 98.73 | 92.25 | 83.31 | 81.81 | 73.96 |
+| RC32 `sys` | 98.10 | 94.54 | 84.45 | 80.12 | 74.48 |
+| RC32 `full` | 76.77 | 81.54 | 67.69 | 70.66 | 70.18 |
+
+The ECP5 Fmax rows use routing seed 1 for every configuration. This keeps
+cross-width and cross-profile comparisons reproducible instead of selecting a
+different favorable seed for each point.
 
 | Agilex 3 Fmax (MHz, MLAB RF) | /1 | /2 | /4 | /8 | /16 |
 |---|---:|---:|---:|---:|---:|
@@ -283,17 +311,18 @@ excluded.
 | `sys` | 312.89 | 335.91 | 278.78 | 268.67 | 272.85 |
 | `full` | 283.77 | 264.41 | 269.25 | 261.92 | 231.16 |
 | RC32 `min` | 282.01 | 304.60 | 275.48 | 273.45 | 248.51 |
-| RC32 `sys` | 264.48 | 305.06 | 266.17 | 255.56 | 256.28 |
+| RC32 `sys` | 264.48 | 297.80 | 267.81 | 269.91 | 258.06 |
+| RC32 `full` | 262.67 | 264.41 | 266.17 | 243.31 | 218.10 |
 
 | Other implementation routed Fmax (MHz) | ECP5, EBR RF | Agilex 3, MLAB RF |
 |---|---:|---:|
 | nano | 95.17 | 316.26 |
 | Full paired MulH `/16` | 72.96 | 241.31 |
 | Full paired MulDiv `/16` | 70.86 | 230.95 |
-| Fast soft | 57.60 | 186.32 |
-| Fast DSP | 59.37 | 145.12 |
-| Faster DSP | 50.49 | 237.30 |
-| Faster soft | 56.02 | 237.70 |
+| Fast soft | 56.81 | 186.32 |
+| Fast DSP | 59.23 | 145.12 |
+| Faster DSP | 50.22 | 242.72 |
+| Faster soft | 56.41 | 234.19 |
 
 Each throughput entry combines the listed Fmax with the measured cycles of a
 common benchmark. The serial columns use the `sys` area/Fmax point. Fast uses
@@ -302,8 +331,8 @@ Faster uses its common pipeline cycle count on both families.
 
 | Benchmark MIPS | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| ECP5, EBR RF | 2.85 | 5.21 | 8.10 | 12.36 | 23.95 | 3.06 | 26.62 | 31.79 | 33.98 | 31.78 |
-| Agilex 3 | 9.12 | 18.42 | 27.32 | 43.44 | 86.14 | 10.18 | 104.54 | 98.99 | 159.71 | 134.86 |
+| ECP5, EBR RF | 2.91 | 5.22 | 8.25 | 12.26 | 23.95 | 3.06 | 26.25 | 31.72 | 33.80 | 32.01 |
+| Agilex 3 | 9.12 | 18.42 | 27.32 | 43.44 | 86.14 | 10.18 | 104.54 | 98.99 | 163.36 | 132.87 |
 
 The Lattice area and Fmax tables are independent optima and can select
 different synthesis parameters. Each Lattice efficiency entry instead uses a
@@ -312,8 +341,8 @@ recipe's area; it does not divide the separately fastest and smallest results.
 
 | Benchmark MIPS per thousand logic units | /1 | /2 | /4 | /8 | /16 | nano | fast soft | fast DSP | faster DSP | faster soft |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| ECP5, EBR RF LUT4 sites | 18.9 | 32.9 | 42.0 | 49.7 | 84.3 | 30.3 | 49.9 | 63.6 | 53.9 | 43.9 |
-| Agilex 3, ALM | 94.5 | 175.1 | 253.2 | 351.7 | 706.6 | 117.6 | 408.7 | 387.1 | 565.6 | 409.8 |
+| ECP5, EBR RF LUT4 sites | 20.1 | 33.0 | 42.5 | 49.4 | 84.3 | 30.3 | 49.6 | 63.8 | 54.0 | 45.4 |
+| Agilex 3, ALM | 94.5 | 175.1 | 253.2 | 351.7 | 706.6 | 117.6 | 408.7 | 387.1 | 571.0 | 409.5 |
 
 The common benchmark retires 3238 instructions; Nano's software-multiply
 version retires 8491. For versions with different dynamic instruction counts,
@@ -373,22 +402,46 @@ the LLVM host build. Yosys synthesis is not a ccache workload.
 
 ```sh
 make test-all
+make test-rtl
 make test-compiler
+make test-isa
 make fuzz-all
-make -j16 QUARTUS_SH=/opt/intelFPGA_pro/26.1/quartus/bin/quartus_sh tables
+make check-regressions
+make -j$(nproc) QUARTUS_SH=/opt/intelFPGA_pro/26.1/quartus/bin/quartus_sh tables
 ```
 
-`test-all` runs the RC16 matrix, Nano, optional MulH/MulDiv cores, RC32
-Min and Sys at every width, every Fast target variant, and both ECP5 block-RF
-and Agilex Faster variants.
+`test-all` is the complete deterministic correctness gate. It runs the focused
+LLVM/Clang/lld tests followed by `test-isa` and `test-compiler`; randomized fuzz
+campaigns and synthesis measurements remain separate.
+`test-rtl` runs the RC16 matrix, Nano, optional RC16 MulH/MulDiv cores, RC32
+Min, Sys, and Full at every width, every Fast target variant, and both ECP5
+block-RF and Agilex Faster variants.
 `test-compiler` adds compiler, libc, Nano compiler/RTL, and encoding tests.
+`test-isa` is the supported-instruction gate. It runs the assembler and
+disassembler checks, every directed ISS/RTL instruction suite, and asserts an
+external IRQ at every cycle of the interrupt-safe image on every
+interrupt-capable RTL width. It additionally injects at every actual memory
+wait cycle and ready transition under a fixed stalled-memory schedule. Optional
+unimplemented RC32X instructions are not part of this target. The compact RC32
+MDU software model receives a directed ISS test only because there is no
+matching RTL implementation.
 `fuzz-all` differentially compares self-checking generated programs between
 the ISS and trace-enabled RTL, reporting a replay command for any failure.
+Faster, which has no retirement trace interface, receives final written-memory
+comparison plus the generated program's full architectural self-check and a
+random external IRQ injection.
 
-Trace targets (`trace PROFILE=<profile> WIDTH=<width>`, `trace-nano`, and
-`trace-fast`) record architectural state and written memory after every
-instruction. Use them to locate the first divergent instruction when a
-differential test fails.
+`check-regressions` enforces deterministic benchmark image-size and cycle
+limits and guarded ECP5 area/Fmax limits for representative RC16, Nano, RC32,
+Fast, and Faster configurations. The PPA bounds deliberately allow a small
+mapper/P&R margin; published table updates still require the full identical-
+seed characterization flow.
+
+Trace targets (`trace PROFILE=<profile> WIDTH=<width>`, `trace-nano`,
+`trace-rc32 PROFILE=<profile> WIDTH=<width>`, and `trace-fast`) record
+architectural state and written memory after every instruction. The RC32
+target selects a Min, Sys, or Full image matching `PROFILE`. Use them to locate
+the first divergent instruction when a differential test fails.
 
 ## 5. Board builds and demos
 
@@ -403,19 +456,17 @@ The shared software-visible map is:
 
 | Byte address or range | Demo function |
 |---:|---|
-| `0x0000..0x7fff` | Icepi unified program/data RAM |
-| `0x0000..0x5fff` | Atum unified program/data RAM |
-| `0x8000..0xffee` | Icepi framebuffer aperture; its first 14,400 words are the displayed 320x180 framebuffer, four adjacent 4-bit pixels per 16-bit word; CPU writes only |
-| `0x6000..0xd07f` | Atum displayed 320x180 framebuffer: four adjacent 4-bit pixels per 16-bit word; CPU writes only |
-| `0xfff0..0xfff2` | UART; see the [Programming manual](PROGRAMMING.md#1-software-tools-and-the-iss) for register semantics |
+| `0x0000..0x7fff` | Unified program/data RAM |
+| `0x8000..0xf07f` | 320x180 framebuffer, four 4-bit pixels per 16-bit word; CPU writes only |
+| `0xf080..0xffef` | Reserved |
+| `0xfff0..0xfff2` | UART; see the [Programming manual](PROGRAMMING.md#bsp-services-and-mmio) for register semantics |
 | `0xfff4` | timer: write a non-zero 1 kHz delay to arm/rearm; read the free-running 16-bit millisecond tick counter |
 | `0xfff6` | interrupt state: read pending UART/timer bits 0/1; write enable mask |
 | `0xfff8` | LED output; Icepi uses five low bits and Atum uses four |
 
-Both active framebuffers use 14,400 16-bit words. The rest of the Icepi
-framebuffer aperture is reserved; only `0xfff0..0xffff` is MMIO. The UART
-divisor is board-local. [`<riscc/platform.h>`](../firmware/include/riscc/platform.h)
-defines the shared C interface.
+Each displayed framebuffer contains 14,400 16-bit words. The UART divisor is board-local.
+[`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines the shared
+C interface.
 
 The interrupt controller is a two-bit level mask for UART and timer sources.
 It has no priority, vectoring, edge capture, or acknowledgement register. The
@@ -427,7 +478,7 @@ RISC-C IRQ vector.
 The Icepi demo is in [`boards/icepi_zero`](../boards/icepi_zero). It uses a
 50 MHz Fast SoC, a 320x180 4-bit framebuffer scaled to 640x480 DVI, UART,
 LEDs, buttons, and freestanding C++ Julia-set firmware. The complete ECP5
-design uses 1,396 LUT4s, 32 EBRs, and one DSP block. Its PLL, TMDS encoder, and
+design uses 1,391 LUT4s, 32 EBRs, and one DSP block. Its PLL, TMDS encoder, and
 DDR serializer are maintained in-tree.
 
 ```sh
@@ -482,9 +533,9 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-The Quartus Pro 26.1 post-fit design uses 677.4 ALMs, 27 M20K blocks, one DSP
+The Quartus Pro 26.1 post-fit design uses 689.5 ALMs, 31 M20K blocks, one DSP
 block, and two IOPLLs. The 148.5 MHz pixel clock meets timing. The 225 MHz
-system target does not close timing; its restricted Fmax is 197.86 MHz.
+system target does not close timing; its restricted Fmax is 196.73 MHz.
 Persistent QSPI programming is outside the normal flow; see Terasic's
 [Atum A3 Nano documentation](https://www.terasic.com.tw/cgi-bin/page/archive.pl?CategoryNo=44&Language=English&No=1373&PartNo=4).
 

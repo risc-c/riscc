@@ -26,7 +26,9 @@ Every RTL change also needs its relevant fuzz target:
 
 - RC16 and Nano: `make fuzz`; RC32: `make fuzz-rc32`
 - Fast, including synchronous ECP5 block-RF cases: `make fuzz-fast`
-- Faster has no trace-differential fuzzer: run focused tests and benchmarks.
+- Faster: `make fuzz-faster`. It uses final written-memory comparison and the
+  generated program's architectural self-check because Faster has no
+  retirement-trace interface.
 
 Before every commit or release, run `make test-all` and all applicable fuzz
 targets; report the commands and results. For CPI changes run `make bench`;

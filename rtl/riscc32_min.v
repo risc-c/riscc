@@ -659,8 +659,11 @@ module riscc32_min #(
     // ------------------------------------------------------------------
 `ifdef RISCC_TRACE
     localparam integer RISCC_TRACE_W = W;
+    // /16's deferred LDPC schedule has an internal half-address restore
+    // boundary. It is not an architectural retirement and is recognizable by
+    // the odd transient instruction address.
     wire tr_commit_i = pc_execute & last_slice &
-        ~deferred_ldpc_pre;
+        ~deferred_ldpc_pre & ~instr_pc_q[0];
     wire [31:0] tr_pc_i = instr_pc_q;
     wire [15:0] tr_ir_i = instr_q;
     wire tr_ie_i = 1'b0;

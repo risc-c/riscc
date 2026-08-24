@@ -1,7 +1,7 @@
 BOARD_RULES := Makefile mk/boards.mk mk/firmware.mk
 
 DEMO_PROGRAM ?= boards/shared/sw/demo.cpp
-DEMO_RAM_LENGTH ?= 0x6000
+DEMO_RAM_LENGTH ?= 0x8000
 DEMO_LD_FLAGS := -Wl,--defsym=__riscc_ram_length=$(DEMO_RAM_LENGTH)
 
 # Icepi Zero
@@ -26,7 +26,6 @@ ICEPI_VIDEO_TEST_BIT := $(ICEPI_BUILD)/video_test.bit
 ICEPI_RTLSIM := $(ICEPI_BUILD)/rtlsim/Vicepi_zero_soc_sim
 ICEPI_CPU_DEFINES := -DRISCC_FAST_DSP
 ICEPI_DEFINES := -DRISCC_ICEPI_ZERO
-ICEPI_LD_FLAGS := -Wl,--defsym=__riscc_ram_length=0x8000
 ICEPI_SYNTH_OPTIONS ?= -abc2
 ICEPI_SPEED ?= 6
 ICEPI_NEXTPNR_OPTIONS ?= --seed $(PNR_SEED) --placer sa --tmg-ripup
@@ -191,11 +190,11 @@ ATUM_FULL_BUILD_DEPS := \
 
 $(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 	@mkdir -p $(@D)
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 12288
+	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 16384
 
 $(ATUM_MIF): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 	@mkdir -p $(@D)
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 12288 --format mif
+	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 16384 --format mif
 
 atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH) $(ATUM_MIF)
 
@@ -248,12 +247,8 @@ $(ATUM_SOF): $(ATUM_FULL_BUILD_STAMP) $(ATUM_MIF)
 
 atum-a3-demo: $(ATUM_SOF)
 
-# The board demos intentionally use only C++ language features.  There is no
-# C++ standard library, exception support, RTTI, global constructors, or
-# thread-safe local-static machinery in the freestanding target runtime.
-DEMO_CXXFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) -O2 -std=c++11 \
-	-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostdinc++ \
-	-Ifirmware/include
+# Board firmware uses the same freestanding C++ subset as applications.
+DEMO_CXXFLAGS := $(filter-out -O%,$(RISCC_CXXFLAGS)) -O2 -Ifirmware/include
 
 $(ICEPI_OBJ): $(ICEPI_PROGRAM) $(LIBC_HEADERS) $(BOARD_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
@@ -261,11 +256,11 @@ $(ICEPI_OBJ): $(ICEPI_PROGRAM) $(LIBC_HEADERS) $(BOARD_RULES) $(RISCC_CLANG)
 	  $(ICEPI_DEFINES) -c $< -o $@
 
 $(ICEPI_ELF): $(FW_VECTORS) $(FW_CRT0) \
-		$(ICEPI_OBJ) $(FW_LIBS) firmware/unified.ld \
+		$(ICEPI_OBJ) $(FW_LIBS) $(RISCC_LINKER_SCRIPT) \
 		$(RISCC_CLANG) $(RISCC_LLD)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath firmware/unified.ld) $(ICEPI_LD_FLAGS) -Wl,-Map,$(@:.elf=.map) \
+	  -Wl,-T,$(abspath $(RISCC_LINKER_SCRIPT)) $(DEMO_LD_FLAGS) -Wl,-Map,$(@:.elf=.map) \
 	  $(FW_VECTORS) $(FW_CRT0) $(ICEPI_OBJ) \
 	  $(FW_LIBS) -o $@
 
@@ -278,11 +273,11 @@ $(ATUM_OBJ): $(ATUM_PROGRAM) $(LIBC_HEADERS) $(BOARD_RULES) $(RISCC_CLANG)
 	  -DRISCC_ATUM_A3 -c $< -o $@
 
 $(ATUM_ELF): $(FW_VECTORS) $(FW_CRT0) \
-		$(ATUM_OBJ) $(FW_LIBS) firmware/unified.ld \
+		$(ATUM_OBJ) $(FW_LIBS) $(RISCC_LINKER_SCRIPT) \
 		$(RISCC_CLANG) $(RISCC_LLD)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath firmware/unified.ld) $(DEMO_LD_FLAGS) -Wl,-Map,$(@:.elf=.map) \
+	  -Wl,-T,$(abspath $(RISCC_LINKER_SCRIPT)) $(DEMO_LD_FLAGS) -Wl,-Map,$(@:.elf=.map) \
 	  $(FW_VECTORS) $(FW_CRT0) $(ATUM_OBJ) \
 	  $(FW_LIBS) -o $@
 

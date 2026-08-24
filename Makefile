@@ -2,7 +2,7 @@
 
 PROFILES := nano min sys full
 RC16_PROFILES := min sys full
-RC32_PROFILES := min sys
+RC32_PROFILES := min sys full
 WIDTHS := 1 2 4 8 16
 TEST_MODES := native ecp5-lutram ecp5-block
 EXTENSIONS := mulh muldiv
@@ -30,17 +30,18 @@ VERILATOR ?= verilator
 YOSYS ?= yosys
 NEXTPNR_ECP5 ?= nextpnr-ecp5
 PNR_SEED ?= 1
-TUNE_SEEDS ?= 10
+TUNE_SEEDS ?= 1
 ECPPACK ?= ecppack
 QUARTUS_SH ?= quartus_sh
 QUARTUS_CDB ?= $(patsubst %quartus_sh,%quartus_cdb,$(QUARTUS_SH))
 QUARTUS_ASM ?= $(patsubst %quartus_sh,%quartus_asm,$(QUARTUS_SH))
 QUARTUS_FLOW_ARGS ?=
 
-# Pass Make's -j value to LLVM and Quartus.  Plain `make` means one job.
+# Pass Make's -j value to nested LLVM and Quartus builds.  Without an explicit
+# -j, nested tools use every host CPU; use `make -jN` for parallel prerequisites.
 RISCC_BUILD_JOBS ?= $(or \
 	$(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS))), \
-	$(patsubst --jobs=%,%,$(filter --jobs=%,$(MAKEFLAGS))),1)
+	$(patsubst --jobs=%,%,$(filter --jobs=%,$(MAKEFLAGS))),$(shell nproc))
 CCACHE ?= $(shell command -v ccache 2>/dev/null)
 CCACHE_DIR ?= $(CURDIR)/build/ccache
 export CCACHE_DIR
@@ -68,6 +69,14 @@ BENCH_BIN := build/bin/bench.bin
 NANO_BENCH_BIN := build/bin/bench-nano.bin
 FUNNEL_BIN := build/bin/funnel.bin
 RC32_SYS_BIN := build/bin/rc32-sys.bin
+RC32_SYS_ISS_BIN := build/bin/rc32-sys-iss.bin
+ISA_IRQ_BIN := build/bin/isa-irq.bin
+ISA_IRQ_MDU_BIN := build/bin/isa-irq-mdu.bin
+RC32_ISA_IRQ_BIN := build/bin/rc32-isa-irq.bin
+RC32_FULL_ISA_IRQ_BIN := build/bin/rc32-full-isa-irq.bin
+RC32_MDU_BIN := build/bin/rc32-mdu.bin
+RC32_MIN_TRACE_BIN := build/bin/rc32-min-trace.bin
+HIGH_ADDRESS_BIN := build/bin/high-address.bin
 PERIPHERAL_TB := build/tb/peripherals/tb
 PERIPHERAL_RTL := boards/shared/rtl/riscc_timer_mmio.v \
 	boards/shared/rtl/riscc_irq_ctrl.v \
@@ -151,9 +160,10 @@ help:
 	  'Usage: make TARGET [VARIABLE=value]' \
 	  '' \
 	  'Build' \
-	  '  all                         RTL regression and benchmark' \
+	  '  all                         correctness tests and benchmarks' \
 	  '  firmware                    runtime for PROFILE' \
 	  '  firmware-all                runtimes for all profiles' \
+	  '  firmware-rc32               RC32 Min, Sys, and Full runtimes' \
 	  '  llvm-riscc-configure        configure the LLVM toolchain' \
 	  '  llvm-riscc                  build the LLVM toolchain' \
 	  '  clean                       remove generated tests and reports' \
@@ -176,16 +186,24 @@ help:
 	  '  test-faster                 test Faster ECP5/Agilex RF variants' \
 	  '  test-funnel                 test interrupt funneling' \
 	  '  test-peripherals            test timer and interrupt peripherals' \
-	  '  test-rc32                   test and fuzz RC32 Sys' \
-	  '  test-all                    run the complete RTL regression' \
+	  '  test-rc32                   test and fuzz RC32 Min, Sys, and Full' \
+	  '  test-nano-application       build/run riscc.mk Nano application' \
+	  '  test-rc32-application       build/run riscc.mk RC32 application' \
+	  '  test-isa                    test every supported ISA instruction' \
+	  '  test-high-address           test RC16 execution near 0x8000/0xfffe' \
+	  '  test-rtl                    run the complete RTL regression' \
+	  '  test-all                    run all deterministic correctness tests' \
 	  '  fuzz                        fuzz RC16 and Nano' \
 	  '  fuzz-rc32                   fuzz RC32' \
 	  '  fuzz-fast                   fuzz fast cores' \
+	  '  fuzz-faster                 final-state fuzz Faster cores' \
 	  '  fuzz-all                    run all fuzz campaigns' \
 	  '  trace                       trace PROFILE and WIDTH' \
 	  '  trace-nano                  trace Nano' \
+	  '  trace-rc32                  trace RC32 PROFILE and WIDTH' \
 	  '  trace-fast                  trace MEMORY and MULTIPLIER' \
 	  '  bench                       run core benchmarks' \
+	  '  check-regressions           enforce size/cycle/ECP5 PPA limits' \
 	  '' \
 	  'Compiler and libraries' \
 	  '  compiler-smoke              compiler smoke tests in ISS and RTL' \
@@ -201,6 +219,7 @@ help:
 	  '  compiler-libm               libm tests' \
 	  '  compiler-libc-size          report and check libc size' \
 	  '  compiler-nano               Nano compiler and library tests' \
+	  '  compiler-cpp                freestanding C++ matrix and policy' \
 	  '  check-llvm-mc-encodings     compare assembler encodings' \
 	  '  check-rc32-mc-encodings     compare RC32 encodings' \
 	  '  check-llvm-riscc            run LLVM RISC-C lit tests' \
@@ -244,7 +263,7 @@ help:
 	  '  EXTENSION=mulh|muldiv       default: muldiv' \
 	  '  MEMORY=async|ecp5|ecp5-block|agilex' \
 	  '  MULTIPLIER=soft|dsp         default: soft' \
-	  '  TUNE_SEEDS=N                seeds searched by tables-lattice (10)' \
+	  '  TUNE_SEEDS=N                seeds searched by tables-lattice (default: 1)' \
 	  '  QUARTUS_SH=/path/quartus_sh required for Agilex targets'
 
 clean:
