@@ -400,6 +400,15 @@ the LLVM host build. Yosys synthesis is not a ccache workload.
 
 ## 4. Validation
 
+The LLVM 23.1.0 backend rebase was validated on 2026-09-07 with
+`make check-llvm-riscc` (67 tests passed) and
+`make -j16 test-compiler compiler-benchmarks bench`. All passed; the common
+RTL benchmark cycle counts, including ECP5 Fast block-RF, match the recorded
+values above.
+Pre-commit validation also passed `make -j16 test-all` and
+`make -j4 fuzz-all FUZZ_JOBS=8 FUZZ_SEED_ARGS='--base-seed 1'`
+(300 seeds per campaign, zero divergences).
+
 ```sh
 make test-all
 make test-rtl
