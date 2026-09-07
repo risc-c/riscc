@@ -958,9 +958,9 @@ check-nano-mc-encodings: test/compiler/check_nano_mc_encodings.py \
 	  --llvm-objcopy $(LLVM_BIN)/llvm-objcopy
 
 check-rc32-mc-encodings: test/compiler/check_rc32_mc_encodings.py \
-		$(RISCC_MC) $(RISCC_OBJCOPY)
+		$(RISCC_MC) $(RISCC_OBJCOPY) $(RISCC_LLD)
 	$(PYTHON) $< --llvm-mc $(LLVM_BIN)/llvm-mc \
-	  --llvm-objcopy $(LLVM_BIN)/llvm-objcopy
+	  --llvm-objcopy $(LLVM_BIN)/llvm-objcopy --ld-lld $(LLVM_BIN)/ld.lld
 
 # One supported-ISA gate: assembler/disassembler checks plus every directed
 # ISS and RTL instruction suite.  Optional instructions enter this target only

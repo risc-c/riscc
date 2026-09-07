@@ -33,7 +33,7 @@ LLVM_CONFIG_FLAGS := \
 LLVM_TOOLS ?= clang lld llvm-ar llvm-mc llvm-objcopy \
 	llvm-objdump llvm-readobj llvm-nm llvm-size \
 	llc opt llvm-as llvm-dis
-LLVM_LIT_TOOLS ?= FileCheck count llvm-config not split-file yaml2obj
+LLVM_LIT_TOOLS ?= FileCheck count llvm-config llvm-dwarfdump not split-file yaml2obj
 LIT_ARGS ?= -sv
 # Set LLVM_LAUNCHER empty to disable ccache for the host tools.
 LLVM_LAUNCHER ?= $(CCACHE)

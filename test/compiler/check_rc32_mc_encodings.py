@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llvm-mc", type=Path, default=default_bin / "llvm-mc")
     parser.add_argument("--llvm-objcopy", type=Path,
                         default=default_bin / "llvm-objcopy")
+    parser.add_argument("--ld-lld", type=Path, default=default_bin / "ld.lld")
     return parser.parse_args()
 
 
@@ -273,9 +274,10 @@ def make_mdu_corpus() -> Corpus:
 
 
 def assemble(corpus: Corpus, llvm_mc: Path, llvm_objcopy: Path,
-             tmp: Path) -> tuple[bool, str]:
+             ld_lld: Path, tmp: Path) -> tuple[bool, str]:
     source_path = tmp / f"rc32-{corpus.name}.s"
     object_path = tmp / f"rc32-{corpus.name}.o"
+    elf_path = tmp / f"rc32-{corpus.name}.elf"
     binary_path = tmp / f"rc32-{corpus.name}.bin"
     source_path.write_text("\n".join(corpus.lines) + "\n", encoding="ascii")
     mc = subprocess.run(
@@ -286,9 +288,17 @@ def assemble(corpus: Corpus, llvm_mc: Path, llvm_objcopy: Path,
     )
     if mc.returncode:
         return False, mc.stderr
+    # Resolve symbolic LDPC references without changing instruction layout.
+    link = subprocess.run(
+        [str(ld_lld), "-m", "elf32lriscc", "-Ttext=0", "-e", "0",
+         "--no-relax", str(object_path), "-o", str(elf_path)],
+        capture_output=True, text=True,
+    )
+    if link.returncode:
+        return False, link.stderr
     objcopy = subprocess.run(
         [str(llvm_objcopy), "-O", "binary", "--only-section=.text",
-         str(object_path), str(binary_path)],
+         str(elf_path), str(binary_path)],
         capture_output=True, text=True,
     )
     if objcopy.returncode:
@@ -329,7 +339,7 @@ def expect_rejection(llvm_mc: Path, tmp: Path, cpu: str,
 
 def main() -> int:
     args = parse_args()
-    for tool in (args.llvm_mc, args.llvm_objcopy):
+    for tool in (args.llvm_mc, args.llvm_objcopy, args.ld_lld):
         if not tool.is_file():
             print(f"tool not found: {tool}", file=sys.stderr)
             return 2
@@ -341,7 +351,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="riscc-rc32-mc-") as tmp_name:
         tmp = Path(tmp_name)
         for corpus in corpora:
-            ok, detail = assemble(corpus, args.llvm_mc, args.llvm_objcopy, tmp)
+            ok, detail = assemble(corpus, args.llvm_mc, args.llvm_objcopy,
+                                  args.ld_lld, tmp)
             if not ok:
                 print(detail, file=sys.stderr, end="")
                 return 1
