@@ -122,9 +122,10 @@ The compiler defines one of `__RISCC_NANO__`, `__RISCC_MIN__`,
 `__RISCC_RC32__`.
 
 Full has an optional multiply/divide extension selected with
-`RISCC_TARGET_FEATURES=mdu` or `-mmdu`. RC16 has matching implementations;
-the RC32 toolchain and ISS support the extension, but current RC32 RTL does
-not. RC32X remains unsupported and `-mrc32x` is intentionally rejected.
+`RISCC_TARGET_FEATURES=mdu` or `-mmdu`. The full-width RTL supports the
+extension on both RC16 and RC32 with `PROFILE=2, MDU=2`; see the
+[hardware options](HARDWARE.md#parameterized-full-width-core).
+RC32X remains unsupported and `-mrc32x` is intentionally rejected.
 
 RC32 direct calls are address-range independent. The compiler places a
 full-width target literal, and the linker automatically replaces each Sys or
@@ -256,8 +257,8 @@ build/tools/riscc_sim program.bin --full --trace --state 2>&1 | less
 printf 'input line\n' | build/tools/riscc_sim program.bin --full --uart
 ```
 
-`--width 1|2|4|8|16` selects an RC16 instruction-cycle estimate. `--fast`,
-`--fast-dsp`, and `--faster` provide approximate timing for those cores. Use
+`--width 1|2|4|8|16` selects an RC16 instruction-cycle estimate. `--fast`
+and `--fast-soft` estimate RC16 Fast timing with DSP and fabric multiplication. Use
 RTL simulation whenever exact cycle behavior matters.
 
 The ISS stops when the program halts, exceeds its instruction limit, or writes

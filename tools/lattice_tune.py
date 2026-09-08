@@ -13,9 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-# Keep the search combinationally equivalent to the RTL.  Yosys sequential
-# retiming is intentionally excluded: a retimed Fast netlist passed synthesis
-# but failed both the normal and wait-state gate-level regressions.
+# Keep the search combinationally equivalent to the RTL.  Sequential
+# retiming is excluded from the recipe search.
 RECIPES = {
     "ecp5": {
         "default": "",
@@ -29,15 +28,21 @@ RECIPES = {
     },
 }
 
+WIDE_CORES = tuple(f"wide{xlen}-{profile}" for xlen in (16, 32)
+                   for profile in ("min", "sys", "full", "mulh", "muldiv"))
 CORES = (
     "min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full", "nano",
-    "mulh", "muldiv", "fast-soft", "fast-dsp",
-    "faster-soft", "faster-dsp",
-)
+    "mulh", "muldiv",
+    "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp",
+    "serial16-min", "serial16-sys", "serial16-full",
+    "serial32-min", "serial32-sys", "serial32-full",
+) + WIDE_CORES
 WIDTHS = (1, 2, 4, 8, 16)
 MATRIX_CORES = ("min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full")
-OTHER_CORES = ("nano", "mulh", "muldiv", "fast-soft", "fast-dsp",
-               "faster-soft", "faster-dsp")
+OTHER_CORES = ("nano", "mulh", "muldiv",
+               "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp")
+SERIAL_CORES = ("serial16-min", "serial16-sys", "serial16-full",
+                "serial32-min", "serial32-sys", "serial32-full")
 
 
 @dataclass(frozen=True)
@@ -47,7 +52,7 @@ class CoreSpec:
     defines: tuple[str, ...]
     block_defines: tuple[str, ...]
     synth_options: tuple[str, ...] = ()
-    width: int | None = None
+    parameters: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,70 +65,80 @@ class SynthResult:
 
 
 def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
+    # Public narrow names select the serial RTL away from the native width;
+    # the native RC16 aliases use the shared wide RTL as well. Explicit wide
+    # names remain available for focused wide-family measurements.
+    if core in ("min", "sys", "full") and width != 16:
+        core = f"serial16-{core}"
+    elif core in ("min", "sys", "full"):
+        core = f"wide16-{core}"
+    elif core in ("rc32-min", "rc32-sys", "rc32-full"):
+        core = "serial32-" + core.removeprefix("rc32-")
+    elif core in ("mulh", "muldiv"):
+        if width != 16:
+            raise ValueError(f"{core} supports only the native RC16 width 16")
+        core = f"wide16-{core}"
     rtl = root / "rtl"
     defines = []
     synth_options = []
+    parameters = ()
 
     if target == "ecp5":
         defines.append("RISCC_ECP5")
 
-    if core in ("min", "sys", "full"):
-        if width not in (1, 2, 4, 8, 16):
-            raise ValueError("RC16 width must be 1, 2, 4, 8, or 16")
-        if width == 16:
-            source = rtl / f"riscc16_{core}.v"
-            top = "riscc16_min" if core == "min" else "riscc16"
-            if core == "min":
-                defines.append("RISCC_FMAX_RC16_MIN")
-        else:
-            source = rtl / f"riscc_{core}.v"
-            top = "riscc_min" if core == "min" else "riscc"
-            defines.extend(("RISCC_FMAX_RC16", f"RISCC_FMAX_WIDTH={width}"))
-            if core == "min":
-                defines.append("RISCC_FMAX_MIN")
-    elif core in ("rc32-min", "rc32-sys", "rc32-full"):
-        if width not in (1, 2, 4, 8, 16):
-            raise ValueError("RC32 width must be 1, 2, 4, 8, or 16")
-        profile = core.removeprefix("rc32-")
-        source = rtl / f"riscc32_{profile}.v"
-        top = f"riscc32_{profile}"
-        defines.extend((f"RISCC_FMAX_RC32_{profile.upper()}",
-                        f"RISCC_FMAX_WIDTH={width}"))
+    if core in WIDE_CORES:
+        xlen = int(core[4:6])
+        profile_name = core[7:]
+        profile = {"min": 0, "sys": 1}.get(profile_name, 2)
+        mdu = {"mulh": 1, "muldiv": 2}.get(profile_name, 0)
+        source = rtl / "riscc_wide.v"
+        top = "riscc_wide"
+        defines.extend(("RISCC_FMAX_WIDE", f"RISCC_FMAX_WIDE_XLEN={xlen}",
+                        f"RISCC_FMAX_WIDE_PROFILE={profile}",
+                        f"RISCC_FMAX_WIDE_MDU={mdu}"))
+        parameters = (("XLEN", xlen), ("PROFILE", profile), ("MDU", mdu))
+    elif core in SERIAL_CORES:
+        serial_xlen = 16 if core.startswith("serial16-") else 32
+        profile_name = core.removeprefix(f"serial{serial_xlen}-")
+        profile = {"min": 0, "sys": 1, "full": 2}[profile_name]
+        supported_widths = (1, 2, 4, 8) if serial_xlen == 16 else (1, 2, 4, 8, 16)
+        if width not in supported_widths:
+            raise ValueError(
+                f"serial{serial_xlen} width must be "
+                + ", ".join(map(str, supported_widths))
+            )
+        source = rtl / "riscc_serial.v"
+        top = "riscc_serial"
+        defines.extend((
+            "RISCC_FMAX_SERIAL",
+            f"RISCC_FMAX_SERIAL_XLEN={serial_xlen}",
+            f"RISCC_FMAX_SERIAL_PROFILE={profile}",
+            f"RISCC_FMAX_SERIAL_W={width}",
+        ))
+        parameters = (("XLEN", serial_xlen), ("W", width),
+                      ("PROFILE", profile))
     elif core == "nano":
         source = rtl / "riscc_nano.v"
         top = "riscc_nano"
         defines.append("RISCC_FMAX_NANO")
-    elif core in ("mulh", "muldiv"):
-        source = rtl / f"riscc16_full_{core}.v"
-        top = "riscc16"
-    elif core.startswith("fast-"):
-        source = rtl / "riscc16_fast.v"
-        top = "riscc16_fast"
-        defines.append("RISCC_FMAX_FAST")
-        if core.endswith("dsp"):
-            defines.append("RISCC_FAST_DSP")
     else:
-        source = rtl / "riscc16_faster.v"
-        top = "riscc16_faster"
-        defines.append("RISCC_FMAX_FASTER")
+        source = rtl / "riscc_fast.v"
+        top = "riscc_fast"
+        defines.append("RISCC_FMAX_FAST")
+        if core.startswith("fast32-"):
+            defines.append("RISCC_FMAX_FAST32")
+            parameters = (("XLEN", 32),)
         if core.endswith("soft"):
-            defines.append("RISCC_FASTER_SOFT_MUL")
+            defines.append("RISCC_FAST_SOFT_MUL")
 
-    parameter_width = (
-        width if core.startswith("rc32-") or
-        (core in ("min", "sys", "full") and width != 16) else None
-    )
     block_defines = list(defines)
-    if core.startswith("fast-"):
+    if core.startswith(("fast-", "fast32-")):
         block_defines.remove("RISCC_ECP5")
-        block_defines.append("RISCC_FAST_SYNC_RF")
-    elif core.startswith("faster-"):
-        block_defines.remove("RISCC_ECP5")
-        block_defines.append("RISCC_FASTER_BLOCK_RF")
+        block_defines.append("RISCC_FAST_BLOCK_RF")
     else:
         block_defines.append("RISCC_ECP5_BLOCK_RF")
     return CoreSpec(source, top, tuple(defines), tuple(block_defines),
-                    tuple(synth_options), parameter_width)
+                    tuple(synth_options), parameters=parameters)
 
 
 def run(command, cwd: Path):
@@ -145,6 +160,13 @@ def cell_count(log: str, target: str) -> int:
     return last("LUT4") + 2 * last("CCU2C") + 6 * last("TRELLIS_DPR16X4")
 
 
+def parameter_commands(spec: CoreSpec) -> tuple[str, ...]:
+    commands = []
+    for name, value in spec.parameters:
+        commands.extend(("chparam", "-set", name, str(value), spec.top, ";"))
+    return tuple(commands)
+
+
 def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
                recipe: str, options: str) -> SynthResult:
     directory = out / recipe
@@ -155,6 +177,8 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
     synth_options = [*spec.synth_options, *shlex.split(options)]
     timing_script = ["read_verilog", *block_defines, str(spec.source),
                      str(root / "rtl/test/riscc_fmax_top.v"), ";"]
+    if spec.parameters:
+        timing_script.extend(parameter_commands(spec))
     timing_script.extend(("synth_ecp5", *synth_options, "-nowidelut",
                           "-top", "riscc_fmax_top", "-json", str(json)))
     timing_log = run(["yosys", "-p", " ".join(timing_script)], root)
@@ -163,9 +187,7 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
 
     def measure_area(selected_defines):
         script = ["read_verilog", *selected_defines, str(spec.source), ";"]
-        if spec.width is not None:
-            script.extend(("chparam", "-set", "W", str(spec.width),
-                           spec.top, ";"))
+        script.extend(parameter_commands(spec))
         script.extend(("synth_ecp5", *synth_options, "-nowidelut",
                        "-top", spec.top, ";", "stat"))
         return run(["yosys", "-p", " ".join(script)], root)
@@ -208,14 +230,21 @@ def route(out: Path, target: str, synth: SynthResult, seed: int,
     return synth, seed, fmax, status
 
 
-def matrix_cases():
+def matrix_cases(serial=False):
+    if serial:
+        return [
+            (core, width)
+            for core in SERIAL_CORES
+            for width in ((1, 2, 4, 8) if core.startswith("serial16-")
+                          else WIDTHS)
+        ]
     return [(core, width) for core in MATRIX_CORES for width in WIDTHS] + [
         (core, 16) for core in OTHER_CORES
     ]
 
 
 def result_directory(base: Path, core: str, width: int) -> Path:
-    suffix = f"-{width}" if core in MATRIX_CORES else ""
+    suffix = f"-{width}" if core in MATRIX_CORES + SERIAL_CORES else ""
     return base / f"{core}{suffix}"
 
 
@@ -234,11 +263,23 @@ def read_selection(path: Path, target: str, recipes, seeds):
     return area, block, fastest, efficient
 
 
-def print_matrix(selections, target: str, output: Path):
+def print_matrix(selections, target: str, output: Path, serial=False):
     def table(title, field, decimals=0):
         print(title)
         print(f"{'profile':<16} {'/1':>8} {'/2':>8} {'/4':>8} "
               f"{'/8':>8} {'/16':>8}")
+        if serial:
+            for core in SERIAL_CORES:
+                widths = (1, 2, 4, 8) if core.startswith("serial16-") else WIDTHS
+                values = []
+                for width in WIDTHS:
+                    if width not in widths:
+                        values.append("-")
+                    else:
+                        value = selections[(core, width)][field]
+                        values.append(f"{float(value):.2f}" if decimals else str(value))
+                print(f"{core:<16}" + "".join(f"{value:>9}" for value in values))
+            return
         for core in MATRIX_CORES:
             values = [selections[(core, width)][field] for width in WIDTHS]
             formatted = [f"{float(value):.2f}" if decimals else str(value)
@@ -257,8 +298,11 @@ def print_matrix(selections, target: str, output: Path):
     print(f"selections: {output}")
 
 
-def tune_matrix(args, root: Path):
-    base = (args.out or root / "build/tune" / args.target).resolve()
+def tune_matrix(args, root: Path, serial=False):
+    default_base = root / "build/tune" / args.target
+    if serial:
+        default_base /= "serial"
+    base = (args.out or default_base).resolve()
     base.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
 
@@ -281,7 +325,7 @@ def tune_matrix(args, root: Path):
         except (KeyError, ValueError):
             return False
 
-    cases = matrix_cases()
+    cases = matrix_cases(serial)
     pending = ([case for case in cases if not complete(case)]
                if args.resume else cases)
     outer_jobs = min(len(pending), max(1, args.jobs // 4)) if pending else 1
@@ -358,13 +402,13 @@ def tune_matrix(args, root: Path):
                     f"{1000 * float(efficient['fmax_mhz']) / int(efficient['block_area']):.2f}"
                 ),
             })
-    print_matrix(selections, args.target, output)
+    print_matrix(selections, args.target, output, serial)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", choices=tuple(RECIPES))
-    parser.add_argument("core", choices=(*CORES, "all"))
+    parser.add_argument("core", choices=(*CORES, "all", "all-serial"))
     parser.add_argument("--width", type=int, default=16)
     parser.add_argument("--seeds", type=int, default=10,
                         help="number of consecutive seeds (default: 10)")
@@ -388,13 +432,14 @@ def main():
         recipes = {name: recipes[name] for name in args.only}
 
     root = Path(__file__).resolve().parents[1]
-    if args.core == "all":
-        tune_matrix(args, root)
+    if args.core in ("all", "all-serial"):
+        tune_matrix(args, root, serial=args.core == "all-serial")
         return
     spec = core_spec(root, args.target, args.core, args.width)
-    suffix = f"-{args.width}" if args.core in ("min", "sys", "full",
-                                                "rc32-min", "rc32-sys",
-                                                "rc32-full") else ""
+    suffix = f"-{args.width}" if args.core in (
+        "min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full",
+        *SERIAL_CORES,
+    ) else ""
     out = (args.out or root / "build/tune" / args.target /
            f"{args.core}{suffix}").resolve()
     out.mkdir(parents=True, exist_ok=True)

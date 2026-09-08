@@ -66,7 +66,7 @@ module atum_a3_nano_soc #(
             $readmemh(MEM_HEX, ram);
     end
 
-    riscc16_faster cpu (
+    riscc_fast cpu (
         .clk(clk),
         .rst(rst),
         .irq(cpu_irq),

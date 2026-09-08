@@ -113,20 +113,13 @@ CycleTable cycle_table_for_fast(bool dsp)
         3,              // return redirect/refill
         3,              // register jump/call redirect/refill
         3,              // prefetched JALL target redirect/refill
-        dsp ? 1u : 17u, // direct DSP result or X plus 15 side-state MUL steps
+        dsp ? 1u : 9u,  // fabric MUL: setup plus eight radix-4 steps
         3,              // approximate IRQ redirect/refill
         0,              // first bit in EX; remaining bits overlap held fetch
         1,
         1,              // count-one shift completes directly in execute
         0,
     };
-}
-
-// Faster currently uses the same lightweight DSP timing estimate as Fast.
-// A cycle-accurate Faster pipeline model can be added independently later.
-CycleTable cycle_table_for_faster()
-{
-    return cycle_table_for_fast(true);
 }
 
 CycleTable cycle_table_for_rc16_width(int width)
@@ -240,8 +233,7 @@ struct Opts
     bool mdu = false;
     bool nano = false;
     bool fast = false;
-    bool fast_dsp = false;
-    bool faster = false;
+    bool fast_soft = false;
     int width = 16;
     uint64_t max_insns = 2000000;
     double mhz = 0.0;
@@ -265,22 +257,22 @@ struct Opts
 
     bool has_sys() const
     {
-        return fast || faster || (!nano && !min);
+        return fast || (!nano && !min);
     }
 
     bool has_shifts() const
     {
-        return fast || faster || nano || full;
+        return fast || nano || full;
     }
 
     bool has_long_jall() const
     {
-        return fast || faster || (!nano && !min);
+        return fast || (!nano && !min);
     }
 
     bool has_full() const
     {
-        return fast || faster || (full && !nano);
+        return fast || (full && !nano);
     }
 
     bool has_mdu() const
@@ -293,10 +285,8 @@ FramebufferLayout framebuffer_layout(const Opts &opts)
 {
     if (opts.fb_icepi)
         return {0x4000u, 320, 180};
-    if (opts.faster)
+    if (opts.fast)
         return {0x4000u, 320, 180};
-    if (opts.fast_dsp)
-        return {0x3000u, 320, 240};
     return {0x4000u, 160, 120};
 }
 
@@ -349,13 +339,12 @@ struct Sim
     uint64_t trace_steps = 0;
 
     Sim(const std::vector<uint8_t> &image, const Opts &opts)
-        : opts(opts), cycle(opts.fast ? cycle_table_for_fast(opts.fast_dsp) :
-            opts.faster ? cycle_table_for_faster() :
+        : opts(opts), cycle(opts.fast ? cycle_table_for_fast(!opts.fast_soft) :
             cycle_table_for_rc16_width(opts.width))
     {
         // Some direct-store schedules trade one extra serial pass for less
         // logic. RC16 Sys similarly stages STB for one extra cycle.
-        if (!opts.fast && !opts.faster && !opts.nano)
+        if (!opts.fast && !opts.nano)
         {
             if ((!opts.min && !opts.full && opts.width == 1) ||
                 (opts.full && (opts.width == 4 || opts.width == 8)))
@@ -687,7 +676,7 @@ struct Sim
                 {
                     throw std::runtime_error("branch cc 101/110/111 reserved");
                 }
-                instr_cycles = ((opts.fast || opts.faster) && taken) ?
+                instr_cycles = (opts.fast && taken) ?
                     3 : cycle.direct;
             }
         }
@@ -1473,8 +1462,7 @@ void print_usage(const char *prog)
         << "  --rc32-sys                 RC32 Sys architectural model\n"
         << "  --rc32-full                RC32 Full architectural model\n"
         << "  --nano\n"
-        << "  --fast [--fast-dsp]       approximate Fast pipelined timing (full ISA)\n"
-        << "  --faster                  Faster DSP timing model (full ISA)\n"
+        << "  --fast [--fast-soft]      approximate Fast timing; DSP by default (full ISA)\n"
         << "  --width W --max-insns N --mhz N --trace --state --require-result\n"
         << "    --dump WADDR LEN --dump-written\n"
         << "    --mhz also selects the 1 kHz timer clock; without it, ISS uses 50 MHz virtual time\n"
@@ -1541,14 +1529,10 @@ Opts parse_args(int argc, char **argv)
         {
             opts.fast = true;
         }
-        else if (opt == "--fast-dsp")
+        else if (opt == "--fast-soft")
         {
             opts.fast = true;
-            opts.fast_dsp = true;
-        }
-        else if (opt == "--faster")
-        {
-            opts.faster = true;
+            opts.fast_soft = true;
         }
         else if (opt == "--width")
         {
@@ -1624,7 +1608,7 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("missing image");
     if (opts.min && opts.full)
         throw std::runtime_error("--min and --full are mutually exclusive");
-    if (opts.rc32 && (opts.nano || opts.fast || opts.faster))
+    if (opts.rc32 && (opts.nano || opts.fast))
         throw std::runtime_error("RC32 cannot be combined with RC16 profile options");
     if (opts.rc32_sys && opts.min)
         throw std::runtime_error("--rc32 and --rc32-sys are mutually exclusive");
@@ -1632,10 +1616,8 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("--nano cannot be combined with an RC16 profile");
     if (opts.mdu && !opts.full)
         throw std::runtime_error("--mdu requires --full");
-    if ((opts.fast || opts.faster) && (opts.nano || opts.min))
+    if (opts.fast && (opts.nano || opts.min))
         throw std::runtime_error("pipelined timing cannot be combined with --nano or --min");
-    if (opts.fast && opts.faster)
-        throw std::runtime_error("--fast and --faster are mutually exclusive");
     return opts;
 }
 
@@ -1719,10 +1701,8 @@ int main(int argc, char **argv)
         bool window_ok = opts.fb_window && window_closed;
         double ipc = sim.cycles ? static_cast<double>(sim.insns) /
             static_cast<double>(sim.cycles) : 0.0;
-        const char *timing_note = opts.fast ? " (estimated fast timing)" :
-            opts.faster ? " (modeled faster timing)" : "";
-        const char *timing_name = opts.fast ? "estimated-fast" :
-            opts.faster ? "modeled-faster" : "modeled";
+        const char *timing_note = opts.fast ? " (estimated fast timing)" : "";
+        const char *timing_name = opts.fast ? "estimated-fast" : "modeled";
         std::fprintf(stderr, "%s after %llu insns, %llu cycles, IPC=%.3f, result=0x%04X: %s%s\n",
             outcome.c_str(), static_cast<unsigned long long>(sim.insns),
             static_cast<unsigned long long>(sim.cycles),

@@ -24,7 +24,7 @@ ICEPI_VIDEO_TEST_JSON := $(ICEPI_BUILD)/video_test.json
 ICEPI_VIDEO_TEST_CONFIG := $(ICEPI_BUILD)/video_test.config
 ICEPI_VIDEO_TEST_BIT := $(ICEPI_BUILD)/video_test.bit
 ICEPI_RTLSIM := $(ICEPI_BUILD)/rtlsim/Vicepi_zero_soc_sim
-ICEPI_CPU_DEFINES := -DRISCC_FAST_DSP
+ICEPI_CPU_DEFINES := -DRISCC_FAST_BLOCK_RF
 ICEPI_DEFINES := -DRISCC_ICEPI_ZERO
 ICEPI_SYNTH_OPTIONS ?= -abc2
 ICEPI_SPEED ?= 6
@@ -56,14 +56,14 @@ ICEPI_SYNTH_RTL := \
   $(ICEPI_DIR)/rtl/top.v \
   $(ICEPI_SOC_RTL) \
   $(ICEPI_DVI_RTL) \
-  rtl/riscc16_fast.v
+  rtl/riscc_fast.v
 ICEPI_SIM_RTL := \
   $(ICEPI_DIR)/rtl/icepi_zero_soc_sim.v \
   $(ICEPI_SOC_RTL) \
   $(ICEPI_DIR)/rtl/icepi_fb_dvi.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_encoder.v \
-  rtl/riscc16_fast.v
+  rtl/riscc_fast.v
 
 $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py
 	$(PYTHON) tools/bin_to_memh.py $< -o $@
@@ -71,7 +71,7 @@ $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py
 icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --fast-dsp --fb-icepi --fb-window --mhz 50 --max-insns 0
+	$(RISCC_SIM) $< --uart --fast --fb-icepi --fb-window --mhz 50 --max-insns 0
 
 icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@mkdir -p build/icepi_zero
@@ -167,7 +167,7 @@ ATUM_SOC_RTL := \
 ATUM_SIM_RTL := \
   $(ATUM_DIR)/rtl/atum_a3_nano_soc_sim.v \
   $(ATUM_SOC_RTL) \
-  rtl/riscc16_faster.v
+  rtl/riscc_fast.v
 ATUM_HW_RTL := \
   $(ATUM_DIR)/rtl/top.v \
   $(ATUM_DIR)/rtl/atum_sys_pll.v \
@@ -175,7 +175,7 @@ ATUM_HW_RTL := \
   $(ATUM_SOC_RTL) \
   $(ATUM_DIR)/rtl/atum_fb_hdmi.v \
   $(ATUM_DIR)/rtl/atum_tfp410_init.v \
-  rtl/riscc16_faster.v
+  rtl/riscc_fast.v
 ATUM_PROJECT_FILES := \
   $(ATUM_DIR)/atum_a3_nano.qpf \
   $(ATUM_DIR)/atum_a3_nano.qsf \
@@ -199,7 +199,7 @@ $(ATUM_MIF): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH) $(ATUM_MIF)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --uart --faster --fb-window --fb-scale 4 --mhz 225 --max-insns 0
+	$(RISCC_SIM) $< --uart --fast --fb-window --fb-scale 4 --mhz 225 --max-insns 0
 
 $(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp $(BOARD_RULES)
 	@mkdir -p $(@D)

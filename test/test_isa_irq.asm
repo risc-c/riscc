@@ -1,4 +1,4 @@
-; Interrupt atomicity sweep for the implemented RC16 Full instruction set.
+; Interrupt atomicity sweep for the implemented RC16 Sys and Full profiles.
 ;
 ; The test driver first stops at the marker store to learn the uninterrupted
 ; execution window, then reruns this image with a held IRQ asserted at every
@@ -82,10 +82,12 @@ cover_jmp8:
         ; Cheap count-one, iterative Full shifts, multiply, and funnels.
         SRLI    r4, r3, 1
         SRAI    r4, r3, 1
+.ifdef RISCC_FULL
         SRLI    r4, r3, 4
         SRAI    r4, r3, 4
         SLLI    r4, r3, 4
         MUL     r4, r3, r5
+.endif
         FSL1    r4, r3
         FSR1    r4, r3
 

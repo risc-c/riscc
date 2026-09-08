@@ -3,12 +3,6 @@
 This file lists active project work only. Completed, rejected, and speculative
 ideas are not retained here.
 
-## RC32
-
-- [ ] Implement and characterize optional RC32 MulH and MulDiv RTL variants,
-  with directed instruction/interrupt tests and ISS-versus-RTL fuzz coverage.
-  The compiler, assembler, disassembler, and ISS already support RC32 MDU.
-
 ## RC32X
 
 - [ ] Implement the defined RC32X instruction formats in LLVM MC, the

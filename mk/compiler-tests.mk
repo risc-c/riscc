@@ -144,19 +144,19 @@ $(COMPILER_IRQ_CUSTOM).elf: $(FW_VECTORS) \
 
 compiler-irqs: $(COMPILER_SMOKE).elf $(COMPILER_IRQ).bin \
 		$(COMPILER_IRQ_CUSTOM).bin build/test/rc16/native/full/16/tb \
-		build/test/fast/async/soft/tb $(RISCC_SIM) \
+		build/test/fast/ecp5-block/soft/tb $(RISCC_SIM) \
 		test/compiler/check_irq_linkage.py
 	$(RISCC_SIM) $(COMPILER_IRQ).bin --full \
 	  --max-insns $(COMPILER_MAX_INSNS)
 	build/test/rc16/native/full/16/tb $(COMPILER_IRQ).bin \
 	  --max-cycles 10000000
-	build/test/fast/async/soft/tb $(COMPILER_IRQ).bin \
+	build/test/fast/ecp5-block/soft/tb $(COMPILER_IRQ).bin \
 	  --max-cycles 1000000
 	$(RISCC_SIM) $(COMPILER_IRQ_CUSTOM).bin --full \
 	  --max-insns $(COMPILER_MAX_INSNS)
 	build/test/rc16/native/full/16/tb $(COMPILER_IRQ_CUSTOM).bin \
 	  --max-cycles 10000000
-	build/test/fast/async/soft/tb $(COMPILER_IRQ_CUSTOM).bin \
+	build/test/fast/ecp5-block/soft/tb $(COMPILER_IRQ_CUSTOM).bin \
 	  --max-cycles 1000000
 	$(PYTHON) test/compiler/check_irq_linkage.py \
 	  --normal $(COMPILER_SMOKE).map \
@@ -186,13 +186,13 @@ $(COMPILER_ATUM_SIM): $(COMPILER_UART).memh \
 	  $(abspath $(ATUM_SIM_RTL)) $(abspath test/compiler/atum_uart_tb.cpp)
 
 compiler-smoke: $(COMPILER_SMOKE).bin $(COMPILER_SMOKE).memh $(RISCC_SIM) \
-		build/test/rc16/native/full/16/tb build/test/fast/async/soft/tb \
+		build/test/rc16/native/full/16/tb build/test/fast/ecp5-block/soft/tb \
 		$(COMPILER_ICEPI_SIM) $(COMPILER_ATUM_SIM)
 	$(RISCC_SIM) $(COMPILER_SMOKE).bin --full \
 	  --max-insns $(COMPILER_MAX_INSNS)
 	build/test/rc16/native/full/16/tb $(COMPILER_SMOKE).bin \
 	  --max-cycles 10000000
-	build/test/fast/async/soft/tb $(COMPILER_SMOKE).bin \
+	build/test/fast/ecp5-block/soft/tb $(COMPILER_SMOKE).bin \
 	  --max-cycles 1000000
 	$(COMPILER_ICEPI_SIM)
 	$(COMPILER_ATUM_SIM)
@@ -968,8 +968,7 @@ check-rc32-mc-encodings: test/compiler/check_rc32_mc_encodings.py \
 ISA_IRQ_RC16_TBS := $(foreach width,$(WIDTHS), \
 	build/test/rc16/native/full/$(width)/tb)
 ISA_IRQ_PIPELINE_TBS := \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/fast/async/$(multiplier)/tb) \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/faster/ecp5-block/$(multiplier)/tb)
+	$(foreach multiplier,$(MULTIPLIERS),build/test/fast/ecp5-block/$(multiplier)/tb)
 ISA_IRQ_RC32_SYS_TBS := $(foreach width,$(WIDTHS), \
 	build/test/rc32/sys/$(width)/tb)
 ISA_IRQ_RC32_FULL_TBS := $(foreach width,$(WIDTHS), \

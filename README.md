@@ -5,15 +5,23 @@ Author: Arto Vuori <avuori@iki.fi>
 RISC-C is an open processor architecture and FPGA soft-core family for compact
 systems. Its compact RISC-style instruction set is designed for compiled C and
 C++, and the family includes both 16- and 32-bit architectures. Implementations
-range from tiny bit-serial cores to faster pipelined designs.
+range from tiny bit-serial cores to a three-stage pipelined core.
+
+[`rtl/riscc_serial.v`](rtl/riscc_serial.v) provides the sliced multicycle core.
+[`rtl/riscc_wide.v`](rtl/riscc_wide.v) provides the full-width multicycle core
+with `XLEN=16/32`, Min/Sys/Full profiles, and optional paired multiply/divide.
+RC16 `/16`, RC32 `/32`, and the `mulh`/`muldiv` build targets select this core.
+[`rtl/riscc_fast.v`](rtl/riscc_fast.v) provides the three-stage Full pipeline with `XLEN=16/32`.
+See the [Hardware manual](doc/HARDWARE.md#parameterized-full-width-core)
+for parameters and measured comparisons.
 
 RISC-C Nano is the smallest practical C/C++-programmable FPGA soft
 CPU, using 94 ECP5 LUT4 sites plus one EBR. Despite its size, it is a
 conventional register-based CPU supported by LLVM/Clang. A version with
 interrupts, preemptive RTOS support, 32-bit registers, and a 32-bit
-address space still uses only 180 ECP5 LUT4 sites plus one EBR, while keeping
-the compact instruction set. RC16 also has optional paired multiply and divide
-hardware; RC32 Full currently implements low-half multiplication only.
+address space still uses only 172 ECP5 LUT4 sites plus one EBR, while keeping
+the compact instruction set. Optional hardware multiplication and division
+are also available.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
@@ -182,7 +190,7 @@ make -j16 test-all
 | `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |
 | `make icepi-zero-demo-iss` | Builds and runs the Icepi Zero demo in the Fast digital signal processing (DSP) multiplier ISS model with its display window. |
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |
-| `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Faster DSP multiplier ISS model with its display window. |
+| `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Fast DSP multiplier ISS model with its display window. |
 | `make QUARTUS_SH=/path/to/quartus/bin/quartus_sh atum-a3-demo` | Builds the Atum A3 Nano Intel configuration file (`.sof`); firmware-only changes update the fitted on-chip memory image and reassemble, while RTL or project changes run the full Quartus flow. Quartus Pro must be provided and the command does not program hardware. |
 
 See the Hardware manual before running FPGA flows or programming a board, and

@@ -18,17 +18,16 @@
 Run the narrowest functional test after each edit:
 
 - RC16: `make test-core PROFILE=<profile> WIDTH=<width>`
-- Nano: `make test-nano`; Fast: `make test-fast-all`; Faster: `make test-faster`
+- Nano: `make test-nano`; Fast: `make test-fast-all test-fast-irq-all`
 - Shared RF, assembler, test, or profile changes: `make test-all`
 - Atum RTL/demo: `make atum-a3-demo-rtlsim`
 
 Every RTL change also needs its relevant fuzz target:
 
 - RC16 and Nano: `make fuzz`; RC32: `make fuzz-rc32`
-- Fast, including synchronous ECP5 block-RF cases: `make fuzz-fast`
-- Faster: `make fuzz-faster`. It uses final written-memory comparison and the
-  generated program's architectural self-check because Faster has no
-  retirement-trace interface.
+- Fast, including synchronous ECP5 block-RF cases: `make fuzz-fast fuzz-fast32`
+  It uses final written-memory comparison and the generated program's
+  architectural self-check because Fast has no retirement-trace interface.
 
 Before every commit or release, run `make test-all` and all applicable fuzz
 targets; report the commands and results. For CPI changes run `make bench`;
@@ -50,8 +49,7 @@ recorded results.
   variants. Specialize only for a real architectural need or a reproducible
   benefit unavailable from a generic form.
 - Reject affected LUT/site increases or Fmax decreases without a measured
-  compensating benefit. RC16/Nano are area-first; Fast targets MIPS-per-LUT/LE;
-  Faster prioritizes MIPS.
+  compensating benefit. RC16/Nano are area-first; Fast prioritizes MIPS.
 
 Quartus Pro is required for Agilex characterization. Set `QUARTUS_SH` to the
 configured executable when needed; `make atum-a3-demo` builds the SOF but is

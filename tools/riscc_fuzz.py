@@ -27,6 +27,7 @@ Usage:
   riscc_fuzz.py --campaign 25 --base-seed 12345
   riscc_fuzz.py --family nano --campaign 25
   riscc_fuzz.py --family rc32 --campaign 25
+  riscc_fuzz.py --family rc32 --config full-muldiv --cores wide32 --campaign 25
   riscc_fuzz.py --campaign 25 --config sys --cores rc16-1
 """
 
@@ -61,6 +62,7 @@ NANO_CONFIGS = ("nano",)
 RC32_CONFIGS = ("min", "sys", "full")
 RC32_WIDTHS = (1, 2, 4, 8, 16)
 RC16_CONFIGS = ("min", "sys", "full", "full-mulh", "full-muldiv")
+SERIAL16_WIDTHS = (1, 2, 4, 8)
 
 
 def available_cpu_count():
@@ -83,18 +85,6 @@ def parse_config(config):
         "divu": extension == "muldiv",
         "mdu": bool(extension),
     }
-
-
-def config_defs(config):
-    cfg = parse_config(config)
-    defs = []
-    if not cfg["sys"]:
-        defs.append("-DRISCC_MIN")
-    else:
-        defs.append("-DRISCC_SYS")
-    if cfg["full"]:
-        defs.append("-DRISCC_FULL")
-    return " ".join(defs)
 
 
 class Gen:
@@ -735,11 +725,14 @@ class RC32Gen:
     """
 
     def __init__(self, seed, config):
+        cfg = parse_config(config)
         self.rng = random.Random(seed)
         self.seed = seed
         self.config = config
-        self.sys = config != "min"
-        self.full = config == "full"
+        self.sys = cfg["sys"]
+        self.full = cfg["full"]
+        self.mulhu = cfg["mulhu"]
+        self.divu = cfg["divu"]
         self.label = 0
 
     def new_label(self, stem):
@@ -812,6 +805,23 @@ class RC32Gen:
             lines += ["    add   r0, r7, r0", "    sth   %s, [r0]" % self.reg()]
         return lines
 
+    def op_mdu(self):
+        if self.divu and self.rng.random() < 0.5:
+            remainder, quotient, source = self.rng.sample(range(7), 3)
+            divisor = self.rng.randint(1, 0xffffffff)
+            lines = self.literal_value("r%d" % remainder, self.rng.randrange(divisor))
+            lines += self.literal_value("r%d" % quotient, self.rng.getrandbits(32))
+            lines += self.literal_value("r%d" % source, divisor)
+            lines.append("    divu  r%d, r%d, r%d" % (remainder, quotient, source))
+            return lines
+        low, high = self.rng.sample(range(7), 2)
+        source = self.rng.randrange(7)
+        lines = self.literal_value("r%d" % high, self.rng.getrandbits(32))
+        if source != high:
+            lines += self.literal_value("r%d" % source, self.rng.getrandbits(32))
+        lines.append("    mulhu r%d, r%d, r%d" % (low, high, source))
+        return lines
+
     def op_ie_window(self):
         """Vary interrupt masking without generating an IRQ in-band."""
         return ["    cli"] + self.simple_op() + ["    sti"]
@@ -820,7 +830,8 @@ class RC32Gen:
         while True:
             chance = self.rng.random()
             if chance < 0.40:
-                lines = self.op_alu()
+                lines = (self.op_mdu() if self.mulhu and self.rng.random() < 0.5
+                         else self.op_alu())
             elif chance < 0.70:
                 lines = self.op_imm()
             elif chance < 0.80:
@@ -941,6 +952,18 @@ class RC32Gen:
                     "    srai  r4, r2, %d" % amount,
                 ]
             lines.append("    mul   r4, r1, r2")
+        if self.mulhu:
+            lines += self.literal_value("r1", 0xffffffff)
+            lines += ["    mulhu r3, r1, r1"]  # rb == ra
+            lines += self.literal_value("r1", 0x80000000)
+            lines += ["    ldi   r3, 2", "    mulhu r3, r1, r3"]  # rb == rd
+            lines += ["    ldi   r0, 1", "    mulhu r3, r0, r0",
+                      "    mulhu r0, r1, r3"]
+        if self.divu:
+            lines += self.literal_value("r3", 0x12345678)
+            lines += self.literal_value("r1", 0x9abcdef0)
+            lines += self.literal_value("r2", 0x80000001)
+            lines += ["    divu  r3, r1, r2"]
         return lines
 
     def body(self):
@@ -1074,10 +1097,13 @@ def llvm_rc32_tools():
 
 def assemble_rc32(asm_path, bin_path, config):
     mc, lld, objcopy = llvm_rc32_tools()
+    cfg = parse_config(config)
+    features = "+rc32" + (",+mdu" if cfg["divu"] else
+                          ",+mulhu" if cfg["mulhu"] else "")
     obj_path = bin_path + ".o"
     elf_path = bin_path + ".elf"
-    subprocess.run([mc, "-triple=riscc-none-elf", "-mcpu=" + config,
-                    "-mattr=+rc32",
+    subprocess.run([mc, "-triple=riscc-none-elf", "-mcpu=" + cfg["profile"],
+                    "-mattr=" + features,
                     "-filetype=obj", asm_path, "-o", obj_path], check=True,
                    stdout=subprocess.DEVNULL)
     subprocess.run([lld, "-m", "elf32lriscc", "-Ttext=0", "-e", "start",
@@ -1252,16 +1278,18 @@ def replay_command(args, config, seed, core=None):
 
 
 def trace_supported(family, core):
+    if core in ("wide16", "wide32"):
+        return (family, core) in (("rc16", "wide16"), ("rc32", "wide32"))
     return (family == "nano" and core == "nano") or (
         family == "rc16" and core in (
             "rc16-1", "rc16-2", "rc16-4", "rc16-8", "rc16-16",
-            "rc16-mulh", "rc16-muldiv")) or (
-        family == "fast" and core in (
-            "fast", "fast-dsp", "fast-ecp5", "fast-ecp5-dsp",
-            "fast-block", "fast-block-dsp", "fast-agilex",
-            "fast-agilex-dsp")) or (
+            "rc16-mulh", "rc16-muldiv") or
+        family == "rc16" and core in
+        tuple("serial16-%d" % width for width in SERIAL16_WIDTHS)) or (
         family == "rc32" and core in
-        tuple("rc32-%d" % width for width in RC32_WIDTHS))
+        tuple("rc32-%d" % width for width in RC32_WIDTHS) or
+        family == "rc32" and core in
+        tuple("serial32-%d" % width for width in RC32_WIDTHS))
 
 
 def fast_iss_path():
@@ -1398,7 +1426,7 @@ def memory_lines(output):
 def interrupt_supported(family, config):
     if family == "rc32":
         return config != "min"
-    if family in ("rc16", "fast", "faster"):
+    if family in ("rc16", "fast"):
         return parse_config(config)["sys"]
     return False
 
@@ -1414,7 +1442,7 @@ def compare_trace(core, family, config, seed, image, tb):
     irq_cycle = None
     if interrupt_supported(family, config):
         rtl_args += ["--report-write", "0x%04X" % IRQ_MARKER]
-    if family in ("rc16", "rc32", "nano", "fast"):
+    if family in ("rc16", "rc32", "nano"):
         rtl_args += ["--mem-stall-seed", str(seed)]
     rtl_run = subprocess.run(rtl_args,
                              capture_output=True, text=True)
@@ -1480,7 +1508,7 @@ def compare_trace(core, family, config, seed, image, tb):
         irq_cycle = irq_rng.randint(low_cycle, high_cycle)
         irq_args = [tb, image, "--dump-written", "--max-cycles", "400000",
                     "--irq-at", str(irq_cycle)]
-        if family in ("rc16", "rc32", "nano", "fast"):
+        if family in ("rc16", "rc32", "nano"):
             irq_args += ["--mem-stall-seed", str(seed)]
         irq_run = subprocess.run(irq_args, capture_output=True, text=True)
         if irq_run.returncode != 0:
@@ -1572,86 +1600,70 @@ def compare_final_state(core, family, config, seed, image, tb):
 
 
 def build_tb(core, family, config, outdir):
-    if family != "faster" and not trace_supported(family, core):
+    if family != "fast" and not core.startswith("fast32-") and not trace_supported(family, core):
         raise ValueError("trace compare does not support %s" % core)
 
-    if family == "rc32":
-        try:
-            width = int(core.removeprefix("rc32-"))
-        except ValueError as error:
-            raise ValueError("invalid RC32 core name: %s" % core) from error
-        if width not in RC32_WIDTHS:
-            raise ValueError("unsupported RC32 datapath width: %d" % width)
+    generic_rc16 = family == "rc16" and (
+        core.startswith("serial16-") or
+        core in tuple("rc16-%d" % width for width in SERIAL16_WIDTHS))
+    generic_rc32 = family == "rc32" and (
+        core.startswith("serial32-") or
+        core in tuple("rc32-%d" % width for width in RC32_WIDTHS))
+    if core in ("wide16", "wide32", "rc16-16", "rc16-mulh", "rc16-muldiv"):
+        cfg = parse_config(config)
+        if core in ("rc16-mulh", "rc16-muldiv"):
+            required = "full-" + core.removeprefix("rc16-")
+            if config != required:
+                raise ValueError("%s requires --config %s" % (core, required))
+        elif core == "rc16-16" and cfg["mdu"]:
+            raise ValueError("%s requires an MDU core" % config)
         d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
-        suffix = config.replace("-", "_")
-        top = "riscc32_" + suffix
-        rtl = os.path.join(RTL, "riscc32_" + suffix + ".v")
-        defs = ["-GW=%d" % width]
+        top = "riscc_wide"
+        rtl = os.path.join(RTL, "riscc_wide.v")
+        defs = ["-GXLEN=%d" % (16 if family == "rc16" else 32),
+                "-GPROFILE=%d" % ("min", "sys", "full").index(cfg["profile"]),
+                "-GMDU=%d" % (2 if cfg["divu"] else int(cfg["mulhu"]))]
+    elif generic_rc16 or generic_rc32:
+        width = int(core.rsplit("-", 1)[1])
+        widths = SERIAL16_WIDTHS if family == "rc16" else RC32_WIDTHS
+        if width not in widths:
+            raise ValueError("unsupported serial datapath width: %d" % width)
+        if config not in ("min", "sys", "full"):
+            raise ValueError("%s requires --config min, sys or full" % core)
+        d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
+        top = "riscc_serial"
+        rtl = os.path.join(RTL, "riscc_serial.v")
+        xlen = 16 if family == "rc16" else 32
+        profile = ("min", "sys", "full").index(config)
+        defs = ["-GXLEN=%d" % xlen, "-GW=%d" % width,
+                "-GPROFILE=%d" % profile]
     elif family == "nano":
         d = os.path.join(outdir, "v_trace_nano")
         top = "riscc_nano"
         rtl = os.path.join(RTL, "riscc_nano.v")
         defs = []
-    elif family == "fast":
-        d = os.path.join(outdir, "v_trace_%s" % core)
-        top = "riscc16_fast"
-        rtl = os.path.join(RTL, "riscc16_fast.v")
-        defs = []
-        if "dsp" in core:
-            defs.append("-DRISCC_FAST_DSP")
-        if "ecp5" in core:
-            defs.append("-DRISCC_ECP5")
-        if "block" in core:
-            defs.append("-DRISCC_FAST_SYNC_RF")
-        if "agilex" in core:
-            defs.append("-DRISCC_FAST_AGILEX")
-    elif family == "faster":
-        if core not in ("faster", "faster-dsp"):
-            raise ValueError("invalid Faster core name: %s" % core)
+    elif family == "fast" or core.startswith("fast32-"):
+        if config != "full":
+            raise ValueError("Fast requires --config full")
+        if core.replace("fast32-", "fast-") not in ("fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"):
+            raise ValueError("invalid Fast core name: %s" % core)
         d = os.path.join(outdir, "v_state_%s" % core)
-        top = "riscc16_faster"
-        rtl = os.path.join(RTL, "riscc16_faster.v")
-        defs = ["-DRISCC_FASTER_BLOCK_RF"]
-        if core == "faster":
-            defs.append("-DRISCC_FASTER_SOFT_MUL")
+        top = "riscc_fast"
+        rtl = os.path.join(RTL, "riscc_fast.v")
+        defs = [] if "agilex" in core else ["-DRISCC_FAST_BLOCK_RF"]
+        defs.append("-GXLEN=%d" % (32 if core.startswith("fast32-") else 16))
+        if core.endswith("soft"):
+            defs.append("-DRISCC_FAST_SOFT_MUL")
     else:
-        d = os.path.join(outdir, "v_trace_%s_%s" % (core, config))
-        if core in ("rc16-mulh", "rc16-muldiv"):
-            required = "full-" + core.removeprefix("rc16-")
-            if config != required:
-                raise ValueError("%s requires --config %s" % (core, required))
-            top = "riscc16"
-            rtl = os.path.join(
-                RTL, "riscc16_full_%s.v" % core.removeprefix("rc16-"))
-            width_args = []
-        else:
-            width = int(core.removeprefix("rc16-"))
-            if parse_config(config)["mdu"]:
-                raise ValueError("%s requires an MDU core" % config)
-            if width == 16 and config == "min":
-                top = "riscc16_min"
-                rtl = os.path.join(RTL, "riscc16_min.v")
-                width_args = []
-            elif width == 16:
-                top = "riscc16"
-                rtl = os.path.join(RTL, "riscc16_full.v" if config == "full" else "riscc16_sys.v")
-                width_args = []
-            elif config == "min":
-                top = "riscc_min"
-                rtl = os.path.join(RTL, "riscc_min.v")
-                width_args = ["-GW=%d" % width]
-            else:
-                top = "riscc"
-                rtl = os.path.join(RTL, "riscc_full.v" if config == "full" else "riscc_sys.v")
-                width_args = ["-GW=%d" % width]
-        defs = config_defs(config).split()
-        defs += width_args
-    with_trace = family != "faster"
+        raise ValueError("unsupported core: %s" % core)
+    with_trace = family != "fast" and not core.startswith("fast32-")
     if with_trace:
         defs.append("-DRISCC_TRACE")
     tb = os.path.join(d, "tb")
     trace_rtl = os.path.join(RTL, "test")
     rtl_dependencies = [rtl]
+    if top in ("riscc_serial", "riscc_wide"):
+        rtl_dependencies.append(os.path.join(RTL, "riscc_rf.vh"))
     newest_src = max(*(os.path.getmtime(path) for path in rtl_dependencies),
                      os.path.getmtime(__file__),
                      os.path.getmtime(os.path.join(trace_rtl, "riscc_trace_ports.vh")),
@@ -1676,13 +1688,10 @@ def build_tb(core, family, config, outdir):
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
         (" -DRISCC_TB_TRACE" if with_trace else "") +
         (" -DRISCC_TB_MEM_HANDSHAKE"
-         if family in ("rc16", "rc32", "fast", "faster") else "") +
+         if family in ("rc16", "rc32", "fast") else "") +
         (" -DRISCC_TB_MEM_OE_N" if family == "nano" else "") +
         (" -DRISCC_TB_RC32" if family == "rc32" else "") +
-        (" -DRISCC_TB_TRACE_DRAIN=1" if family == "fast" else
-         " -DRISCC_TB_TRACE_DRAIN=0"
-        if family == "rc16" and core in
-        ("rc16-16", "rc16-mulh", "rc16-muldiv") else ""),
+        (" -DRISCC_TB_TRACE_DRAIN=0" if family == "rc16" or core == "wide32" else ""),
         "-o", "tb",
         rtl,
         os.path.join(TEST, "riscc_test.cpp"),
@@ -1702,7 +1711,7 @@ def main():
     ap.add_argument("--random-seed", action="store_true",
                     help="choose and print a fresh random campaign base seed")
     ap.add_argument("--family", default="rc16",
-                    choices=["rc16", "nano", "fast", "faster", "rc32"])
+                    choices=["rc16", "nano", "fast", "rc32"])
     ap.add_argument("--config")
     ap.add_argument("--cores")
     ap.add_argument("-j", "--jobs", type=int, default=available_cpu_count(),
@@ -1711,12 +1720,17 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
-    valid_configs = (NANO_CONFIGS if args.family == "nano" else
-                     RC32_CONFIGS if args.family == "rc32" else
-                     ("full",) if args.family in ("fast", "faster") else
-                     RC16_CONFIGS)
+    default_configs = (NANO_CONFIGS if args.family == "nano" else
+                       RC32_CONFIGS if args.family == "rc32" else
+                       ("full",) if args.family == "fast" else
+                       RC16_CONFIGS)
+    valid_configs = RC16_CONFIGS if args.family == "rc32" else default_configs
     if args.config is not None and args.config not in valid_configs:
         ap.error("--config must be one of: %s" % ", ".join(valid_configs))
+    requested_cores = args.cores.split(",") if args.cores else None
+    if (args.family == "rc32" and args.config not in (None, *RC32_CONFIGS)
+            and requested_cores != ["wide32"]):
+        ap.error("RC32 MDU configurations require --cores wide32")
     if args.random_seed and args.base_seed is not None:
         ap.error("--random-seed and --base-seed are mutually exclusive")
     if args.jobs < 1:
@@ -1733,8 +1747,7 @@ def main():
         print("OK (ISS self-check): %s" % b)
         return
 
-    requested_cores = args.cores.split(",") if args.cores else None
-    configs = [args.config] if args.config else valid_configs
+    configs = [args.config] if args.config else default_configs
     base_seed = (args.base_seed if args.base_seed is not None
                  else random.SystemRandom().randrange(0, 1 << 31))
     print("campaign seeds: base=%d count=%d jobs=%d" %
@@ -1751,9 +1764,7 @@ def main():
             elif args.family == "rc32":
                 cores = ["rc32-%d" % width for width in RC32_WIDTHS]
             elif args.family == "fast":
-                cores = ["fast", "fast-dsp"]
-            elif args.family == "faster":
-                cores = ["faster", "faster-dsp"]
+                cores = ["fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"]
             elif config == "full-mulh":
                 cores = ["rc16-mulh"]
             elif config == "full-muldiv":
@@ -1795,7 +1806,7 @@ def main():
 
         def compare(item):
             core, tb, seed, image = item
-            checker = (compare_final_state if args.family == "faster"
+            checker = (compare_final_state if core.startswith(("fast-", "fast32-"))
                        else compare_trace)
             return (core, seed, image,
                     checker(core, args.family, config, seed, image, tb))
@@ -1808,7 +1819,7 @@ def main():
                 ok, detail, _, _ = result
                 if not ok:
                     fails += 1
-                    divergence = ("STATE-DIVERGE" if args.family == "faster"
+                    divergence = ("STATE-DIVERGE" if core.startswith(("fast-", "fast32-"))
                                   else "TRACE-DIVERGE")
                     print("%s %s %s/%s seed=%d: %s\n%s"
                           % (divergence, core, args.family, config, seed,

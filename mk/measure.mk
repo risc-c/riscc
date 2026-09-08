@@ -5,85 +5,72 @@ REGRESSION_CHECK := tools/check_regression_limits.py
 REGRESSION_TBS := \
 	$(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
 	build/test/nano/tb \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/fast/ecp5-block/$(multiplier)/tb) \
-	$(foreach multiplier,$(MULTIPLIERS),build/test/faster/ecp5-block/$(multiplier)/tb)
+	$(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS),build/test/$(pipeline)/ecp5-block/$(multiplier)/tb))
 REGRESSION_PPA := \
 	build/area/ecp5-block/rc16/sys/2.lut \
 	build/area/ecp5-block/rc32/sys/2.lut \
 	$(foreach width,$(WIDTHS),build/area/ecp5-block/rc32/full/$(width).lut) \
 	build/area/ecp5-block/nano.lut \
 	build/area/ecp5-block/fast/soft.resources \
-	build/area/ecp5-block/faster/soft.resources \
+	$(foreach multiplier,$(MULTIPLIERS),build/area/ecp5-block/fast32/$(multiplier).resources) \
 	build/fmax/ecp5/rc16/sys/2.mhz \
 	build/fmax/ecp5/rc32/sys/2.mhz \
 	$(foreach width,$(WIDTHS),build/fmax/ecp5/rc32/full/$(width).mhz) \
 	build/fmax/ecp5/nano.mhz \
 	build/fmax/ecp5/fast/soft.mhz \
-	build/fmax/ecp5/faster/soft.mhz
+	$(foreach multiplier,$(MULTIPLIERS),build/fmax/ecp5/fast32/$(multiplier).mhz)
 
-# Area defaults to one policy for serial/RC32 cores and the normal mapper for
-# the separate wide implementation. Measured RC32 cases override the default.
+# Serial recipes: minimum area, with block-RF ties resolved by median Fmax
+# over seeds 1–32. Columns are W=1, 2, 4, 8, 16.
+# Saved measurements: build/serial-min-opt/final-ppa/ and build/core-opt4/.
 AREA_OPTIONS_ecp5_serial := -abc2
-AREA_OPTIONS_ecp5_wide :=
-EXTENSION_AREA_OPTIONS_ecp5 := -abc2
-RC16_AREA_OPTIONS_ecp5_1 := -noccu2 -dff
-# RC32's held-request cones are unusually mapper-sensitive. These are the
-# deterministic minimum-area recipes from the full built-in recipe sweep;
-# they change mapping only, not the RTL or routing seed.
+EXTENSION_RECIPE_mulh := abc2-dff
+EXTENSION_RECIPE_muldiv := default
+extension_area_options = $(AREA_RECIPE_OPTIONS_$(EXTENSION_RECIPE_$(1)))
+AREA_RECIPE_OPTIONS_default :=
+AREA_RECIPE_OPTIONS_dff := -dff
 AREA_RECIPE_OPTIONS_abc2 := -abc2
 AREA_RECIPE_OPTIONS_abc2-dff := -abc2 -dff
-AREA_RECIPE_OPTIONS_dff := -dff
+AREA_RECIPE_OPTIONS_abc9 := -abc9
 AREA_RECIPE_OPTIONS_noccu2 := -noccu2
 AREA_RECIPE_OPTIONS_noccu2-dff := -noccu2 -dff
-AREA_RECIPE_OPTIONS_default :=
-RC32_AREA_RECIPE_ecp5-lutram_min_2 := noccu2
-RC32_AREA_RECIPE_ecp5-block_min_2 := noccu2
-RC32_AREA_RECIPE_ecp5-lutram_min_4 := abc2-dff
-RC32_AREA_RECIPE_ecp5-block_min_4 := abc2-dff
-RC32_AREA_RECIPE_ecp5-lutram_sys_1 := noccu2
-RC32_AREA_RECIPE_ecp5-lutram_sys_2 := abc2-dff
-RC32_AREA_RECIPE_ecp5-block_sys_2 := abc2-dff
-RC32_AREA_RECIPE_ecp5-lutram_sys_4 := abc2-dff
-RC32_AREA_RECIPE_ecp5-block_sys_4 := abc2-dff
-RC32_AREA_RECIPE_ecp5-lutram_sys_8 := abc2-dff
-RC32_AREA_RECIPE_ecp5-block_sys_8 := abc2-dff
-RC32_AREA_RECIPE_ecp5-lutram_full_1 := noccu2
-RC32_AREA_RECIPE_ecp5-block_full_1 := noccu2
-RC32_AREA_RECIPE_ecp5-lutram_full_2 := noccu2
-RC32_AREA_RECIPE_ecp5-block_full_2 := noccu2
-RC32_AREA_RECIPE_ecp5-lutram_full_4 := dff
-RC32_AREA_RECIPE_ecp5-block_full_4 := dff
-RC32_AREA_RECIPE_ecp5-lutram_full_8 := dff
-RC32_AREA_RECIPE_ecp5-block_full_8 := dff
-RC32_AREA_RECIPE_ecp5-lutram_full_16 := abc2-dff
-RC32_AREA_RECIPE_ecp5-block_full_16 := abc2-dff
-rc32_area_options = $(AREA_RECIPE_OPTIONS_$(or \
-    $(RC32_AREA_RECIPE_$(1)_$(2)_$(3)),abc2))
-PIPELINE_AREA_OPTIONS_ecp5_fast := -dff
-rc16_area_options = $(or $(RC16_AREA_OPTIONS_$(1)_$(2)), \
-	$(AREA_OPTIONS_$(1)_$(call rc16_implementation,$(2))))
-
-RC16_FMAX_OPTIONS_ecp5_1 := -abc2
-RC16_FMAX_OPTIONS_ecp5_4 := -noccu2 -dff
-RC16_FMAX_OPTIONS_ecp5_8 := -abc9
-RC32_FMAX_RECIPE_ecp5_full_1 := noccu2-dff
-RC32_FMAX_RECIPE_ecp5_full_2 := abc9
-RC32_FMAX_RECIPE_ecp5_full_4 := noccu2-dff
-RC32_FMAX_RECIPE_ecp5_full_8 := abc2
-RC32_FMAX_RECIPE_ecp5_full_16 := abc2-dff
-RC32_FMAX_OPTIONS_default :=
-RC32_FMAX_OPTIONS_dff := -dff
-RC32_FMAX_OPTIONS_abc2 := -abc2
-RC32_FMAX_OPTIONS_abc2-dff := -abc2 -dff
-RC32_FMAX_OPTIONS_abc9 := -abc9
-RC32_FMAX_OPTIONS_noccu2-dff := -noccu2 -dff
-rc32_fmax_options = $(RC32_FMAX_OPTIONS_$(or \
-    $(RC32_FMAX_RECIPE_$(1)_$(2)_$(3)),abc9))
-FAST_FMAX_OPTIONS_ecp5_soft := -abc9
-FAST_FMAX_OPTIONS_ecp5_dsp := -abc2
-FAST_FMAX_PNR_OPTIONS_ecp5_soft := --placer-heap-timingweight 20
-FAST_FMAX_PNR_OPTIONS_ecp5_dsp := --placer-heap-timingweight 25
-FASTER_FMAX_OPTIONS_ecp5 := -abc9
+SERIAL_WIDTH_INDEX_1 := 1
+SERIAL_WIDTH_INDEX_2 := 2
+SERIAL_WIDTH_INDEX_4 := 3
+SERIAL_WIDTH_INDEX_8 := 4
+SERIAL_WIDTH_INDEX_16 := 5
+SERIAL_RECIPES_ecp5-block_16_min := abc2 abc2 abc2-dff dff default
+SERIAL_RECIPES_ecp5-block_16_sys := noccu2-dff dff noccu2-dff dff dff
+SERIAL_RECIPES_ecp5-block_16_full := noccu2 abc2-dff abc2-dff default abc2
+SERIAL_RECIPES_ecp5-block_32_min := noccu2-dff abc2-dff dff noccu2-dff default
+SERIAL_RECIPES_ecp5-block_32_sys := noccu2 abc2-dff dff noccu2 abc2
+SERIAL_RECIPES_ecp5-block_32_full := noccu2 noccu2 default noccu2 default
+SERIAL_RECIPES_ecp5-lutram_16_min := abc2 abc2 abc2 dff default
+SERIAL_RECIPES_ecp5-lutram_16_sys := default abc2 abc2 abc2 dff
+SERIAL_RECIPES_ecp5-lutram_16_full := default abc2-dff abc2 default abc2-dff
+SERIAL_RECIPES_ecp5-lutram_32_min := noccu2 dff dff noccu2 abc2
+SERIAL_RECIPES_ecp5-lutram_32_sys := noccu2 abc2-dff dff noccu2 abc2
+SERIAL_RECIPES_ecp5-lutram_32_full := noccu2-dff noccu2 dff noccu2 default
+serial_recipe = $(word $(SERIAL_WIDTH_INDEX_$(4)),$(SERIAL_RECIPES_$(1)_$(2)_$(3)))
+serial_options = $(AREA_RECIPE_OPTIONS_$(call serial_recipe,$(1),$(2),$(3),$(4)))
+rc16_area_options = $(call serial_options,$(1),16,$(2),$(3))
+rc32_area_options = $(call serial_options,$(1),32,$(2),$(3))
+rc16_fmax_options = $(call rc16_area_options,ecp5-block,$(1),$(2))
+rc32_fmax_options = $(call serial_options,ecp5-block,32,$(2),$(3))
+# Fast: minimum area per RF mapping; timing uses the best median MHz/LUT4
+# across seeds 1–32. Keep the timed recipe separate from minimum-area builds.
+FAST_BLOCK_OPTIONS_fast_soft := -abc2
+FAST_BLOCK_OPTIONS_fast_dsp := -dff
+FAST_BLOCK_OPTIONS_fast32_soft := -abc2
+FAST_BLOCK_OPTIONS_fast32_dsp := -dff
+FAST_LUTRAM_OPTIONS_fast_soft := -abc2
+FAST_LUTRAM_OPTIONS_fast_dsp := -abc2
+FAST_LUTRAM_OPTIONS_fast32_soft := -abc2 -dff
+FAST_LUTRAM_OPTIONS_fast32_dsp := -dff
+FAST_FMAX_OPTIONS_fast_soft := -abc2
+FAST_FMAX_OPTIONS_fast_dsp := -abc9
+FAST_FMAX_OPTIONS_fast32_soft := -abc2
+FAST_FMAX_OPTIONS_fast32_dsp := -abc2 -dff
 
 # Agilex tables consume only generated Quartus results. Published snapshots
 # belong in the hardware documentation, not in build logic.
@@ -115,10 +102,6 @@ AREA_TARGETS := ecp5-block ecp5-lutram
 ECP5_AREA_TARGETS := ecp5-block ecp5-lutram
 AGILEX_FAMILY ?= all
 
-extension_source = rtl/riscc16_full_$(1).v
-rc32_source = rtl/riscc32_$(1).v
-rc32_top = riscc32_$(1)
-
 SYNTH_OPTIONS_ecp5_soft :=
 SYNTH_OPTIONS_ecp5_dsp :=
 
@@ -148,7 +131,7 @@ $(foreach target,$(ECP5_AREA_TARGETS), \
     $(foreach width,$(WIDTHS), \
   $(eval $(call ECP5_LUT_AREA,build/area/$(target)/rc16/$(profile)/$(width).lut, \
     $(RF_DEFINES_$(target)) $(call rc16_source,$(width),$(profile)), \
-    $(call rc16_yosys_width,$(width),$(profile)),$(call rc16_area_options,ecp5,$(width)), \
+    $(call rc16_yosys_width,$(width),$(profile)),$(call rc16_area_options,$(target),$(profile),$(width)), \
     $(call rc16_top,$(width),$(profile)))))))
 
 $(foreach target,$(ECP5_AREA_TARGETS), \
@@ -160,41 +143,36 @@ $(foreach target,$(ECP5_AREA_TARGETS), \
     $(foreach width,$(WIDTHS), \
   $(eval $(call ECP5_LUT_AREA,build/area/$(target)/rc32/$(profile)/$(width).lut, \
     $(RF_DEFINES_$(target)) $(call rc32_source,$(profile)), \
-    chparam -set W $(width) $(call rc32_top,$(profile));, \
+    $(call rc32_yosys_width,$(width),$(profile)), \
     $(call rc32_area_options,$(target),$(profile),$(width)), \
     $(call rc32_top,$(profile)))))))
 
 $(foreach target,$(ECP5_AREA_TARGETS), \
   $(foreach extension,$(EXTENSIONS), \
   $(eval $(call ECP5_LUT_AREA,build/area/$(target)/extension/$(extension).lut, \
-    $(RF_DEFINES_$(target)) $(call extension_source,$(extension)), \
-    ,$(EXTENSION_AREA_OPTIONS_ecp5),riscc16))))
+    $(RF_DEFINES_$(target)) rtl/riscc_wide.v, \
+    $(call wide_yosys_params,16,full,$(EXTENSION_MDU_$(extension))), \
+    $(call extension_area_options,$(extension)),riscc_wide))))
 
-# ECP5_RESOURCE_AREA(output, sources, synthesis_options, top)
+# ECP5_RESOURCE_AREA(output, sources, synthesis_options, top, parameters)
 define ECP5_RESOURCE_AREA
 $(1): $$(AREA_RTL) $(MEASURE_RULES)
 	@mkdir -p $$(@D)
-	@$$(YOSYS) -p "read_verilog $(2); \
-	  synth_ecp5 $(3) $(AREA_OPTIONS_ecp5_serial) \
+	@$$(YOSYS) -p "read_verilog $(2); $(5) \
+	  synth_ecp5 $(3) \
 	  -top $(4) -nowidelut; stat" \
 	  2>/dev/null | awk $$(ECP5_RESOURCE_AWK) > $$@
 endef
 
-$(foreach multiplier,$(MULTIPLIERS), \
-	$(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-lutram/fast/$(multiplier).resources, \
-	  $(call fast_defines,ecp5,$(multiplier)) rtl/riscc16_fast.v, \
-	  $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(PIPELINE_AREA_OPTIONS_ecp5_fast), \
-	  riscc16_fast)) \
-  $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-block/fast/$(multiplier).resources, \
-    $(call fast_defines,ecp5-block,$(multiplier)) rtl/riscc16_fast.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(PIPELINE_AREA_OPTIONS_ecp5_fast), \
-    riscc16_fast)) \
-  $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-lutram/faster/$(multiplier).resources, \
-    -DRISCC_ECP5 $(FASTER_DEFINES_$(multiplier)) rtl/riscc16_faster.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)),riscc16_faster)) \
-  $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-block/faster/$(multiplier).resources, \
-    -DRISCC_FASTER_BLOCK_RF $(FASTER_DEFINES_$(multiplier)) rtl/riscc16_faster.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)),riscc16_faster)))
+$(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+  $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-lutram/$(pipeline)/$(multiplier).resources, \
+    -DRISCC_ECP5 $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_LUTRAM_OPTIONS_$(pipeline)_$(multiplier)),riscc_fast, \
+    $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;))) \
+  $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-block/$(pipeline)/$(multiplier).resources, \
+    -DRISCC_FAST_BLOCK_RF $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_BLOCK_OPTIONS_$(pipeline)_$(multiplier)),riscc_fast, \
+    $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 
 RC16_AREA_RESULTS := $(foreach target,$(AREA_TARGETS),$(foreach profile,$(RC16_PROFILES), \
   $(foreach width,$(WIDTHS),build/area/$(target)/rc16/$(profile)/$(width).lut)))
@@ -264,33 +242,24 @@ area-all: area-lattice $(AGILEX_RESULTS)
 FMAX_TOP := $(RTL_TEST_DIR)/riscc_fmax_top.v
 FMAX_RTL := $(FMAX_TOP) $(AREA_RTL) $(MEASURE_RULES)
 
-FMAX_DEFINES_serial_min := -DRISCC_FMAX_RC16 -DRISCC_FMAX_MIN
-FMAX_DEFINES_serial_sys := -DRISCC_FMAX_RC16
-FMAX_DEFINES_serial_full := -DRISCC_FMAX_RC16
-FMAX_DEFINES_wide_min := -DRISCC_FMAX_RC16_MIN
-FMAX_DEFINES_wide_sys :=
-FMAX_DEFINES_wide_full :=
-FMAX_WIDTH_1 := -DRISCC_FMAX_WIDTH=1
-FMAX_WIDTH_2 := -DRISCC_FMAX_WIDTH=2
-FMAX_WIDTH_4 := -DRISCC_FMAX_WIDTH=4
-FMAX_WIDTH_8 := -DRISCC_FMAX_WIDTH=8
-FMAX_WIDTH_16 :=
-RC32_FMAX_DEFINES_min := -DRISCC_FMAX_RC32_MIN
-RC32_FMAX_DEFINES_sys := -DRISCC_FMAX_RC32_SYS
-RC32_FMAX_DEFINES_full := -DRISCC_FMAX_RC32_FULL
-rc16_fmax_defines = \
-	$(FMAX_DEFINES_$(call rc16_implementation,$(2))_$(1)) $(FMAX_WIDTH_$(2))
+serial_fmax_defines = -DRISCC_FMAX_SERIAL -DRISCC_FMAX_SERIAL_XLEN=$(1) \
+    -DRISCC_FMAX_SERIAL_W=$(3) -DRISCC_FMAX_SERIAL_PROFILE=$(SERIAL_PROFILE_$(2))
+wide_fmax_defines = -DRISCC_FMAX_WIDE -DRISCC_FMAX_WIDE_XLEN=$(1) \
+    -DRISCC_FMAX_WIDE_PROFILE=$(SERIAL_PROFILE_$(2)) -DRISCC_FMAX_WIDE_MDU=$(3)
+rc16_fmax_defines = $(if $(filter 16,$(2)), \
+    $(call wide_fmax_defines,16,$(1),0), \
+    $(call serial_fmax_defines,16,$(1),$(2)))
 FMAX_AWK = '/Max frequency for clock/ { \
 	for (i = 1; i < NF; i++) if ($$(i + 1) == "MHz") value = $$i \
 	} END { print value }'
 
 # ECP5_FMAX(output, definitions_and_source, synthesis_options, target_mhz,
-#           nextpnr_options)
+#           nextpnr_options, parameter_setup)
 define ECP5_FMAX
 $(1): $$(FMAX_RTL)
 	@mkdir -p $$(@D)
 	@$$(YOSYS) -q -p "read_verilog $(2) $$(FMAX_TOP); \
-	  synth_ecp5 $(3) -nowidelut -top riscc_fmax_top \
+	  $(6) synth_ecp5 $(3) -nowidelut -top riscc_fmax_top \
 	  -json $$(@:.mhz=.json)"
 	@$$(NEXTPNR_ECP5) --25k --package CABGA256 --speed 6 \
 	  --lpf-allow-unconstrained --freq $(4) --seed $$(PNR_SEED) \
@@ -303,32 +272,31 @@ $(foreach profile,$(RC16_PROFILES),$(foreach width,$(WIDTHS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/rc16/$(profile)/$(width).mhz, \
     -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF \
     $(call rc16_fmax_defines,$(profile),$(width)) $(call rc16_source,$(width),$(profile)), \
-    $(RC16_FMAX_OPTIONS_ecp5_$(width)),40))))
+    $(call rc16_fmax_options,$(profile),$(width)),40,, \
+    $(call rc16_yosys_width,$(width),$(profile))))))
 
 $(foreach profile,$(RC32_PROFILES),$(foreach width,$(WIDTHS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/rc32/$(profile)/$(width).mhz, \
-    -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF $(RC32_FMAX_DEFINES_$(profile)) \
-    -DRISCC_FMAX_WIDTH=$(width) \
-    $(call rc32_source,$(profile)),$(call rc32_fmax_options,ecp5,$(profile),$(width)),40))))
+    -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF $(call serial_fmax_defines,32,$(profile),$(width)) \
+    $(call rc32_source,$(profile)),$(call rc32_fmax_options,ecp5,$(profile),$(width)),40,, \
+    $(call rc32_yosys_width,$(width),$(profile))))))
 
 $(eval $(call ECP5_FMAX,build/fmax/ecp5/nano.mhz, \
-  -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF -DRISCC_FMAX_NANO rtl/riscc_nano.v,,40))
+  -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF -DRISCC_FMAX_NANO rtl/riscc_nano.v,-abc2,40))
 
 $(foreach extension,$(EXTENSIONS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/extension/$(extension).mhz, \
     -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF \
-    $(call extension_source,$(extension)),,40)))
+    $(call wide_fmax_defines,16,full,$(EXTENSION_MDU_$(extension))) rtl/riscc_wide.v, \
+    $(call extension_area_options,$(extension)),40,, \
+    $(call wide_yosys_params,16,full,$(EXTENSION_MDU_$(extension))))))
 
-$(foreach multiplier,$(MULTIPLIERS), \
-  $(eval $(call ECP5_FMAX,build/fmax/ecp5/fast/$(multiplier).mhz, \
-    -DRISCC_FMAX_FAST $(call fast_defines,ecp5-block,$(multiplier)) \
-    rtl/riscc16_fast.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_ecp5_$(multiplier)),40, \
-    $(FAST_FMAX_PNR_OPTIONS_ecp5_$(multiplier)))) \
-  $(eval $(call ECP5_FMAX,build/fmax/ecp5/faster/$(multiplier).mhz, \
-    -DRISCC_FMAX_FASTER -DRISCC_FASTER_BLOCK_RF \
-    $(FASTER_DEFINES_$(multiplier)) rtl/riscc16_faster.v, \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FASTER_FMAX_OPTIONS_ecp5),40)))
+$(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+  $(eval $(call ECP5_FMAX,build/fmax/ecp5/$(pipeline)/$(multiplier).mhz, \
+    -DRISCC_FMAX_$(if $(filter fast32,$(pipeline)),FAST32,FAST) -DRISCC_FAST_BLOCK_RF \
+    $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_$(pipeline)_$(multiplier)),40,, \
+    $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 
 RC16_FMAX_RESULTS := $(foreach profile,$(RC16_PROFILES), \
   $(foreach width,$(WIDTHS),build/fmax/ecp5/rc16/$(profile)/$(width).mhz))
@@ -385,7 +353,7 @@ tables-lattice:
 	+$(MAKE) --no-print-directory bench
 
 .PHONY: check-regressions
-check-regressions: $(BENCH_BIN) $(NANO_BENCH_BIN) $(REGRESSION_TBS) \
+check-regressions: $(BENCH_BIN) $(NANO_BENCH_BIN) build/bin/bench-rc32.bin $(REGRESSION_TBS) \
 		$(REGRESSION_PPA) compiler-libc-size \
 		$(REGRESSION_LIMITS) $(REGRESSION_CHECK)
 	$(PYTHON) $(REGRESSION_CHECK) $(REGRESSION_LIMITS)

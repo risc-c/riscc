@@ -1,6 +1,6 @@
 # RISC-C Instruction Set Architecture
 
-RISC-C is an open ISA for compact systems that need a compact controller.
+RISC-C is an open ISA for systems that need a compact controller.
 
 This document is the RISC-C ISA specification. It defines the architectural
 state, instruction encodings and semantics, memory-access rules, interrupt

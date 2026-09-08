@@ -72,7 +72,7 @@ module icepi_zero_soc #(
             $readmemh(MEM_HEX, ram);
     end
 
-    riscc16_fast cpu (
+    riscc_fast cpu (
         .clk(clk),
         .rst(rst),
         .irq(cpu_irq),

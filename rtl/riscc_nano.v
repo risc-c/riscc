@@ -116,7 +116,13 @@ module riscc_nano #(
     wire byte_access = register_memory_op & f5[1];
     // The memory stream is ignored on stores, so the byte decode need not
     // distinguish loads here.
-    wire mem_bit_index_hi = byte_access ? addr_q[0] : bit_idx_q[3];
+    // The held memory word is the instruction until a data read replaces it.
+    // Share its bit selector between immediates/branches and load writeback.
+    // LUI consumes the instruction's low byte during the upper serial half;
+    // other immediates obtain that half from their sign-extension logic.
+    wire lui_op = immediate_group & (aaa == 3'b001);
+    wire mem_bit_index_hi = byte_access ? addr_q[0] :
+                           (bit_idx_q[3] & ~lui_op);
     wire mem_data_bit = mem_rdata[{mem_bit_index_hi, bit_idx_q[2:0]}];
     // Nano byte loads are unsigned, so the streamed upper byte is zero.
     wire mem_stream_bit = mem_data_bit &
@@ -171,14 +177,12 @@ module riscc_nano #(
     // ------------------------------------------------------------------
     // Immediate stream
     // ------------------------------------------------------------------
-    wire [3:0] imm_low_idx = {1'b0, bit_idx_q[2:0]};
     wire sign_extend_imm = imm_mem_group |
                            (immediate_group & (aaa == 3'b010)) | branch_group;
-    wire lui_op = immediate_group & (aaa == 3'b001);
     wire imm_stream_bit =
-        lui_op ? (bit_idx_q[3] ? instr_q[imm_low_idx] : 1'b0) :
+        lui_op ? (bit_idx_q[3] ? mem_data_bit : 1'b0) :
         bit_idx_q[3] ? (sign_extend_imm & instr_q[7]) :
-        instr_q[imm_low_idx];
+        mem_data_bit;
 
     // ------------------------------------------------------------------
     // Bit-serial ALU
@@ -212,7 +216,7 @@ module riscc_nano #(
     // 7:1 followed by its sign in bit zero. The forced two-byte step masks
     // that low sign copy, while high serial bits repeat it directly.
     wire branch_offset_bit = bit_idx_q[3] ?
-        instr_q[0] : instr_q[imm_low_idx];
+        instr_q[0] : mem_data_bit;
     wire pc_offset_bit = first_bit ? 1'b1 :
         (use_pc_offset & branch_offset_bit);
     wire [1:0] pc_sum = {1'b0, pc_q[0]} + {1'b0, pc_offset_bit} +
@@ -230,12 +234,15 @@ module riscc_nano #(
     wire writes_rd = immediate_write_op | register_alu_op | right_shift_op | call_op;
     // Loads stream directly into the RF during MEM_XFER. Store-side data is
     // don't-care because rf_we remains low.
+    wire alu_write_op = immediate_write_op | (register_alu_op & ~sltu_op);
+    // Writeback classes are mutually exclusive. Select their results in
+    // parallel; the write enable supplies the serial-phase qualification.
     assign rf_wdata =
-        in_mem_xfer ? mem_stream_bit :
-        call_op ? link_pc_bit :
-        right_shift_op ? shift_result_bit :
-        sltu_op ? (first_bit & sltu_result) :
-        alu_result_bit;
+        (load_op & mem_stream_bit) |
+        (call_op & link_pc_bit) |
+        (right_shift_op & shift_result_bit) |
+        (sltu_op & first_bit & sltu_result) |
+        (alu_write_op & alu_result_bit);
     assign rf_we = (in_execute & writes_rd) | (in_mem_xfer & load_op);
     wire writes_r0 = rf_we & (dest_reg_idx == 3'd0);
 

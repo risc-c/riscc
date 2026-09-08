@@ -126,6 +126,18 @@ cover_jmp8:
         FSL1    r4, r3
         FSR1    r4, r3
 
+.ifdef RISCC_MULHU
+        LDI     r3, 0x12
+        LDI     r4, 0x43
+        MULHU   r5, r3, r4
+.endif
+.ifdef RISCC_DIVU
+        LDI     r5, 1
+        LDI     r4, 0x23
+        LDI     r3, 0x12
+        DIVU    r5, r4, r3
+.endif
+
         ; Register and long control plus the S-bank moves.
         MTS     S4, r3
         MFS     r4, S4

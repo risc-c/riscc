@@ -1,6 +1,6 @@
 // Shared black-box Verilator testbench for the whole RISC-C core family
 // (rc16-1/2/4/8/16, nano): build any core against it with the corresponding
-// top module (riscc_min, riscc16, riscc_nano, or another renamed RTL top).
+// top module (riscc_serial, riscc_wide, riscc_nano, or another renamed RTL top).
 // so every top compiles into the same Vriscc class.  Drives only the
 // architectural memory/irq interface -- no internal signals.
 //

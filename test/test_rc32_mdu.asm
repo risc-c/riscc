@@ -1,5 +1,4 @@
-; Self-checking ISS test for the optional compact RC32 MDU instructions.
-; No current RC32 RTL core implements this extension.
+; Self-checking test for the optional compact RC32 MDU instructions.
 
 .macro LIT reg, literal
         LDPC    \reg, \literal

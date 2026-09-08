@@ -38,56 +38,80 @@ def project_specs(root: Path, family: str):
     top = root / "rtl/test/riscc_fmax_top.v"
     specs = []
     if family in ("rc16", "all"):
-        for profile, rtl, profile_macro in (
-            ("min", root / "rtl/riscc_min.v", "RISCC_FMAX_MIN"),
-            ("sys", root / "rtl/riscc_sys.v", None),
-            ("full", root / "rtl/riscc_full.v", None),
-        ):
+        rtl = root / "rtl/riscc_serial.v"
+        for profile, profile_value in (("min", 0), ("sys", 1), ("full", 2)):
             for width in (1, 2, 4, 8):
-                macros = ["RISCC_FMAX_RC16", f"RISCC_FMAX_WIDTH={width}"]
-                if profile_macro:
-                    macros.append(profile_macro)
+                macros = [
+                    "RISCC_FMAX_SERIAL",
+                    "RISCC_FMAX_SERIAL_XLEN=16",
+                    f"RISCC_FMAX_SERIAL_W={width}",
+                    f"RISCC_FMAX_SERIAL_PROFILE={profile_value}",
+                ]
                 specs.append(
                     (f"{profile}{width}", profile, width, rtl, macros, top))
         specs.extend(
             (
-                ("min16", "min", 16, root / "rtl/riscc16_min.v",
-                 ["RISCC_FMAX_RC16_MIN"], top),
-                ("sys16", "sys", 16, root / "rtl/riscc16_sys.v",
-                 [], top),
-                ("full16", "full", 16, root / "rtl/riscc16_full.v",
-                 [], top),
+                ("min16", "min", 16, root / "rtl/riscc_wide.v",
+                 ["RISCC_FMAX_WIDE", "RISCC_FMAX_WIDE_XLEN=16",
+                  "RISCC_FMAX_WIDE_PROFILE=0", "RISCC_FMAX_WIDE_MDU=0"], top),
+                ("sys16", "sys", 16, root / "rtl/riscc_wide.v",
+                 ["RISCC_FMAX_WIDE", "RISCC_FMAX_WIDE_XLEN=16",
+                  "RISCC_FMAX_WIDE_PROFILE=1", "RISCC_FMAX_WIDE_MDU=0"], top),
+                ("full16", "full", 16, root / "rtl/riscc_wide.v",
+                 ["RISCC_FMAX_WIDE", "RISCC_FMAX_WIDE_XLEN=16",
+                  "RISCC_FMAX_WIDE_PROFILE=2", "RISCC_FMAX_WIDE_MDU=0"], top),
                 ("nano", "nano", 1, root / "rtl/riscc_nano.v",
                  ["RISCC_FMAX_NANO"], top),
             )
         )
     if family in ("rc32", "all"):
-        for profile, rtl, macro in (
-            ("rc32min", root / "rtl/riscc32_min.v", "RISCC_FMAX_RC32_MIN"),
-            ("rc32sys", root / "rtl/riscc32_sys.v", "RISCC_FMAX_RC32_SYS"),
-            ("rc32full", root / "rtl/riscc32_full.v", "RISCC_FMAX_RC32_FULL"),
-        ):
+        rtl = root / "rtl/riscc_serial.v"
+        for profile, profile_value in (("rc32min", 0), ("rc32sys", 1),
+                                       ("rc32full", 2)):
             for width in (1, 2, 4, 8, 16):
+                macros = [
+                    "RISCC_FMAX_SERIAL",
+                    "RISCC_FMAX_SERIAL_XLEN=32",
+                    f"RISCC_FMAX_SERIAL_W={width}",
+                    f"RISCC_FMAX_SERIAL_PROFILE={profile_value}",
+                ]
                 specs.append((
-                    f"{profile}{width}", profile, width, rtl,
-                    [macro, f"RISCC_FMAX_WIDTH={width}"], top,
+                    f"{profile}{width}", profile, width, rtl, macros, top,
+                ))
+    if family == "wide":
+        rtl = root / "rtl/riscc_wide.v"
+        profiles = (("min", 0, 0), ("sys", 1, 0), ("full", 2, 0),
+                    ("mulh", 2, 1), ("muldiv", 2, 2))
+        for xlen in (16, 32):
+            for profile, profile_value, mdu in profiles:
+                macros = [
+                    "RISCC_FMAX_WIDE",
+                    f"RISCC_FMAX_WIDE_XLEN={xlen}",
+                    f"RISCC_FMAX_WIDE_PROFILE={profile_value}",
+                    f"RISCC_FMAX_WIDE_MDU={mdu}",
+                ]
+                specs.append((
+                    f"wide{xlen}-{profile}", profile, xlen, rtl, macros, top,
                 ))
     if family in ("other", "all"):
         specs.extend((
-            ("mulh16", "mulh", 16, root / "rtl/riscc16_full_mulh.v",
-             [], top),
+            ("mulh16", "mulh", 16, root / "rtl/riscc_wide.v",
+             ["RISCC_FMAX_WIDE", "RISCC_FMAX_WIDE_XLEN=16",
+              "RISCC_FMAX_WIDE_PROFILE=2", "RISCC_FMAX_WIDE_MDU=1"], top),
             ("muldiv16", "muldiv", 16,
-             root / "rtl/riscc16_full_muldiv.v", [], top),
-            ("fast_soft", "fast_soft", 16, root / "rtl/riscc16_fast.v",
-             ["RISCC_FMAX_FAST", "RISCC_FAST_AGILEX"], top),
-            ("fast_dsp", "fast_dsp", 16, root / "rtl/riscc16_fast.v",
-             ["RISCC_FMAX_FAST", "RISCC_FAST_AGILEX", "RISCC_FAST_DSP"],
-             top),
-            ("faster_dsp", "faster_dsp", 16,
-             root / "rtl/riscc16_faster.v", ["RISCC_FMAX_FASTER"], top),
-            ("faster_soft", "faster_soft", 16,
-             root / "rtl/riscc16_faster.v",
-             ["RISCC_FMAX_FASTER", "RISCC_FASTER_SOFT_MUL"], top),
+             root / "rtl/riscc_wide.v",
+             ["RISCC_FMAX_WIDE", "RISCC_FMAX_WIDE_XLEN=16",
+              "RISCC_FMAX_WIDE_PROFILE=2", "RISCC_FMAX_WIDE_MDU=2"], top),
+            ("fast_dsp", "fast_dsp", 16,
+             root / "rtl/riscc_fast.v", ["RISCC_FMAX_FAST"], top),
+            ("fast_soft", "fast_soft", 16,
+             root / "rtl/riscc_fast.v",
+             ["RISCC_FMAX_FAST", "RISCC_FAST_SOFT_MUL"], top),
+            ("fast32_dsp", "fast32_dsp", 32,
+             root / "rtl/riscc_fast.v", ["RISCC_FMAX_FAST32"], top),
+            ("fast32_soft", "fast32_soft", 32,
+             root / "rtl/riscc_fast.v",
+             ["RISCC_FMAX_FAST32", "RISCC_FAST_SOFT_MUL"], top),
         ))
     return specs
 
@@ -187,7 +211,8 @@ def main():
         help=("independent Quartus projects to compile concurrently; "
               "0 selects one project per two --jobs threads, capped by "
               "available memory"))
-    parser.add_argument("--family", choices=("rc16", "rc32", "other", "all"),
+    parser.add_argument("--family",
+                        choices=("rc16", "rc32", "wide", "other", "all"),
                         default="rc16")
     parser.add_argument("--only", action="append", default=[], metavar="NAME",
                         help="characterize only this configuration (repeatable)")

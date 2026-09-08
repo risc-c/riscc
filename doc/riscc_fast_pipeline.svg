@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1080" viewBox="0 0 1100 1080"
+     role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C Fast pipeline</title>
+  <desc id="desc">Three stages: Fetch, Decode with a synchronous register file, and Execute with commit. Writeback supplies dependent reads. Fetch and Execute share a 16-bit memory port, with Execute taking priority. Independent ALU instructions advance one stage per clock. Execute holds shifts and multiplication until completion; fabric multiplication also uses a LONG state for JALL. IRQ entry waits for complete instructions and memory transfers.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#26364f"/>
+    </marker>
+    <marker id="control-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9a621d"/>
+    </marker>
+    <marker id="memory-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6954a3"/>
+    </marker>
+    <style>
+      .page { fill: #fbfcfe; }
+      .panel { fill: #ffffff; stroke: #d5dde8; stroke-width: 1.5; }
+      .stage { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 2; }
+      .group { fill: #f7fbff; stroke: #b6d0e5; stroke-width: 1.5; }
+      .rf { fill: #edf8ef; stroke: #2f7d49; stroke-width: 2; }
+      .memory { fill: #f0edff; stroke: #6954a3; stroke-width: 2; }
+      .run { fill: #fff3df; stroke: #a26318; stroke-width: 2; }
+      .side { fill: #fffaf1; stroke: #a26318; stroke-width: 1.5; }
+      .active-if { fill: #eaf4ff; stroke: #2f6fa3; stroke-width: 1.4; }
+      .active-d { fill: #edf8ef; stroke: #2f7d49; stroke-width: 1.4; }
+      .active-x { fill: #fff3df; stroke: #a26318; stroke-width: 1.4; }
+      .title { font-family: sans-serif; font-size: 27px; font-weight: 700; fill: #172033; }
+      .subtitle { font-family: sans-serif; font-size: 15px; fill: #4a5568; }
+      .panel-title { font-family: sans-serif; font-size: 18px; font-weight: 700; fill: #172033; }
+      .stage-title { font-family: sans-serif; font-size: 18px; font-weight: 700; fill: #183b5b; }
+      .rf-title { font-family: sans-serif; font-size: 17px; font-weight: 700; fill: #245d37; }
+      .state-title { font-family: sans-serif; font-size: 17px; font-weight: 700; fill: #70420d; }
+      .body { font-family: sans-serif; font-size: 14px; fill: #2d3748; }
+      .small { font-family: sans-serif; font-size: 14px; fill: #4a5568; }
+      .flow { fill: none; stroke: #26364f; stroke-width: 2; marker-end: url(#arrow); }
+      .control { fill: none; stroke: #9a621d; stroke-width: 1.8; stroke-dasharray: 6 5; marker-end: url(#control-arrow); }
+      .writeback { fill: none; stroke: #a26318; stroke-width: 1.8; marker-end: url(#control-arrow); }
+      .memory-flow { fill: none; stroke: #6954a3; stroke-width: 2; marker-end: url(#memory-arrow); }
+      .dispatch { fill: none; stroke: #a26318; stroke-width: 1.7; marker-end: url(#control-arrow); }
+      .bus { fill: none; stroke: #a26318; stroke-width: 1.7; }
+      .grid { stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+  <rect class="page" width="1100" height="1080"/>
+  <text class="title" x="40" y="44" text-anchor="start">RISC-C Fast pipeline</text>
+  <text class="subtitle" x="40" y="73" text-anchor="start">RC16 / RC32 Full · XLEN = 16 or 32</text>
+  <rect class="panel" x="30" y="95" width="1040" height="445" rx="12"/>
+  <text class="panel-title" x="55" y="125" text-anchor="start">Fetch → Decode / RF → Execute</text>
+  <text class="small" x="810" y="143" text-anchor="middle">writeback / bypass</text>
+  <rect class="group" x="280" y="180" width="530" height="185" rx="10"/>
+  <text class="stage-title" x="300" y="205" text-anchor="start">Decode / RF stage</text>
+  <rect class="stage" x="65" y="225" width="160" height="120" rx="9"/>
+  <text class="stage-title" x="145.0" y="251" text-anchor="middle">Fetch</text>
+  <text class="body" x="145.0" y="278" text-anchor="middle">PC · instruction</text>
+  <rect class="stage" x="300" y="225" width="200" height="120" rx="9"/>
+  <text class="stage-title" x="400.0" y="251" text-anchor="middle">Decode</text>
+  <text class="body" x="400.0" y="278" text-anchor="middle">opcode · registers</text>
+  <text class="body" x="400.0" y="301" text-anchor="middle">control · PC</text>
+  <rect class="rf" x="560" y="225" width="230" height="120" rx="9"/>
+  <text class="rf-title" x="675.0" y="251" text-anchor="middle">Register file</text>
+  <text class="body" x="675.0" y="278" text-anchor="middle">2 reads · 1 write</text>
+  <text class="body" x="675.0" y="301" text-anchor="middle">2 × 16 × XLEN</text>
+  <text class="body" x="675.0" y="325" text-anchor="middle">synchronous</text>
+  <rect class="stage" x="860" y="225" width="180" height="120" rx="9"/>
+  <text class="stage-title" x="950.0" y="251" text-anchor="middle">Execute</text>
+  <text class="body" x="950.0" y="278" text-anchor="middle">ALU · branch</text>
+  <text class="body" x="950.0" y="301" text-anchor="middle">memory · commit</text>
+  <path class="writeback" d="M 950 225 V 155 H 675 V 225"/>
+  <path class="flow" d="M 225 285 H 300"/>
+  <text class="small" x="262.5" y="272" text-anchor="middle">instruction</text>
+  <path class="flow" d="M 500 285 H 560"/>
+  <text class="small" x="530.0" y="272" text-anchor="middle">addr</text>
+  <path class="flow" d="M 790 285 H 860"/>
+  <text class="small" x="825.0" y="272" text-anchor="middle">data</text>
+  <rect class="memory" x="335" y="432" width="430" height="85" rx="9"/>
+  <text class="stage-title" x="550" y="462" text-anchor="middle">Unified memory</text>
+  <text class="body" x="550" y="488" text-anchor="middle">16-bit port · Execute has priority</text>
+  <path class="memory-flow" d="M 145 345 V 474 H 335"/>
+  <text class="small" x="233" y="461" text-anchor="middle">fetch request</text>
+  <path class="memory-flow" d="M 450 432 V 345"/>
+  <text class="small" x="464" y="397" text-anchor="start">fetch reply</text>
+  <path class="memory-flow" d="M 950 345 V 474 H 765" marker-start="url(#memory-arrow)"/>
+  <text class="small" x="862" y="461" text-anchor="middle">data / target</text>
+  <rect class="panel" x="30" y="560" width="1040" height="220" rx="12"/>
+  <text class="panel-title" x="55" y="591" text-anchor="start">Steady-state timing</text>
+  <text class="subtitle" x="1045" y="591" text-anchor="end">Independent ALU instructions</text>
+  <line class="grid" x1="220" y1="605" x2="220" y2="746"/>
+  <line class="grid" x1="410" y1="605" x2="410" y2="746"/>
+  <line class="grid" x1="600" y1="605" x2="600" y2="746"/>
+  <line class="grid" x1="790" y1="605" x2="790" y2="746"/>
+  <line class="grid" x1="980" y1="605" x2="980" y2="746"/>
+  <text class="body" x="315" y="625" text-anchor="middle">cycle 1</text>
+  <text class="body" x="505" y="625" text-anchor="middle">cycle 2</text>
+  <text class="body" x="695" y="625" text-anchor="middle">cycle 3</text>
+  <text class="body" x="885" y="625" text-anchor="middle">cycle 4</text>
+  <text class="body" x="75" y="662" text-anchor="start">Fetch</text>
+  <rect class="active-if" x="235" y="642" width="160" height="28" rx="5"/>
+  <text class="body" x="315" y="662" text-anchor="middle">I1</text>
+  <rect class="active-if" x="425" y="642" width="160" height="28" rx="5"/>
+  <text class="body" x="505" y="662" text-anchor="middle">I2</text>
+  <rect class="active-if" x="615" y="642" width="160" height="28" rx="5"/>
+  <text class="body" x="695" y="662" text-anchor="middle">I3</text>
+  <rect class="active-if" x="805" y="642" width="160" height="28" rx="5"/>
+  <text class="body" x="885" y="662" text-anchor="middle">I4</text>
+  <text class="body" x="75" y="702" text-anchor="start">Decode / RF</text>
+  <rect class="active-d" x="425" y="682" width="160" height="28" rx="5"/>
+  <text class="body" x="505" y="702" text-anchor="middle">I1</text>
+  <rect class="active-d" x="615" y="682" width="160" height="28" rx="5"/>
+  <text class="body" x="695" y="702" text-anchor="middle">I2</text>
+  <rect class="active-d" x="805" y="682" width="160" height="28" rx="5"/>
+  <text class="body" x="885" y="702" text-anchor="middle">I3</text>
+  <text class="body" x="75" y="742" text-anchor="start">Execute</text>
+  <rect class="active-x" x="615" y="722" width="160" height="28" rx="5"/>
+  <text class="body" x="695" y="742" text-anchor="middle">I1</text>
+  <rect class="active-x" x="805" y="722" width="160" height="28" rx="5"/>
+  <text class="body" x="885" y="742" text-anchor="middle">I2</text>
+  <text class="small" x="550" y="767" text-anchor="middle">One instruction per clock once the pipeline is filled.</text>
+  <rect class="panel" x="30" y="800" width="1040" height="260" rx="12"/>
+  <text class="panel-title" x="55" y="832" text-anchor="start">Execute states</text>
+  <text class="subtitle" x="1045" y="832" text-anchor="end">Side states hold the instruction until completion</text>
+  <rect class="run" x="450" y="860" width="200" height="62" rx="9"/>
+  <text class="state-title" x="550" y="887" text-anchor="middle">RUN</text>
+  <text class="small" x="550" y="909" text-anchor="middle">commit or dispatch</text>
+  <path class="bus" d="M 550 922 V 945 M 245 945 H 855"/>
+  <path class="dispatch" d="M 245 945 V 970"/>
+  <rect class="side" x="135" y="970" width="220" height="65" rx="9"/>
+  <text class="state-title" x="245" y="997" text-anchor="middle">SHIFT</text>
+  <text class="small" x="245" y="1022" text-anchor="middle">repeat → commit</text>
+  <path class="dispatch" d="M 550 945 V 970"/>
+  <rect class="side" x="440" y="970" width="220" height="65" rx="9"/>
+  <text class="state-title" x="550" y="997" text-anchor="middle">MUL</text>
+  <text class="small" x="550" y="1022" text-anchor="middle">DSP or XLEN/2 steps</text>
+  <path class="dispatch" d="M 855 945 V 970"/>
+  <rect class="side" x="745" y="970" width="220" height="65" rx="9"/>
+  <text class="state-title" x="855" y="997" text-anchor="middle">LONG</text>
+  <text class="small" x="855" y="1022" text-anchor="middle">fabric JALL target</text>
+</svg>

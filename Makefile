@@ -6,19 +6,19 @@ RC32_PROFILES := min sys full
 WIDTHS := 1 2 4 8 16
 TEST_MODES := native ecp5-lutram ecp5-block
 EXTENSIONS := mulh muldiv
-FAST_MEMORIES := async ecp5 ecp5-block agilex
-FASTER_MEMORIES := ecp5-block agilex
+FAST_MEMORIES := ecp5-block agilex
 MULTIPLIERS := soft dsp
-PIPELINES := fast faster
+PIPELINES := fast fast32
 OPT_LEVELS := o0 o2 os
 BENCH_OPT_LEVELS := o2 os
 
 PROFILE ?= full
 WIDTH ?= 16
+XLEN ?= 16
 MODE ?= native
 EXTENSION ?= muldiv
-MEMORY ?= async
-MULTIPLIER ?= soft
+MEMORY ?= ecp5-block
+MULTIPLIER ?= dsp
 
 PYTHON ?= python3
 PYTHONDONTWRITEBYTECODE ?= 1
@@ -87,40 +87,25 @@ space := $(empty) $(empty)
 comma := ,
 join_with_commas = $(subst $(space),$(comma),$(strip $(1)))
 
-# The /16 cores are separate modules; narrower cores share a serial module.
-RC16_MODULE_PREFIX_1 := riscc
-RC16_MODULE_PREFIX_2 := riscc
-RC16_MODULE_PREFIX_4 := riscc
-RC16_MODULE_PREFIX_8 := riscc
-RC16_MODULE_PREFIX_16 := riscc16
+# RC16 /16 uses the wide core; narrower RC16 and RC32 /1-/16 use slices.
+# Verilator and Yosys share the same numeric profile and extension values.
+SERIAL_PROFILE_min := 0
+SERIAL_PROFILE_sys := 1
+SERIAL_PROFILE_full := 2
+EXTENSION_MDU_mulh := 1
+EXTENSION_MDU_muldiv := 2
 
-RC16_IMPLEMENTATION_1 := serial
-RC16_IMPLEMENTATION_2 := serial
-RC16_IMPLEMENTATION_4 := serial
-RC16_IMPLEMENTATION_8 := serial
-RC16_IMPLEMENTATION_16 := wide
+wide_verilator_params = -GXLEN=$(1) -GPROFILE=$(SERIAL_PROFILE_$(2)) -GMDU=$(3)
+wide_yosys_params = chparam -set XLEN $(1) riscc_wide; chparam -set PROFILE $(SERIAL_PROFILE_$(2)) riscc_wide; chparam -set MDU $(3) riscc_wide;
+rc16_source = $(if $(filter 16,$(1)),rtl/riscc_wide.v,rtl/riscc_serial.v)
+rc16_top = $(if $(filter 16,$(1)),riscc_wide,riscc_serial)
+rc16_verilator_width = $(if $(filter 16,$(1)),$(call wide_verilator_params,16,$(2),0),-GXLEN=16 -GW=$(1) -GPROFILE=$(SERIAL_PROFILE_$(2)))
+rc16_yosys_width = $(if $(filter 16,$(1)),$(call wide_yosys_params,16,$(2),0),chparam -set XLEN 16 riscc_serial; chparam -set W $(1) riscc_serial; chparam -set PROFILE $(SERIAL_PROFILE_$(2)) riscc_serial;)
 
-RC16_TOP_SUFFIX_min := _min
-RC16_TOP_SUFFIX_sys :=
-RC16_TOP_SUFFIX_full :=
-
-RC16_VERILATOR_WIDTH_1 := -GW=1
-RC16_VERILATOR_WIDTH_2 := -GW=2
-RC16_VERILATOR_WIDTH_4 := -GW=4
-RC16_VERILATOR_WIDTH_8 := -GW=8
-RC16_VERILATOR_WIDTH_16 :=
-
-RC16_YOSYS_WIDTH_1 = chparam -set W 1 $(call rc16_top,1,$(1));
-RC16_YOSYS_WIDTH_2 = chparam -set W 2 $(call rc16_top,2,$(1));
-RC16_YOSYS_WIDTH_4 = chparam -set W 4 $(call rc16_top,4,$(1));
-RC16_YOSYS_WIDTH_8 = chparam -set W 8 $(call rc16_top,8,$(1));
-RC16_YOSYS_WIDTH_16 :=
-
-rc16_implementation = $(RC16_IMPLEMENTATION_$(1))
-rc16_source = rtl/$(RC16_MODULE_PREFIX_$(1))_$(2).v
-rc16_top = $(RC16_MODULE_PREFIX_$(1))$(RC16_TOP_SUFFIX_$(2))
-rc16_verilator_width = $(RC16_VERILATOR_WIDTH_$(1))
-rc16_yosys_width = $(call RC16_YOSYS_WIDTH_$(1),$(2))
+rc32_source = rtl/riscc_serial.v
+rc32_top = riscc_serial
+rc32_verilator_width = -GXLEN=32 -GW=$(1) -GPROFILE=$(SERIAL_PROFILE_$(2))
+rc32_yosys_width = chparam -set XLEN 32 riscc_serial; chparam -set W $(1) riscc_serial; chparam -set PROFILE $(SERIAL_PROFILE_$(2)) riscc_serial;
 
 SIM_FLAGS_min := --min
 SIM_FLAGS_sys :=
@@ -136,19 +121,13 @@ RF_DEFINES_native :=
 RF_DEFINES_ecp5-lutram := -DRISCC_ECP5
 RF_DEFINES_ecp5-block := -DRISCC_ECP5 -DRISCC_ECP5_BLOCK_RF
 
-MEMORY_DEFINES_async :=
-MEMORY_DEFINES_ecp5 := -DRISCC_ECP5
-MEMORY_DEFINES_ecp5-block := -DRISCC_FAST_SYNC_RF
-MEMORY_DEFINES_agilex := -DRISCC_FAST_AGILEX
-FASTER_MEMORY_DEFINES_ecp5-block := -DRISCC_FASTER_BLOCK_RF
-FASTER_MEMORY_DEFINES_agilex :=
-MULTIPLIER_DEFINES_soft :=
-MULTIPLIER_DEFINES_dsp := -DRISCC_FAST_DSP
-fast_defines = $(MEMORY_DEFINES_$(1)) $(MULTIPLIER_DEFINES_$(2))
-
+FAST_MEMORY_DEFINES_ecp5-block := -DRISCC_FAST_BLOCK_RF
+FAST_MEMORY_DEFINES_agilex :=
 include mk/toolchain.mk
 include mk/firmware.mk
 include mk/rtl.mk
+include mk/serial.mk
+include mk/wide.mk
 include mk/boards.mk
 include mk/measure.mk
 include mk/compiler-tests.mk
@@ -178,12 +157,17 @@ help:
 	  '  test                        test PROFILE, WIDTH, and MODE' \
 	  '  test-core                   same as test' \
 	  '  test-cores                  test all RC16 profiles and widths' \
+	  '  test-serial                 test parameterized XLEN, W, PROFILE, MODE' \
+	  '  test-serial-all             test all parameterized serial configurations' \
+	  '  test-wide                   test full-width XLEN, PROFILE, MDU, MODE' \
+	  '  test-wide-all               test all ten full-width configurations' \
+	  '  test-wide-irq-all           sweep interrupts across full-width instructions' \
 	  '  test-extension              test EXTENSION and MODE' \
 	  '  test-extensions             test all arithmetic extensions' \
 	  '  test-nano                   test Nano' \
-	  '  test-fast                   test MEMORY and MULTIPLIER' \
+	  '  test-fast                   test XLEN, MEMORY and MULTIPLIER' \
 	  '  test-fast-all               test all fast-core variants' \
-	  '  test-faster                 test Faster ECP5/Agilex RF variants' \
+	  '  test-fast-irq-all           sweep IRQ timing across all Fast variants' \
 	  '  test-funnel                 test interrupt funneling' \
 	  '  test-peripherals            test timer and interrupt peripherals' \
 	  '  test-rc32                   test and fuzz RC32 Min, Sys, and Full' \
@@ -195,14 +179,16 @@ help:
 	  '  test-all                    run all deterministic correctness tests' \
 	  '  fuzz                        fuzz RC16 and Nano' \
 	  '  fuzz-rc32                   fuzz RC32' \
-	  '  fuzz-fast                   fuzz fast cores' \
-	  '  fuzz-faster                 final-state fuzz Faster cores' \
+	  '  fuzz-serial / fuzz-serial32  fuzz parameterized RC16 / RC32' \
+	  '  fuzz-wide / fuzz-wide32      fuzz full-width RC16 / RC32, including MDU' \
+	  '  fuzz-fast / fuzz-fast32     fuzz RC16 / RC32 Fast' \
 	  '  fuzz-all                    run all fuzz campaigns' \
 	  '  trace                       trace PROFILE and WIDTH' \
 	  '  trace-nano                  trace Nano' \
 	  '  trace-rc32                  trace RC32 PROFILE and WIDTH' \
-	  '  trace-fast                  trace MEMORY and MULTIPLIER' \
-	  '  bench                       run core benchmarks' \
+	  '  bench                       run RC16 core benchmarks' \
+	  '  bench-fast32                run the RC32 copy/dot-product benchmark' \
+	  '  bench-serial                run parameterized RC16 Full benchmarks' \
 	  '  check-regressions           enforce size/cycle/ECP5 PPA limits' \
 	  '' \
 	  'Compiler and libraries' \
@@ -236,6 +222,7 @@ help:
 	  '  fmax-all                    all Fmax tables' \
 	  '  characterize-agilex         characterize AGILEX_FAMILY' \
 	  '  tables-lattice              tuned Lattice area, Fmax, and benchmarks' \
+	  '  tables-serial               ECP5 sweep of parameterized serial cores' \
 	  '  tables                      all FPGA tables and benchmarks' \
 	  '' \
 	  'Boards' \
@@ -259,10 +246,11 @@ help:
 	  'Selections' \
 	  '  PROFILE=nano|min|sys|full   default: full' \
 	  '  WIDTH=1|2|4|8|16           default: 16' \
+	  '  XLEN=16|32 MDU=0|1|2       full-width core: base / MULHU / MULHU+DIVU' \
 	  '  MODE=native|ecp5-lutram|ecp5-block' \
 	  '  EXTENSION=mulh|muldiv       default: muldiv' \
-	  '  MEMORY=async|ecp5|ecp5-block|agilex' \
-	  '  MULTIPLIER=soft|dsp         default: soft' \
+	  '  MEMORY=ecp5-block|agilex' \
+	  '  MULTIPLIER=soft|dsp         default: dsp' \
 	  '  TUNE_SEEDS=N                seeds searched by tables-lattice (default: 1)' \
 	  '  QUARTUS_SH=/path/quartus_sh required for Agilex targets'
 

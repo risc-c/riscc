@@ -18,10 +18,10 @@ OTHER_ROWS = (
     ("nano", "nano", 1),
     ("full paired MulH /16", "mulh", 16),
     ("full paired MulDiv /16", "muldiv", 16),
+    ("fast DSP (default)", "fast_dsp", 16),
     ("fast soft", "fast_soft", 16),
-    ("fast DSP", "fast_dsp", 16),
-    ("faster DSP (default)", "faster_dsp", 16),
-    ("faster soft", "faster_soft", 16),
+    ("fast32 DSP", "fast32_dsp", 32),
+    ("fast32 soft", "fast32_soft", 32),
 )
 
 
