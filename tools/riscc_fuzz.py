@@ -1600,7 +1600,7 @@ def compare_final_state(core, family, config, seed, image, tb):
 
 
 def build_tb(core, family, config, outdir):
-    if family != "fast" and not core.startswith("fast32-") and not trace_supported(family, core):
+    if family != "fast" and not core.startswith(("fast32-", "cached32-")) and not trace_supported(family, core):
         raise ValueError("trace compare does not support %s" % core)
 
     generic_rc16 = family == "rc16" and (
@@ -1642,26 +1642,34 @@ def build_tb(core, family, config, outdir):
         top = "riscc_nano"
         rtl = os.path.join(RTL, "riscc_nano.v")
         defs = []
-    elif family == "fast" or core.startswith("fast32-"):
+    elif family == "fast" or core.startswith(("fast32-", "cached32-")):
         if config != "full":
             raise ValueError("Fast requires --config full")
-        if core.replace("fast32-", "fast-") not in ("fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"):
+        if core.replace("cached32-", "fast-").replace("cached-", "fast-").replace("fast32-", "fast-") not in ("fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"):
             raise ValueError("invalid Fast core name: %s" % core)
         d = os.path.join(outdir, "v_state_%s" % core)
-        top = "riscc_fast"
+        top = "riscc_cached_test_top" if core.startswith("cached") else "riscc_fast"
         rtl = os.path.join(RTL, "riscc_fast.v")
         defs = [] if "agilex" in core else ["-DRISCC_FAST_BLOCK_RF"]
-        defs.append("-GXLEN=%d" % (32 if core.startswith("fast32-") else 16))
+        defs.append("-GXLEN=%d" % (32 if core.startswith(("fast32-", "cached32-")) else 16))
         if core.endswith("soft"):
             defs.append("-DRISCC_FAST_SOFT_MUL")
     else:
         raise ValueError("unsupported core: %s" % core)
-    with_trace = family != "fast" and not core.startswith("fast32-")
+    with_trace = family != "fast" and not core.startswith(("fast32-", "cached32-"))
     if with_trace:
         defs.append("-DRISCC_TRACE")
     tb = os.path.join(d, "tb")
     trace_rtl = os.path.join(RTL, "test")
     rtl_dependencies = [rtl]
+    rtl_sources = [rtl]
+    if top == "riscc_cached_test_top":
+        rtl_sources = [
+            os.path.join(RTL, "riscc_fast.v"),
+            os.path.join(RTL, "riscc_cached.v"),
+            os.path.join(RTL, "test", "riscc_cached_test_top.v"),
+        ]
+        rtl_dependencies = list(rtl_sources)
     if top in ("riscc_serial", "riscc_wide"):
         rtl_dependencies.append(os.path.join(RTL, "riscc_rf.vh"))
     newest_src = max(*(os.path.getmtime(path) for path in rtl_dependencies),
@@ -1687,13 +1695,14 @@ def build_tb(core, family, config, outdir):
     ] + defs + [
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
         (" -DRISCC_TB_TRACE" if with_trace else "") +
-        (" -DRISCC_TB_MEM_HANDSHAKE"
-         if family in ("rc16", "rc32", "fast") else "") +
+        (" -DRISCC_TB_MEM_PIPELINED"
+         if family == "fast" or core.startswith(("fast32-", "cached32-")) else
+         " -DRISCC_TB_MEM_HANDSHAKE" if family in ("rc16", "rc32") else "") +
         (" -DRISCC_TB_MEM_OE_N" if family == "nano" else "") +
-        (" -DRISCC_TB_RC32" if family == "rc32" else "") +
+        (" -DRISCC_TB_RC32" if family == "rc32" or core.startswith(("fast32-", "cached32-")) else "") +
         (" -DRISCC_TB_TRACE_DRAIN=0" if family == "rc16" or core == "wide32" else ""),
         "-o", "tb",
-        rtl,
+        *rtl_sources,
         os.path.join(TEST, "riscc_test.cpp"),
     ]
     subprocess.run(cmd, check=True,
@@ -1806,7 +1815,7 @@ def main():
 
         def compare(item):
             core, tb, seed, image = item
-            checker = (compare_final_state if core.startswith(("fast-", "fast32-"))
+            checker = (compare_final_state if core.startswith(("fast-", "fast32-", "cached-", "cached32-"))
                        else compare_trace)
             return (core, seed, image,
                     checker(core, args.family, config, seed, image, tb))
@@ -1819,7 +1828,7 @@ def main():
                 ok, detail, _, _ = result
                 if not ok:
                     fails += 1
-                    divergence = ("STATE-DIVERGE" if core.startswith(("fast-", "fast32-"))
+                    divergence = ("STATE-DIVERGE" if core.startswith(("fast-", "fast32-", "cached-", "cached32-"))
                                   else "TRACE-DIVERGE")
                     print("%s %s %s/%s seed=%d: %s\n%s"
                           % (divergence, core, args.family, config, seed,

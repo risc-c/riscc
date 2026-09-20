@@ -97,7 +97,12 @@ int main(int argc, char **argv)
                 if (column > 0 && column < 79)
                 {
                     julia_writes++;
-                    if (top->dbg_fb_wdata != 0)
+                    const uint32_t byte_mask =
+                        (top->dbg_fb_wmask & 1 ? 0x000000ffu : 0u) |
+                        (top->dbg_fb_wmask & 2 ? 0x0000ff00u : 0u) |
+                        (top->dbg_fb_wmask & 4 ? 0x00ff0000u : 0u) |
+                        (top->dbg_fb_wmask & 8 ? 0xff000000u : 0u);
+                    if ((top->dbg_fb_wdata & byte_mask) != 0)
                         julia_nonzero++;
                 }
             }

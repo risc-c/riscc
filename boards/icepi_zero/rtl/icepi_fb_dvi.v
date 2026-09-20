@@ -4,98 +4,67 @@
 `default_nettype none
 
 module icepi_fb_dvi (
-    input  wire        cpu_clk,
-    input  wire        cpu_we,
-    input  wire [13:0] cpu_addr,
-    input  wire [1:0]  cpu_wmask,
-    input  wire [15:0] cpu_wdata,
+    input wire cpu_clk, palette_we,
+    input wire [7:0] palette_addr,
+    input wire [23:0] palette_wdata,
+    input wire memory_clk, memory_rst, memory_ready,
+    output wire [23:0] memory_addr,
+    output wire memory_cyc, memory_stb,
+    input wire memory_stall, memory_ack,
+    input wire [31:0] memory_rdata,
+    output wire underrun,
 
     input  wire        pix_clk,
     input  wire        shift_clk,
     input  wire        rst,
     output wire [3:0]  tmds
 );
-    localparam [9:0] H_ACTIVE = 10'd640;
-    localparam [9:0] H_FRONT  = 10'd16;
-    localparam [9:0] H_SYNC   = 10'd96;
-    localparam [9:0] H_BACK   = 10'd48;
-    localparam [9:0] H_TOTAL  = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
-
-    localparam [9:0] V_ACTIVE = 10'd480;
-    localparam [9:0] V_FRONT  = 10'd10;
-    localparam [9:0] V_SYNC   = 10'd2;
-    localparam [9:0] V_BACK   = 10'd33;
-    localparam [9:0] V_TOTAL  = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
-
-    // The IcePi/capture path samples the visible window a few pixels after
-    // the nominal sync-derived origin. Keep sync timings standard, but place
-    // the DVI active island slightly later in the front porch.
-    localparam [9:0] H_ACTIVE_START = 10'd8;
-    localparam [9:0] V_ACTIVE_START = 10'd8;
-    localparam [9:0] H_ACTIVE_END   = H_ACTIVE_START + H_ACTIVE;
-    localparam [9:0] V_ACTIVE_END   = V_ACTIVE_START + V_ACTIVE;
-
-    reg [9:0] h_count_q;
+    localparam [10:0] H_ACTIVE = 11'd1280;
+    localparam [10:0] H_TOTAL = 11'd1650;
+    localparam [9:0] V_ACTIVE = 10'd720;
+    localparam [9:0] V_TOTAL = 10'd750;
+    reg [10:0] h_count_q;
     reg [9:0] v_count_q;
-
-    wire active = (h_count_q >= H_ACTIVE_START) && (h_count_q < H_ACTIVE_END) &&
-                  (v_count_q >= V_ACTIVE_START) && (v_count_q < V_ACTIVE_END);
-    wire hsync = ~((h_count_q >= H_ACTIVE + H_FRONT) &&
-                   (h_count_q <  H_ACTIVE + H_FRONT + H_SYNC));
-    wire vsync = ~((v_count_q >= V_ACTIVE + V_FRONT) &&
-                   (v_count_q <  V_ACTIVE + V_FRONT + V_SYNC));
-
-    wire [9:0] active_x = active ? (h_count_q - H_ACTIVE_START) : 10'd0;
-    wire [9:0] active_y = active ? (v_count_q - V_ACTIVE_START) : 10'd0;
-    // Keep the 640x480 timing that the IcePi DVI path already supports.
-    // The 320x180 framebuffer is doubled into a centered 640x360 image.
-    localparam [9:0] FB_TOP = 10'd60;
-    localparam [9:0] FB_BOTTOM = FB_TOP + 10'd360;
-    wire fb_visible = active && (active_y >= FB_TOP) &&
-                      (active_y < FB_BOTTOM);
-    wire [8:0] sx = active_x[9:1];
-    wire [9:0] fb_y = active_y - FB_TOP;
-    wire [7:0] sy = fb_y[8:1];
-    wire [16:0] pix_index = {1'b0, sy, 8'b00000000} +
-                             {3'b000, sy, 6'b000000} +
-                             {8'b00000000, sx};
-    wire [13:0] fb_vid_addr = fb_visible ? pix_index[15:2] : 14'd0;
-    wire [1:0] pix_lane = pix_index[1:0];
-    wire [15:0] fb_vid_word;
-
-    icepi_fb_ram framebuffer (
-        .cpu_clk(cpu_clk),
-        .cpu_we(cpu_we),
-        .cpu_addr(cpu_addr),
-        .cpu_wmask(cpu_wmask),
-        .cpu_wdata(cpu_wdata),
-        .vid_clk(pix_clk),
-        .vid_addr(fb_vid_addr),
-        .vid_rdata(fb_vid_word)
+    wire active = h_count_q < H_ACTIVE && v_count_q < V_ACTIVE;
+    wire hsync = h_count_q >= 11'd1390 && h_count_q < 11'd1430;
+    wire vsync = v_count_q >= 10'd725 && v_count_q < 10'd730;
+    wire [10:0] active_x = h_count_q;
+    wire [9:0] active_y = v_count_q;
+    // Each framebuffer pixel occupies a 4x4 square in the 720p raster.
+    wire [8:0] sx = active_x[10:2];
+    wire [9:0] fb_y = active_y;
+    wire [7:0] sy = fb_y[9:2];
+    wire [7:0] fb_index;
+    wire fb_pixel_valid;
+    riscc_sdram_scanout scanout (
+        .memory_clk(memory_clk), .memory_rst(memory_rst), .memory_ready(memory_ready),
+        .memory_addr(memory_addr), .memory_cyc(memory_cyc), .memory_stb(memory_stb),
+        .memory_stall(memory_stall), .memory_ack(memory_ack), .memory_rdata(memory_rdata),
+        .pix_clk(pix_clk), .rst(rst), .visible(active),
+        .line_start(active && active_x == 0 && fb_y[1:0] == 0),
+        .source_x(sx), .source_y(sy), .pixel(fb_index),
+        .pixel_valid(fb_pixel_valid), .underrun(underrun)
     );
 
-    reg [9:0] active_x_q;
+    reg [10:0] active_x_q;
     reg [9:0] active_y_q;
-    reg [1:0] pix_lane_q;
     reg active_q;
-    reg fb_visible_q;
     reg hsync_q;
     reg vsync_q;
 
     always @(posedge pix_clk) begin
         if (rst) begin
-            h_count_q <= 10'd0;
-            v_count_q <= 10'd0;
-            active_x_q <= 10'd0;
+            h_count_q <= 11'd0;
+            // Start in vertical blanking so the first SDRAM row can prefetch.
+            v_count_q <= V_ACTIVE;
+            active_x_q <= 11'd0;
             active_y_q <= 10'd0;
-            pix_lane_q <= 2'd0;
             active_q <= 1'b0;
-            fb_visible_q <= 1'b0;
             hsync_q <= 1'b1;
             vsync_q <= 1'b1;
         end else begin
             if (h_count_q == H_TOTAL - 10'd1) begin
-                h_count_q <= 10'd0;
+                h_count_q <= 11'd0;
                 v_count_q <= (v_count_q == V_TOTAL - 10'd1) ? 10'd0 : (v_count_q + 10'd1);
             end else begin
                 h_count_q <= h_count_q + 10'd1;
@@ -103,45 +72,34 @@ module icepi_fb_dvi (
 
             active_x_q <= active_x;
             active_y_q <= active_y;
-            pix_lane_q <= pix_lane;
             active_q <= active;
-            fb_visible_q <= fb_visible;
             hsync_q <= hsync;
             vsync_q <= vsync;
         end
     end
 
-    wire [3:0] fb_nibble =
-        !fb_visible_q ? 4'h0 :
-        (pix_lane_q == 2'd0) ? fb_vid_word[3:0] :
-        (pix_lane_q == 2'd1) ? fb_vid_word[7:4] :
-        (pix_lane_q == 2'd2) ? fb_vid_word[11:8] :
-                               fb_vid_word[15:12];
-
-    function automatic [23:0] palette(input [3:0] idx);
-        begin
-            case (idx)
-                4'h0: palette = 24'h02040a;
-                // The blue-to-white ramp is spaced at approximately equal
-                // perceived lightness, preserving dark-band contrast.
-                4'h1: palette = 24'h071535;
-                4'h2: palette = 24'h0a2152;
-                4'h3: palette = 24'h0d2f6e;
-                4'h4: palette = 24'h0f3e88;
-                4'h5: palette = 24'h114da2;
-                4'h6: palette = 24'h135ebb;
-                4'h7: palette = 24'h166fd1;
-                4'h8: palette = 24'h1a82e6;
-                4'h9: palette = 24'h2096f5;
-                4'ha: palette = 24'h2daaff;
-                4'hb: palette = 24'h49bfff;
-                4'hc: palette = 24'h6dd3ff;
-                4'hd: palette = 24'h97e5ff;
-                4'he: palette = 24'hc7f4ff;
-                default: palette = 24'hffffff;
-            endcase
+    wire [23:0] palette_rgb;
+    riscc_video_palette palette (
+        .cpu_clk(cpu_clk), .write_en(palette_we),
+        .write_addr(palette_addr), .write_rgb(palette_wdata),
+        .pix_clk(pix_clk), .index(fb_index), .rgb(palette_rgb)
+    );
+    // Palette block RAM adds one pixel clock after the line-buffer read.
+    reg active_d, hsync_d, vsync_d, valid_d;
+    always @(posedge pix_clk) begin
+        if (rst) begin
+            active_d <= 0;
+            hsync_d <= 1;
+            vsync_d <= 1;
+            valid_d <= 0;
+        end else begin
+            active_d <= active_q;
+            hsync_d <= hsync_q;
+            vsync_d <= vsync_q;
+            valid_d <= fb_pixel_valid;
         end
-    endfunction
+    end
+
 
     localparam [23:0] OUTSIDE_RGB = 24'hff00ff;
 
@@ -150,37 +108,37 @@ module icepi_fb_dvi (
         ((active_x_q < 10'd4) || (active_x_q >= H_ACTIVE - 10'd4) ||
          (active_y_q < 10'd4) || (active_y_q >= V_ACTIVE - 10'd4));
     wire test_center = active_q &&
-        (((active_x_q >= 10'd318) && (active_x_q < 10'd322)) ||
-         ((active_y_q >= 10'd238) && (active_y_q < 10'd242)));
+        (((active_x_q >= 11'd638) && (active_x_q < 11'd642)) ||
+         ((active_y_q >= 10'd358) && (active_y_q < 10'd362)));
     wire [23:0] test_bars =
-        (active_x_q < 10'd80)  ? 24'hff0000 :
-        (active_x_q < 10'd160) ? 24'hffff00 :
-        (active_x_q < 10'd240) ? 24'h00ff00 :
-        (active_x_q < 10'd320) ? 24'h00ffff :
-        (active_x_q < 10'd400) ? 24'h0000ff :
-        (active_x_q < 10'd480) ? 24'hff00ff :
-        (active_x_q < 10'd560) ? 24'hffffff :
+        (active_x_q < 11'd160)  ? 24'hff0000 :
+        (active_x_q < 11'd320) ? 24'hffff00 :
+        (active_x_q < 11'd480) ? 24'h00ff00 :
+        (active_x_q < 11'd640) ? 24'h00ffff :
+        (active_x_q < 11'd800) ? 24'h0000ff :
+        (active_x_q < 11'd960) ? 24'hff00ff :
+        (active_x_q < 11'd1120) ? 24'hffffff :
                            24'h202020;
-    wire [23:0] active_rgb =
+    wire [23:0] test_rgb =
         test_border ? 24'hffffff :
         test_center ? 24'hff00ff :
         ((active_x_q[5:0] == 6'd0) || (active_y_q[5:0] == 6'd0)) ? 24'h404040 :
         test_bars;
+    reg [23:0] active_rgb;
+    always @(posedge pix_clk) active_rgb <= test_rgb;
 `else
-    wire [23:0] active_rgb = palette(fb_nibble);
+    wire [23:0] active_rgb = valid_d ? palette_rgb : 24'h000000;
 `endif
 
-    wire [23:0] rgb = active_q ?
-                      (fb_visible_q ? active_rgb : 24'h000000) :
-                      OUTSIDE_RGB;
+    wire [23:0] rgb = active_d ? active_rgb : OUTSIDE_RGB;
 
     icepi_tmds_ddr tmds_out (
         .pix_clk(pix_clk),
         .shift_clk(shift_clk),
         .rst(rst),
-        .vsync(vsync_q),
-        .hsync(hsync_q),
-        .de(active_q),
+        .vsync(vsync_d),
+        .hsync(hsync_d),
+        .de(active_d),
         .r(rgb[23:16]),
         .g(rgb[15:8]),
         .b(rgb[7:0]),

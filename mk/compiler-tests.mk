@@ -9,7 +9,7 @@ TERMINATE_MAX_INSNS ?= 256
 
 COMPILER_SMOKE := $(COMPILER_BUILD)/smoke
 COMPILER_SMOKE_OBJS := $(COMPILER_SMOKE).o $(COMPILER_BUILD)/helper.o
-COMPILER_UART := $(COMPILER_BUILD)/smoke-uart
+COMPILER_UART := build/compiler/board-rc32/smoke-uart
 COMPILER_STDIO := $(COMPILER_BUILD)/stdio-smoke
 COMPILER_ICEPI_SIM := $(COMPILER_BUILD)/icepi-rtlsim/Vicepi_zero_soc_sim
 COMPILER_ATUM_SIM := $(COMPILER_BUILD)/atum-rtlsim/Vatum_a3_nano_soc_sim
@@ -50,11 +50,14 @@ $(COMPILER_BUILD)/%.o: $(RC16_COMPILER_SOURCE_DIR)/%.c \
 $(COMPILER_BUILD)/%.bin: $(COMPILER_BUILD)/%.elf $(RISCC_OBJCOPY)
 	$(RISCC_OBJCOPY) -O binary $< $@
 
-$(COMPILER_UART).o: $(RC16_COMPILER_SOURCE_DIR)/smoke.c \
-		$(RC16_COMPILER_SOURCE_DIR)/riscc_compiler_test.h firmware/include/stdio.h $(RISCC_CLANG)
+$(COMPILER_UART).o: test/compiler/board_uart.c $(LIBC_HEADERS) \
+		$(COMPILER_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) \
-	  -DRISCC_COMPILER_UART -I$(RC16_COMPILER_SOURCE_DIR) -Ifirmware/include -c $< -o $@
+	$(RISCC_CLANG) $(DEMO_TARGET_FLAGS) $(RISCC_CFLAGS) \
+	  -Ifirmware/include -c $< -o $@
+
+$(COMPILER_UART).bin: $(COMPILER_UART).elf $(RISCC_OBJCOPY)
+	$(RISCC_OBJCOPY) -O binary $< $@
 
 $(COMPILER_SMOKE).elf: $(FW_VECTORS) $(FW_CRT0) \
 		$(COMPILER_SMOKE_OBJS) $(FW_LIBS) \
@@ -69,18 +72,17 @@ $(COMPILER_SMOKE).elf: $(FW_VECTORS) $(FW_CRT0) \
 $(COMPILER_SMOKE).memh: $(COMPILER_SMOKE).bin tools/bin_to_memh.py
 	$(PYTHON) tools/bin_to_memh.py $< -o $@
 
-$(COMPILER_UART).elf: $(FW_VECTORS) $(FW_CRT0) \
-		$(COMPILER_UART).o $(COMPILER_BUILD)/helper.o \
-		$(FW_LIBS) $(RISCC_LINKER_SCRIPT) $(RISCC_CLANG) $(RISCC_LLD)
+$(COMPILER_UART).elf: $(DEMO_VECTORS) $(DEMO_CRT0) \
+		$(COMPILER_UART).o $(DEMO_LIBS) $(DEMO_LINKER_SCRIPT) \
+		$(COMPILER_RULES) $(RISCC_CLANG) $(RISCC_LLD)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath $(RISCC_LINKER_SCRIPT)) $(DEMO_LD_FLAGS) \
-	  $(FW_VECTORS) $(FW_CRT0) \
-	  $(COMPILER_UART).o $(COMPILER_BUILD)/helper.o \
-	  $(FW_LIBS) -o $@
+	$(RISCC_CLANG) $(DEMO_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
+	  -Wl,-T,$(abspath $(DEMO_LINKER_SCRIPT)) $(DEMO_LD_FLAGS) \
+	  $(DEMO_VECTORS) $(DEMO_CRT0) $(COMPILER_UART).o \
+	  $(DEMO_LIBS) -o $@
 
-$(COMPILER_UART).memh: $(COMPILER_UART).bin tools/bin_to_memh.py
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --depth 16384
+$(COMPILER_UART).memh: $(COMPILER_UART).bin tools/bin_to_memh.py $(COMPILER_RULES)
+	$(PYTHON) tools/bin_to_memh.py $< -o $@ --width 32 --depth 4096
 
 $(COMPILER_STDIO).o: $(RC16_COMPILER_SOURCE_DIR)/stdio_smoke.c \
 		firmware/include/stdio.h $(RISCC_CLANG)

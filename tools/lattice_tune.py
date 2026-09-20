@@ -34,13 +34,15 @@ CORES = (
     "min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full", "nano",
     "mulh", "muldiv",
     "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp",
+    "cached-soft", "cached-dsp", "cached32-soft", "cached32-dsp",
     "serial16-min", "serial16-sys", "serial16-full",
     "serial32-min", "serial32-sys", "serial32-full",
 ) + WIDE_CORES
 WIDTHS = (1, 2, 4, 8, 16)
 MATRIX_CORES = ("min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full")
 OTHER_CORES = ("nano", "mulh", "muldiv",
-               "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp")
+               "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp",
+               "cached-soft", "cached-dsp", "cached32-soft", "cached32-dsp")
 SERIAL_CORES = ("serial16-min", "serial16-sys", "serial16-full",
                 "serial32-min", "serial32-sys", "serial32-full")
 
@@ -53,6 +55,7 @@ class CoreSpec:
     block_defines: tuple[str, ...]
     synth_options: tuple[str, ...] = ()
     parameters: tuple[tuple[str, int], ...] = ()
+    extra_sources: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,7 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
     defines = []
     synth_options = []
     parameters = ()
+    extra_sources = ()
 
     if target == "ecp5":
         defines.append("RISCC_ECP5")
@@ -121,6 +125,17 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
         source = rtl / "riscc_nano.v"
         top = "riscc_nano"
         defines.append("RISCC_FMAX_NANO")
+    elif core.startswith(("cached-", "cached32-")):
+        source = rtl / "riscc_cached.v"
+        extra_sources = (rtl / "riscc_fast.v",)
+        top = "riscc_cached"
+        defines.append("RISCC_FMAX_CACHED")
+        if core.startswith("cached32-"):
+            defines.remove("RISCC_FMAX_CACHED")
+            defines.append("RISCC_FMAX_CACHED32")
+            parameters = (("XLEN", 32),)
+        if core.endswith("soft"):
+            defines.append("RISCC_FAST_SOFT_MUL")
     else:
         source = rtl / "riscc_fast.v"
         top = "riscc_fast"
@@ -132,13 +147,14 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
             defines.append("RISCC_FAST_SOFT_MUL")
 
     block_defines = list(defines)
-    if core.startswith(("fast-", "fast32-")):
+    if core.startswith(("fast-", "fast32-", "cached-", "cached32-")):
         block_defines.remove("RISCC_ECP5")
         block_defines.append("RISCC_FAST_BLOCK_RF")
     else:
         block_defines.append("RISCC_ECP5_BLOCK_RF")
     return CoreSpec(source, top, tuple(defines), tuple(block_defines),
-                    tuple(synth_options), parameters=parameters)
+                    tuple(synth_options), parameters=parameters,
+                    extra_sources=extra_sources)
 
 
 def run(command, cwd: Path):
@@ -167,6 +183,11 @@ def parameter_commands(spec: CoreSpec) -> tuple[str, ...]:
     return tuple(commands)
 
 
+def source_paths(spec: CoreSpec) -> tuple[Path, ...]:
+    """Return the complete RTL source set for a characterization core."""
+    return (spec.source, *spec.extra_sources)
+
+
 def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
                recipe: str, options: str) -> SynthResult:
     directory = out / recipe
@@ -175,7 +196,8 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
     defines = [f"-D{define}" for define in spec.defines]
     block_defines = [f"-D{define}" for define in spec.block_defines]
     synth_options = [*spec.synth_options, *shlex.split(options)]
-    timing_script = ["read_verilog", *block_defines, str(spec.source),
+    timing_script = ["read_verilog", *block_defines,
+                     *(str(path) for path in source_paths(spec)),
                      str(root / "rtl/test/riscc_fmax_top.v"), ";"]
     if spec.parameters:
         timing_script.extend(parameter_commands(spec))
@@ -186,7 +208,8 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
     check_synthesis(timing_log)
 
     def measure_area(selected_defines):
-        script = ["read_verilog", *selected_defines, str(spec.source), ";"]
+        script = ["read_verilog", *selected_defines,
+                  *(str(path) for path in source_paths(spec)), ";"]
         script.extend(parameter_commands(spec))
         script.extend(("synth_ecp5", *synth_options, "-nowidelut",
                        "-top", spec.top, ";", "stat"))

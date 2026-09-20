@@ -3,8 +3,8 @@
 #include <riscc/platform.h>
 #include <stdio.h>
 
-#define UART_DATA RISCC_MMIO16(RISCC_UART_DATA)
-#define UART_STATUS RISCC_MMIO16(RISCC_UART_STATUS)
+#define UART_DATA RISCC_MMIO_WORD(RISCC_UART_DATA)
+#define UART_STATUS RISCC_MMIO_WORD(RISCC_UART_STATUS)
 
 int putchar(int character)
 {

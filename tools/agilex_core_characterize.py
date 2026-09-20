@@ -113,6 +113,14 @@ def project_specs(root: Path, family: str):
              root / "rtl/riscc_fast.v",
              ["RISCC_FMAX_FAST32", "RISCC_FAST_SOFT_MUL"], top),
         ))
+    if family in ("other", "all"):
+        for xlen in (16, 32):
+            for mul in ("dsp", "soft"):
+                name = ("cached32_" if xlen == 32 else "cached_") + mul
+                macros = ["RISCC_FMAX_CACHED32" if xlen == 32 else "RISCC_FMAX_CACHED"]
+                if mul == "soft":
+                    macros.append("RISCC_FAST_SOFT_MUL")
+                specs.append((name, name, xlen, root / "rtl/riscc_cached.v", macros, top))
     return specs
 
 
@@ -137,6 +145,9 @@ def write_project(directory: Path, name: str, profile: str, root: Path,
         f'set_global_assignment -name OPTIMIZATION_MODE "{optimization}"',
         'set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"',
     ]
+    if name.startswith("cached"):
+        # Cached shares the synchronous RF helper defined with Fast.
+        qsf.append(f"set_global_assignment -name VERILOG_FILE {root / 'rtl/riscc_fast.v'}")
     qsf.extend(f"set_global_assignment -name VERILOG_MACRO {macro}"
                for macro in macros)
     (directory / f"{name}.qsf").write_text("\n".join(qsf) + "\n")
@@ -151,8 +162,10 @@ def parse_results(directory: Path, name: str):
     if not cpu:
         raise RuntimeError(f"could not find CPU ALMs in {name}.fit.place.rpt")
     sta = (directory / f"{name}.sta.rpt").read_text()
+    # Use Restricted Fmax: DSP pulse-width limits can be lower than the
+    # setup-only Fmax in the first column, even with positive setup slack.
     fmax_match = re.search(
-        r"^;\s*([0-9.]+) MHz\s*;\s*[0-9.]+ MHz\s*;\s*clk\s*;",
+        r"^;\s*[0-9.]+ MHz\s*;\s*([0-9.]+) MHz\s*;\s*clk\s*;",
         sta, flags=re.MULTILINE)
     if not fmax_match:
         raise RuntimeError(f"could not find Fmax in {name}.sta.rpt")
@@ -165,7 +178,7 @@ def read_results(path: Path):
         return {}
     with path.open(newline="") as stream:
         return {
-            (row["profile"], int(row["width"])):
+            (row["profile"].replace("faster", "cached", 1), int(row["width"])):
                 (float(row["alms"]), float(row["fmax_mhz"]))
             for row in csv.DictReader(stream, delimiter="\t")
         }

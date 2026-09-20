@@ -7,19 +7,21 @@
 // UART RX is consumed by a read and the one-shot timer is rearmed by a write.
 module riscc_irq_ctrl #(
     parameter integer REGISTER_IRQ = 0,
+    parameter integer DATA_WIDTH = 16,
     parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
     input  wire        cpu_we,
+    // Word index: 2-byte spacing on RC16, 4-byte spacing on RC32 boards.
     input  wire [3:0]  cpu_addr,
-    input  wire [15:0] cpu_wdata,
-    output wire [15:0] cpu_rdata,
+    input  wire [DATA_WIDTH-1:0] cpu_wdata,
+    output wire [DATA_WIDTH-1:0] cpu_rdata,
     input  wire [1:0]  sources,
     output wire        irq
 );
     // Direction disambiguates the source state from its enable mask.
-    localparam [3:0] IRQ_STATE_W = 4'hb; // byte 0xfff6: pending/enables
+    localparam [3:0] IRQ_STATE_W = 4'hb; // slot 11: pending/enables
 
     reg [1:0] enable_q;
     wire write_fire;
@@ -38,7 +40,7 @@ module riscc_irq_ctrl #(
                 end else begin
                     write_q <= cpu_we;
                     write_addr_q <= cpu_addr;
-                    write_data_q <= cpu_wdata;
+                    write_data_q <= cpu_wdata[15:0];
                 end
             end
             assign write_fire = write_q;
@@ -47,15 +49,15 @@ module riscc_irq_ctrl #(
         end else begin : g_direct_writes
             assign write_fire = cpu_we;
             assign write_addr = cpu_addr;
-            assign write_data = cpu_wdata;
+            assign write_data = cpu_wdata[15:0];
         end
     endgenerate
     wire enable_write = write_fire && (write_addr == IRQ_STATE_W);
     wire irq_next = |(sources & enable_q);
 
     assign cpu_rdata =
-        (cpu_addr == IRQ_STATE_W) ? {14'h0000, sources} :
-        16'h0000;
+        (cpu_addr == IRQ_STATE_W) ? {{(DATA_WIDTH-2){1'b0}}, sources} :
+        {DATA_WIDTH{1'b0}};
 
     always @(posedge clk) begin
         if (rst)

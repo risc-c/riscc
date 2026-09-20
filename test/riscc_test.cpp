@@ -159,7 +159,18 @@ int main(int argc, char **argv)
 
     uint16_t rdata = 0;
     int irq = 0;
-#ifdef RISCC_TB_MEM_HANDSHAKE
+#ifdef RISCC_TB_MEM_PIPELINED
+    // Fast uses a split request/response handshake.  Commands presented with
+    // CYC and STB are accepted when STALL is low; their responses are returned
+    // later with ACK. Keep one accepted request in flight, while allowing the
+    // ACK edge and a new acceptance to coincide.
+    uint32_t mem_ack_state = mem_stall_seed ? mem_stall_seed ^ 0x2468ace0u : 1u;
+    uint32_t mem_stall_state = mem_stall_seed ? mem_stall_seed ^ 0x9e3779b9u : 1u;
+    uint32_t mem_reply_state = mem_stall_seed ? mem_stall_seed ^ 0x7f4a7c15u : 1u;
+    int mem_pending = 0;
+    unsigned mem_ack_wait = 0;
+    uint16_t pending_rdata = 0;
+#elif defined(RISCC_TB_MEM_HANDSHAKE)
     uint32_t mem_stall_state = mem_stall_seed ? mem_stall_seed : 1;
     unsigned mem_wait = 0;
     int mem_pending = 0;
@@ -169,11 +180,23 @@ int main(int argc, char **argv)
     int pending_wmask = 0;
 #endif
 
+#ifdef RISCC_TB_MEM_PIPELINED
+    auto next_mem_random = [](uint32_t &state) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+    };
+#endif
+
     top->clk = 0;
     top->rst = 1;
     top->irq = 0;
     top->mem_rdata = 0;
-#ifdef RISCC_TB_MEM_HANDSHAKE
+#ifdef RISCC_TB_MEM_PIPELINED
+    top->mem_ack = 0;
+    top->mem_stall = 0;
+#elif defined(RISCC_TB_MEM_HANDSHAKE)
     top->mem_ready = 0;
 #endif
     top->eval();
@@ -201,19 +224,136 @@ int main(int argc, char **argv)
         }
         top->irq = irq;
 
-#ifdef RISCC_TB_MEM_HANDSHAKE
+        uint32_t addr = 0;
+        int      we = 0;
+        uint16_t wdata = 0;
+        int      wmask = 0;
+        int      request_accepted = 0;
+        int      request_complete = 0;
+
+#ifdef RISCC_TB_MEM_PIPELINED
+        // Fast has independent request acceptance and response completion.
+        // The default target accepts immediately and returns reads one clock
+        // later. A seeded run mixes same-edge and delayed replies and
+        // independently inserts Wishbone pipeline acceptance stalls.
+        const int ack_now = mem_pending && mem_ack_wait == 1;
+        const int response_waiting = mem_pending && !ack_now;
+        int mem_stall = 0;
+        if (mem_stall_seed) {
+            mem_stall_state = next_mem_random(mem_stall_state);
+            mem_stall = (mem_stall_state & 3u) == 0;
+        }
+        top->mem_ack = ack_now;
+        top->mem_stall = mem_stall;
+        top->mem_rdata = ack_now ? pending_rdata : 0xDEAD;
+        top->eval();
+
+        addr = top->mem_addr;
+        we = top->mem_we;
+        wdata = top->mem_wdata;
+        wmask = top->mem_wmask;
+        const int request_offer = top->mem_cyc && top->mem_stb;
+        const int request = request_offer && !top->mem_stall;
+
+        // A seeded target sometimes answers a newly offered command on the
+        // same edge. First settle the command, then drive its response/data
+        // before the edge so the core observes a genuine immediate ACK.
+        int immediate_accept = 0;
+        if (mem_stall_seed && !mem_pending && request &&
+            (next_mem_random(mem_reply_state) & 3u) == 0) {
+            immediate_accept = 1;
+            if (!we) {
+                const int response_irq_read = !top->rst &&
+                    (addr & 0x7FFF) == 0x7FFD;
+                const int response_uart_state =
+                    uart_expect_line && !top->rst &&
+                    (addr & 0x7FFF) == 0x7FF9;
+                const uint16_t response = response_irq_read ? (irq ? 1 : 0) :
+                    (response_uart_state ? 1 : mem[addr & 0x7FFF]);
+                pending_rdata =
+                    ((wmask & 1) ? (response & 0x00FF) : 0) |
+                    ((wmask & 2) ? (response & 0xFF00) : 0);
+            }
+            top->mem_ack = 1;
+            top->mem_rdata = we ? 0xDEAD : pending_rdata;
+            top->eval();
+            if (!top->mem_cyc || !top->mem_stb ||
+                top->mem_addr != addr || top->mem_we != we ||
+                top->mem_wdata != wdata || top->mem_wmask != wmask) {
+                fprintf(stderr,
+                    "Memory command changed with immediate ACK at cycle %llu\n",
+                    (unsigned long long)cyc);
+                delete top;
+                return 1;
+            }
+        }
+
+        if (mem_pending && !top->mem_cyc) {
+            fprintf(stderr,
+                "Memory cycle ended with response pending at cycle %llu\n",
+                (unsigned long long)cyc);
+            delete top;
+            return 1;
+        }
+
+        if (request) {
+            if (mem_pending && !ack_now) {
+                fprintf(stderr,
+                    "Memory request accepted with response pending at "
+                    "cycle %llu\n", (unsigned long long)cyc);
+                delete top;
+                return 1;
+            }
+            request_accepted = 1;
+
+            // Snapshot reads when the request is accepted.  MMIO reads use
+            // the same fixture behavior as the legacy handshake model, but
+            // their response is delayed until the ACK edge.
+            if (!we && !immediate_accept) {
+                const int response_irq_read = !top->rst &&
+                    (addr & 0x7FFF) == 0x7FFD;
+                const int response_uart_state =
+                    uart_expect_line && !top->rst &&
+                    (addr & 0x7FFF) == 0x7FF9;
+                const uint16_t response = response_irq_read ? (irq ? 1 : 0) :
+                    (response_uart_state ? 1 : mem[addr & 0x7FFF]);
+                pending_rdata =
+                    ((wmask & 1) ? (response & 0x00FF) : 0) |
+                    ((wmask & 2) ? (response & 0xFF00) : 0);
+            }
+
+            if (!immediate_accept) {
+                mem_pending = 1;
+                mem_ack_wait = mem_stall_seed ?
+                    1u + (next_mem_random(mem_ack_state) & 3u) : 1u;
+            }
+        }
+
+        if (report_stalls && response_waiting)
+            printf("WAIT cycle=%llu\n", (unsigned long long)cyc);
+        if (mem_pending && !ack_now && !request_accepted && mem_ack_wait > 1)
+            mem_ack_wait--;
+        if (ack_now && !request_accepted) {
+            mem_pending = 0;
+            mem_ack_wait = 0;
+        }
+
+        // ACK is the response completion event seen by the core.  The
+        // accepted request event above drives architectural side effects.
+        request_complete = ack_now || immediate_accept;
+
+#elif defined(RISCC_TB_MEM_HANDSHAKE)
         // A native request remains asserted and stable until ready. Poison the
         // input afterward to verify that the core captured a completed read.
         top->mem_ready = 0;
         top->mem_rdata = 0xDEAD;
         top->eval();
 
-        uint32_t addr  = top->mem_addr;
-        int      we    = top->mem_we;
-        uint16_t wdata = top->mem_wdata;
-        int      wmask = top->mem_wmask;
+        addr = top->mem_addr;
+        we = top->mem_we;
+        wdata = top->mem_wdata;
+        wmask = top->mem_wmask;
         const int request = top->mem_valid;
-        int request_complete = 0;
 
         if (mem_pending &&
             (!request || addr != pending_addr || we != pending_we ||
@@ -258,6 +398,7 @@ int main(int argc, char **argv)
             top->mem_ready = 1;
             top->eval();
             request_complete = 1;
+            request_accepted = 1;
         } else if (mem_pending) {
             if (report_stalls)
                 printf("STALL cycle=%llu\n", (unsigned long long)cyc);
@@ -270,21 +411,22 @@ int main(int argc, char **argv)
         top->eval();
 
         // Sample the core's memory request during the current (pre-edge) cycle
-        uint32_t addr  = top->mem_addr;
+        addr = top->mem_addr;
 #ifdef RISCC_TB_RC32
         // The generic fixture owns a 64 KiB physical RAM window.  RC32's
         // architectural address can be wider, so alias its low window before
         // testing the common result and IRQ MMIO locations.
         addr &= 0x7fff;
 #endif
-        int      we    = top->mem_we;
-        uint16_t wdata = top->mem_wdata;
-        int      wmask = top->mem_wmask;
+        we = top->mem_we;
+        wdata = top->mem_wdata;
+        wmask = top->mem_wmask;
 #ifdef RISCC_TB_MEM_OE_N
-        const int request_complete = top->mem_we || !top->mem_oe_n;
+        request_complete = top->mem_we || !top->mem_oe_n;
 #else
-        const int request_complete = 1;
+        request_complete = 1;
 #endif
+        request_accepted = request_complete;
 #endif
 
         const uint16_t fixture_addr = addr & 0x7FFF;
@@ -293,7 +435,7 @@ int main(int argc, char **argv)
         top->eval();
 
         // Synchronous memory commits at the posedge
-        const int test_irq_read = request_complete &&
+        const int test_irq_read = request_accepted &&
             !we && !top->rst && fixture_addr == 0x7FFD;
         const uint16_t test_irq_cause = top->irq ? 1 : 0;
         if (test_irq_read) {
@@ -304,7 +446,7 @@ int main(int argc, char **argv)
             irq = 0;
         }
 
-        if (request_complete && we && !top->rst)
+        if (request_accepted && we && !top->rst)
         {
             uint16_t old = mem[fixture_addr];
             uint16_t nw  = old;
@@ -344,8 +486,10 @@ int main(int argc, char **argv)
 }
 #endif
 #ifdef RISCC_TB_MEM_HANDSHAKE
+#ifndef RISCC_TB_MEM_PIPELINED
         if (request_complete)
             mem_pending = 0;
+#endif
 #else
         if (request_complete && !we) {
             const int uart_state_read =

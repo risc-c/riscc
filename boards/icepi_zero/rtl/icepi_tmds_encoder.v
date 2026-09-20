@@ -18,7 +18,10 @@ module icepi_tmds_encoder (
     wire use_xnor = (data_ones > 4'd4) ||
                     ((data_ones == 4'd4) && !data[0]);
     wire [7:0] q_m_data;
-    wire [8:0] q_m = {~use_xnor, q_m_data};
+    reg [8:0] q_m;
+    reg [3:0] balance;
+    reg de_q;
+    reg [1:0] c_q;
 
     assign q_m_data[0] = data[0];
     assign q_m_data[1] = q_m_data[0] ^ data[1] ^ use_xnor;
@@ -38,7 +41,12 @@ module icepi_tmds_encoder (
                            {3'b000, q_m_data[5]} +
                            {3'b000, q_m_data[6]} +
                            {3'b000, q_m_data[7]};
-    wire [3:0] balance = q_m_ones - 4'd4;
+    always @(posedge clk) begin
+        q_m <= {~use_xnor, q_m_data};
+        balance <= q_m_ones - 4'd4;
+        de_q <= de;
+        c_q <= c;
+    end
     wire balance_sign_eq = (balance[3] == disparity_q[3]);
     wire invert_q_m = (balance == 0 || disparity_q == 0) ?
                       ~q_m[8] : balance_sign_eq;
@@ -53,11 +61,11 @@ module icepi_tmds_encoder (
         disparity_q = 4'd0;
 
     always @(posedge clk) begin
-        if (de) begin
-            out <= {invert_q_m, q_m[8], q_m_data ^ {8{invert_q_m}}};
+        if (de_q) begin
+            out <= {invert_q_m, q_m[8], q_m[7:0] ^ {8{invert_q_m}}};
             disparity_q <= disparity_next;
         end else begin
-            case (c)
+            case (c_q)
                 2'b00: out <= 10'b1101010100;
                 2'b01: out <= 10'b0010101011;
                 2'b10: out <= 10'b0101010100;

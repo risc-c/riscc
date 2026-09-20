@@ -7,6 +7,7 @@
 // byte of receive storage and no transmit FIFO; software uses the ready bits.
 module riscc_uart_mmio #(
     parameter integer CLK_DIV = 434,
+    parameter integer DATA_WIDTH = 16,
     parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
@@ -14,9 +15,10 @@ module riscc_uart_mmio #(
 
     input  wire        cpu_sel,
     input  wire        cpu_we,
+    // Word index: 2-byte spacing on RC16, 4-byte spacing on RC32 boards.
     input  wire [3:0]  cpu_addr,
-    input  wire [15:0] cpu_wdata,
-    output wire [15:0] cpu_rdata,
+    input  wire [DATA_WIDTH-1:0] cpu_wdata,
+    output wire [DATA_WIDTH-1:0] cpu_rdata,
 
     input  wire        uart_rx,
     output reg         uart_tx,
@@ -25,9 +27,6 @@ module riscc_uart_mmio #(
     output wire [31:0] dbg_tx_count,
     output wire [31:0] dbg_rx_count
 );
-    // Direction disambiguates the two functions of each register.
-    localparam [3:0] UART_DATA_W  = 4'h8; // byte 0xfff0: write TX, read RX
-    localparam [3:0] UART_STATE_W = 4'h9; // byte 0xfff2: read status, write IRQ enables
     localparam integer DIV_BITS = $clog2(CLK_DIV + 1);
 
     function automatic [DIV_BITS-1:0] div_value(input integer value);
@@ -91,7 +90,7 @@ module riscc_uart_mmio #(
                 end else begin
                     write_q <= write_raw;
                     write_addr_q <= cpu_addr;
-                    write_data_q <= cpu_wdata;
+                    write_data_q <= cpu_wdata[15:0];
                 end
             end
             assign write_fire = write_q;
@@ -100,7 +99,7 @@ module riscc_uart_mmio #(
         end else begin : g_direct_writes
             assign write_fire = write_raw;
             assign write_addr = cpu_addr;
-            assign write_data = cpu_wdata;
+            assign write_data = cpu_wdata[15:0];
         end
     endgenerate
     wire write_uart_sel = write_fire && (write_addr[3:1] == 3'b100);
@@ -109,10 +108,10 @@ module riscc_uart_mmio #(
 
     assign irq = (irq_en[0] && rx_ready) || (irq_en[1] && tx_ready);
     assign cpu_rdata =
-        data_sel ? {8'h00, rx_data} :
+        data_sel ? {{(DATA_WIDTH-8){1'b0}}, rx_data} :
         state_sel ?
-            {13'h0000, rx_overflow, rx_ready, tx_ready} :
-        16'h0000;
+            {{(DATA_WIDTH-3){1'b0}}, rx_overflow, rx_ready, tx_ready} :
+        {DATA_WIDTH{1'b0}};
 
     // Transmit and receive engines.
     always @(posedge clk) begin

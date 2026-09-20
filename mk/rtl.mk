@@ -16,7 +16,8 @@ check-version:
 test: test-core
 test-rtl: test-cores test-extensions test-nano test-rc32 \
 	test-applications \
-	test-fast-all test-peripherals test-funnel test-high-address
+	test-fast-all test-cached-all test-cached-irq-all \
+	test-peripherals test-funnel test-high-address
 
 # Run the ISA and compiler gates in order because they share LLVM, firmware, and RTL
 # output trees. Each recursive make inherits the GNU Make jobserver, so every
@@ -24,6 +25,7 @@ test-rtl: test-cores test-extensions test-nano test-rc32 \
 test-all: check-llvm-riscc
 	+$(MAKE) --no-print-directory test-isa
 	+$(MAKE) --no-print-directory test-compiler
+	+$(MAKE) --no-print-directory test-cached-all test-cached-irq-all
 
 $(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
 	@mkdir -p $(@D)
@@ -141,7 +143,7 @@ FUZZ_CORE_ARG = $(call join_with_commas,$(FUZZ_CORES))
 RC32_FUZZ_CORES ?= $(foreach width,$(WIDTHS),rc32-$(width))
 RC32_FUZZ_CORE_ARG = $(call join_with_commas,$(RC32_FUZZ_CORES))
 
-.PHONY: fuzz fuzz-all fuzz-rc32 fuzz-fast test-rc32 \
+.PHONY: fuzz fuzz-all fuzz-rc32 fuzz-fast fuzz-cached test-rc32 \
 	test-applications test-rc16-application test-nano-application \
 	test-rc32-application
 fuzz: $(RISCC_SIM)
@@ -162,7 +164,7 @@ fuzz: $(RISCC_SIM)
 	  --family nano --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
 	  --jobs $(FUZZ_JOBS) --config nano --outdir build/fuzz/nano
 
-fuzz-all: fuzz fuzz-rc32 fuzz-fast fuzz-fast32
+fuzz-all: fuzz fuzz-rc32 fuzz-fast fuzz-fast32 fuzz-cached fuzz-cached32
 
 # llvm-riscc is declared later, after its binary paths are configured.  Use
 # the aggregate prerequisite here so this early fuzz rule still builds all
@@ -454,7 +456,7 @@ build/test/$(call fast_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v $(R
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_fast -GXLEN=$(3) --prefix Vriscc -Mdir $$(@D) \
 	  $$(FAST_MEMORY_DEFINES_$(1)) $$(FAST_DEFINES_$(2)) \
-	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_HANDSHAKE $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_PIPELINED $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
 	  $$(abspath rtl/riscc_fast.v) $$(abspath $(TB_SRC))
 
 build/test/$(call fast_family,$(3))/$(1)/$(2).ok: build/test/$(call fast_family,$(3))/$(1)/$(2)/tb $(FAST_IMAGE_$(3)) $(FAST_ADDRESS_$(3)) FORCE
@@ -474,6 +476,14 @@ $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MU
 	$(eval $(call FAST_TEST,$(memory),$(multiplier),$(xlen))))))
 
 test-fast: build/test/$(call fast_family,$(XLEN))/$(MEMORY)/$(MULTIPLIER).ok
+
+# Registered SRAM throughput and dependent forwarding are architectural
+# performance contracts, checked independently of whole-program cycle totals.
+.PHONY: test-fast-pipeline
+test-fast-pipeline:
+	$(PYTHON) tools/test_fast_pipeline.py --verilator $(VERILATOR)
+
+test-fast-all: test-fast-pipeline
 
 test-fast-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
 	build/test/$(call fast_family,$(xlen))/$(memory)/$(multiplier).ok)))
@@ -513,3 +523,63 @@ bench-fast32: build/bin/bench-rc32.bin $(RISCC_SIM) \
 	  printf 'fast32/%s ' $$multiplier; \
 	  build/test/fast32/ecp5-block/$$multiplier/tb $< --max-cycles 100000 || exit; \
 	done
+
+# Cached includes its instruction and data caches. The legacy C++ fixture
+# reaches its 32-bit backing port through a test-only width adapter.
+cached_family = $(if $(filter 32,$(1)),cached32,cached)
+define CACHED_TEST
+build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v rtl/riscc_cached.v rtl/test/riscc_cached_test_top.v $(RTL_RULES)
+	@mkdir -p $$(@D)
+	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc_cached_test_top -GXLEN=$(3) --prefix Vriscc -Mdir $$(@D) \
+	  $$(FAST_MEMORY_DEFINES_$(1)) $$(FAST_DEFINES_$(2)) \
+	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_PIPELINED $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
+	  $$(abspath rtl/riscc_fast.v) $$(abspath rtl/riscc_cached.v) \
+	  $$(abspath rtl/test/riscc_cached_test_top.v) $$(abspath $(TB_SRC))
+
+build/test/$(call cached_family,$(3))/$(1)/$(2).ok: build/test/$(call cached_family,$(3))/$(1)/$(2)/tb $(FAST_IMAGE_$(3)) $(FAST_ADDRESS_$(3)) FORCE
+	@mkdir -p $$(@D)
+	$$< $(FAST_IMAGE_$(3)) $(if $(filter 32,$(3)),--irq-at 300) --max-cycles 1000000
+	$$< $(FAST_IMAGE_$(3)) --irq-at 300 --mem-stall-seed 777 \
+	  --max-cycles 1000000
+	$(foreach image,$(FAST_ADDRESS_$(3)),$$< $(image) --mem-stall-seed 777 --max-cycles 1000000 &&) true
+	@touch $$@
+build/test/$(call cached_family,$(3))/$(1)/$(2)-irq.ok: build/test/$(call cached_family,$(3))/$(1)/$(2)/tb $(FAST_IRQ_IMAGE_$(3)) tools/test_irq_cycles.py FORCE
+	$$(PYTHON) tools/test_irq_cycles.py --tb $$< --image $(FAST_IRQ_IMAGE_$(3)) \
+	  --jobs $$(RISCC_BUILD_JOBS) --stall-seed 777 --max-cycles 1000000
+	@touch $$@
+endef
+
+$(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+  $(eval $(call CACHED_TEST,$(memory),$(multiplier),$(xlen))))))
+
+.PHONY: test-cached test-cached-all test-cached-irq-all test-cached-pipeline \
+	test-cached-hits test-cached-address test-cache bench-cached
+test-cached: build/test/$(call cached_family,$(XLEN))/$(MEMORY)/$(MULTIPLIER).ok
+test-cached-all: test-cached-pipeline test-cached-hits test-cached-address test-cache $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+  build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier).ok)))
+test-cached-irq-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+  build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier)-irq.ok)))
+test-cached-pipeline:
+	$(PYTHON) tools/test_cached_pipeline.py --verilator $(VERILATOR)
+test-cached-hits:
+	$(PYTHON) tools/test_cached_hits.py --verilator $(VERILATOR)
+test-cached-address:
+	$(PYTHON) tools/test_cached_address.py --verilator $(VERILATOR)
+test-cache:
+	$(PYTHON) tools/test_cache.py --verilator $(VERILATOR)
+bench-cached: $(BENCH_BIN) build/bin/bench-rc32.bin
+	$(PYTHON) tools/bench_cached.py --verilator $(VERILATOR)
+
+.PHONY: fuzz-cached fuzz-cached32
+fuzz-cached: $(RISCC_SIM)
+	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
+	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
+	  --jobs $(FUZZ_JOBS) --config full --cores cached-soft,cached-dsp,cached-agilex-soft,cached-agilex-dsp \
+	  --outdir build/fuzz/cached
+
+.PHONY: fuzz-cached32
+fuzz-cached32: $(RISCC_SIM) llvm-riscc
+	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_BIN)) $(PYTHON) tools/riscc_fuzz.py \
+	  --family rc32 --config full --cores cached32-soft,cached32-dsp,cached32-agilex-soft,cached32-agilex-dsp \
+	  --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --jobs $(FUZZ_JOBS) --outdir build/fuzz/cached32

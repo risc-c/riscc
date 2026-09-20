@@ -14,140 +14,120 @@ module icepi_tmds_ddr (
     input  wire        de,
     output wire [3:0]  tmds
 );
+    reg [23:0] rgb_q;
+    reg hsync_q, vsync_q, de_q;
+    always @(posedge pix_clk) begin
+        rgb_q <= {r,g,b};
+        hsync_q <= hsync;
+        vsync_q <= vsync;
+        de_q <= de;
+    end
     wire [9:0] red_code;
     wire [9:0] green_code;
     wire [9:0] blue_code;
 
     icepi_tmds_encoder enc_b (
         .clk(pix_clk),
-        .data(b),
-        .c({vsync, hsync}),
-        .de(de),
+        .data(rgb_q[7:0]),
+        .c({vsync_q, hsync_q}),
+        .de(de_q),
         .out(blue_code)
     );
 
     icepi_tmds_encoder enc_g (
         .clk(pix_clk),
-        .data(g),
+        .data(rgb_q[15:8]),
         .c(2'b00),
-        .de(de),
+        .de(de_q),
         .out(green_code)
     );
 
     icepi_tmds_encoder enc_r (
         .clk(pix_clk),
-        .data(r),
+        .data(rgb_q[23:16]),
         .c(2'b00),
-        .de(de),
+        .de(de_q),
         .out(red_code)
     );
 
-    reg [9:0] red_word_q;
-    reg [9:0] green_word_q;
-    reg [9:0] blue_word_q;
-
+    // Two pixels form twenty serial bits: five four-bit transfers to the
+    // I/O gearing cells. Only those cells run at the 5x pixel edge clock.
+    wire serial_clk;
+    wire edge_clk;
+`ifdef VERILATOR
+    reg divided_clk = 0;
+    always @(posedge shift_clk) divided_clk <= ~divided_clk;
+    assign serial_clk = divided_clk;
+    assign edge_clk = shift_clk;
+`else
+    ECLKSYNCB edge_buffer (.ECLKI(shift_clk), .STOP(1'b0), .ECLKO(edge_clk));
+    CLKDIVF #(.DIV("2.0")) divider (
+        .CLKI(edge_clk), .RST(rst), .ALIGNWD(1'b0), .CDIVX(serial_clk)
+    );
+`endif
+    reg half_q = 0;
+    reg [29:0] first_q;
+    reg [59:0] pair_q;
+    reg pair_toggle_q = 0;
     always @(posedge pix_clk) begin
-        red_word_q <= red_code;
-        green_word_q <= green_code;
-        blue_word_q <= blue_code;
-    end
-
-    localparam [9:0] SHIFT_CLOCK_INIT = 10'b0000011111;
-
-    reg [9:0] red_shift_q = 10'd0;
-    reg [9:0] green_shift_q = 10'd0;
-    reg [9:0] blue_shift_q = 10'd0;
-    reg [9:0] clock_shift_q = SHIFT_CLOCK_INIT;
-    reg       shift_off_sync_q = 1'b0;
-    reg [7:0] shift_sync_wait_q = 8'd0;
-    reg [6:0] sync_fail_q = 7'd0;
-
-    always @(posedge pix_clk) begin
-        if (rst)
-            shift_off_sync_q <= 1'b0;
-        else
-            shift_off_sync_q <= (clock_shift_q[5:4] != SHIFT_CLOCK_INIT[5:4]);
-    end
-
-    always @(posedge shift_clk) begin
         if (rst) begin
-            red_shift_q <= 10'd0;
-            green_shift_q <= 10'd0;
-            blue_shift_q <= 10'd0;
-            clock_shift_q <= SHIFT_CLOCK_INIT;
-            shift_sync_wait_q <= 8'd0;
-            sync_fail_q <= 7'd0;
+            half_q <= 0;
+            pair_toggle_q <= 0;
         end else begin
-            if (shift_off_sync_q) begin
-                if (shift_sync_wait_q[7])
-                    shift_sync_wait_q <= 8'd0;
-                else
-                    shift_sync_wait_q <= shift_sync_wait_q + 8'd1;
-            end else begin
-                shift_sync_wait_q <= 8'd0;
-            end
-
-            if (clock_shift_q[5:4] == SHIFT_CLOCK_INIT[5:4]) begin
-                red_shift_q <= red_word_q;
-                green_shift_q <= green_word_q;
-                blue_shift_q <= blue_word_q;
-            end else begin
-                red_shift_q <= {2'b00, red_shift_q[9:2]};
-                green_shift_q <= {2'b00, green_shift_q[9:2]};
-                blue_shift_q <= {2'b00, blue_shift_q[9:2]};
-            end
-
-            if (!shift_sync_wait_q[7]) begin
-                clock_shift_q <= {clock_shift_q[1:0], clock_shift_q[9:2]};
-            end else begin
-                if (sync_fail_q[6]) begin
-                    clock_shift_q <= SHIFT_CLOCK_INIT;
-                    sync_fail_q <= 7'd0;
-                end else begin
-                    sync_fail_q <= sync_fail_q + 7'd1;
-                end
+            half_q <= ~half_q;
+            if (!half_q)
+                first_q <= {red_code, green_code, blue_code};
+            else begin
+                pair_q <= {red_code, first_q[29:20],
+                           green_code, first_q[19:10],
+                           blue_code, first_q[9:0]};
+                pair_toggle_q <= ~pair_toggle_q;
             end
         end
     end
 
-    wire [1:0] blue_pair = blue_shift_q[1:0];
-    wire [1:0] green_pair = green_shift_q[1:0];
-    wire [1:0] red_pair = red_shift_q[1:0];
-    wire [1:0] clock_pair = clock_shift_q[1:0];
+    (* ASYNC_REG = "TRUE" *) reg [1:0] pair_sync_q = 0;
+    reg pair_seen_q = 0;
+    reg [19:0] red_shift_q = 0, green_shift_q = 0, blue_shift_q = 0;
+    reg [19:0] clock_shift_q = 20'b00000111110000011111;
+    always @(posedge serial_clk) begin
+        pair_sync_q <= {pair_sync_q[0], pair_toggle_q};
+        pair_seen_q <= pair_sync_q[1];
+        if (pair_sync_q[1] != pair_seen_q) begin
+            red_shift_q <= pair_q[59:40];
+            green_shift_q <= pair_q[39:20];
+            blue_shift_q <= pair_q[19:0];
+            clock_shift_q <= 20'b00000111110000011111;
+        end else begin
+            red_shift_q <= {red_shift_q[3:0], red_shift_q[19:4]};
+            green_shift_q <= {green_shift_q[3:0], green_shift_q[19:4]};
+            blue_shift_q <= {blue_shift_q[3:0], blue_shift_q[19:4]};
+            clock_shift_q <= {clock_shift_q[3:0], clock_shift_q[19:4]};
+        end
+    end
 
 `ifdef VERILATOR
-    assign tmds = {clock_pair[0], red_pair[0], green_pair[0], blue_pair[0]};
+    assign tmds = {clock_shift_q[0], red_shift_q[0], green_shift_q[0], blue_shift_q[0]};
 `else
-    ODDRX1F ddr_clock (
-        .D0(clock_pair[0]),
-        .D1(clock_pair[1]),
-        .Q(tmds[3]),
-        .SCLK(shift_clk),
-        .RST(1'b0)
+    ODDRX2F ddr_clock (
+        .D0(clock_shift_q[0]), .D1(clock_shift_q[1]),
+        .D2(clock_shift_q[2]), .D3(clock_shift_q[3]),
+        .Q(tmds[3]), .SCLK(serial_clk), .ECLK(edge_clk), .RST(rst)
     );
-
-    ODDRX1F ddr_red (
-        .D0(red_pair[0]),
-        .D1(red_pair[1]),
-        .Q(tmds[2]),
-        .SCLK(shift_clk),
-        .RST(1'b0)
+    ODDRX2F ddr_red (
+        .D0(red_shift_q[0]), .D1(red_shift_q[1]),
+        .D2(red_shift_q[2]), .D3(red_shift_q[3]),
+        .Q(tmds[2]), .SCLK(serial_clk), .ECLK(edge_clk), .RST(rst)
     );
-
-    ODDRX1F ddr_green (
-        .D0(green_pair[0]),
-        .D1(green_pair[1]),
-        .Q(tmds[1]),
-        .SCLK(shift_clk),
-        .RST(1'b0)
+    ODDRX2F ddr_green (
+        .D0(green_shift_q[0]), .D1(green_shift_q[1]),
+        .D2(green_shift_q[2]), .D3(green_shift_q[3]),
+        .Q(tmds[1]), .SCLK(serial_clk), .ECLK(edge_clk), .RST(rst)
     );
-
-    ODDRX1F ddr_blue (
-        .D0(blue_pair[0]),
-        .D1(blue_pair[1]),
-        .Q(tmds[0]),
-        .SCLK(shift_clk),
-        .RST(1'b0)
+    ODDRX2F ddr_blue (
+        .D0(blue_shift_q[0]), .D1(blue_shift_q[1]),
+        .D2(blue_shift_q[2]), .D3(blue_shift_q[3]),
+        .Q(tmds[0]), .SCLK(serial_clk), .ECLK(edge_clk), .RST(rst)
     );
 `endif
 endmodule

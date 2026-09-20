@@ -289,8 +289,8 @@ The linker scripts are:
 - [`firmware/nano/unified.ld`](../firmware/nano/unified.ld).
 
 They place code and data in one byte-addressed memory. By default the address
-space is 64 KiB and the high MMIO area starts at `0xfff0`. Current demo boards
-provide 32 KiB of memory below a framebuffer at `0x8000`. A platform can set
+space is 64 KiB and the high MMIO area starts at `0xfff0`. The RC32 board demos
+use 16 KiB of low SRAM and place devices in the top 64 KiB. A platform can set
 `__riscc_ram_length` and `__riscc_io_start` from its link to describe a
 different memory map.
 
@@ -362,8 +362,12 @@ The default BSP connects libc streams to the demo UART. A custom platform can
 provide its own `getchar`, `putchar`, `puts`, `clock`, and `time` services and
 set `RISCC_BSP_LIBRARY` before including `firmware/riscc.mk`.
 
-The current demo SoCs and the RC16 ISS peripheral model use this interface.
-The RC32 ISS implements only the generic test IRQ and result registers.
+The table below gives the generic simulator addresses. RC32 board builds set
+`RISCC_BOARD_DEMO` and use aligned 32-bit registers near the top of the
+address space. Peripheral values occupy the low bits of each register; the
+timer counter remains a 16-bit value. Use `--rc32-full --board-rc32` for the
+matching ISS map; the board Make targets select it automatically. The board
+map has no test IRQ or result register.
 
 | Byte address | Interface |
 |---:|---|
@@ -375,9 +379,27 @@ The RC32 ISS implements only the generic test IRQ and result registers.
 | `0xfffa` | Test IRQ injection/acknowledgement; ISS and generic RTL tests only |
 | `0xfffe` | Test result; ISS and generic RTL tests only |
 
+RC32 board-demo MMIO uses these byte addresses and 32-bit accesses:
+
+| Byte address | Interface |
+|---:|---|
+| `0xfffff800..0xfffffbff` | Write-only palette, 256 words of `0x00RRGGBB` |
+| `0xffffffe0` | UART data: write TX byte; read and consume RX byte |
+| `0xffffffe4` | UART status and IRQ-enable bits |
+| `0xffffffe8` | One-shot timer on write; free-running 1 kHz counter on read |
+| `0xffffffec` | Timer/UART interrupt pending bits on read and enable mask on write |
+| `0xfffffff0` | Board LED output |
+
 Use the names in
 [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) instead of
 embedding addresses in application code.
+
+The board framebuffer stores one palette index per byte at `RISCC_FRAMEBUFFER_BASE`.
+Write colour `i` with a 32-bit store to `RISCC_PALETTE_BASE + 4*i`.
+Entries start black at FPGA configuration; reads return zero. Writes require
+all three colour-byte enables. Palette changes take effect during scanout;
+software should avoid changing an entry while it is being displayed if a
+transient colour is unacceptable.
 
 `clock()` reads the wrapping 16-bit 1 kHz counter. `time()` is uptime in whole
 seconds, not wall-clock time. Its first call installs the default timer

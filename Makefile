@@ -9,6 +9,7 @@ EXTENSIONS := mulh muldiv
 FAST_MEMORIES := ecp5-block agilex
 MULTIPLIERS := soft dsp
 PIPELINES := fast fast32
+CACHED_PIPELINES := cached cached32
 OPT_LEVELS := o0 o2 os
 BENCH_OPT_LEVELS := o2 os
 
@@ -168,6 +169,16 @@ help:
 	  '  test-fast                   test XLEN, MEMORY and MULTIPLIER' \
 	  '  test-fast-all               test all fast-core variants' \
 	  '  test-fast-irq-all           sweep IRQ timing across all Fast variants' \
+	  '  test-cached                  test XLEN, MEMORY and MULTIPLIER Cached core' \
+	  '  test-cached-all              test all Cached core variants' \
+	  '  test-cached-irq-all          sweep IRQ timing across all Cached variants' \
+	  '  test-cached-pipeline         run Cached split-memory pipeline checks' \
+	  '  test-cached-hits             check warmed Cached cache-hit timing' \
+	  '  test-cached-address          check full-address caching and code coherence' \
+	  '  test-cache                   run Cached cache checks' \
+	  '  test-sdram / fuzz-sdram       test both board SDRAM controllers and cache access' \
+	  '  test-sdram-bench / fuzz-sdram-bench  test queued SDRAM traffic on both boards' \
+	  '  test-sdram-bridge / fuzz-sdram-bridge  test SDRAM bridge clock crossing' \
 	  '  test-funnel                 test interrupt funneling' \
 	  '  test-peripherals            test timer and interrupt peripherals' \
 	  '  test-rc32                   test and fuzz RC32 Min, Sys, and Full' \
@@ -182,12 +193,14 @@ help:
 	  '  fuzz-serial / fuzz-serial32  fuzz parameterized RC16 / RC32' \
 	  '  fuzz-wide / fuzz-wide32      fuzz full-width RC16 / RC32, including MDU' \
 	  '  fuzz-fast / fuzz-fast32     fuzz RC16 / RC32 Fast' \
+	  '  fuzz-cached / fuzz-cached32 fuzz RC16 / RC32 Cached core' \
 	  '  fuzz-all                    run all fuzz campaigns' \
 	  '  trace                       trace PROFILE and WIDTH' \
 	  '  trace-nano                  trace Nano' \
 	  '  trace-rc32                  trace RC32 PROFILE and WIDTH' \
 	  '  bench                       run RC16 core benchmarks' \
 	  '  bench-fast32                run the RC32 copy/dot-product benchmark' \
+	  '  bench-cached                benchmark the Cached core' \
 	  '  bench-serial                run parameterized RC16 Full benchmarks' \
 	  '  check-regressions           enforce size/cycle/ECP5 PPA limits' \
 	  '' \
@@ -232,11 +245,13 @@ help:
 	  '  icepi-zero-demo-rtlsim      run the demo in RTL simulation' \
 	  '  icepi-zero-demo-json        synthesize the Icepi Zero demo' \
 	  '  icepi-zero-demo-bit         build the Icepi Zero bitstream' \
+	  '  icepi-zero-test-bit         build the SoC SDRAM test bitstream' \
 	  '  icepi-zero-video-test-bit   build the video-test bitstream' \
 	  '  atum-a3-demo-bin            Atum A3 Nano demo firmware' \
 	  '  atum-a3-demo-iss            run the demo in the ISS' \
 	  '  atum-a3-demo-rtlsim         run the demo in RTL simulation' \
 	  '  atum-a3-demo                build the Atum A3 Nano image' \
+	  '  atum-a3-test                build the SoC SDRAM test image' \
 	  '' \
 	  'Utilities' \
 	  '  version                     print the RISC-C version' \

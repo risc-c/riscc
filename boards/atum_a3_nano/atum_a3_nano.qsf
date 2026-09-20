@@ -18,23 +18,25 @@ set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
 set_global_assignment -name USE_CONF_DONE SDM_IO16
 set_global_assignment -name USE_INIT_DONE SDM_IO13
 
-# Fast uses its registered DSP multiplier by default.
+# The Cached core uses its registered DSP multiplier by default.
 
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/top.v
-set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_sys_pll.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_hdmi_pll.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_reset_release.v
+set_global_assignment -name IP_FILE ip/atum_config_reset.ip
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_a3_nano_soc.v
-set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_framebuffer_mmio.v
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_uart_mmio.v
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_timer_mmio.v
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_irq_ctrl.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_fb_hdmi.v
 set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_tfp410_init.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_cached.v
 set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_fast.v
 set_global_assignment -name SDC_FILE ../../../boards/atum_a3_nano/atum_a3_nano.sdc
 
+# Board pin assignments. SDRAM test tools extract these assignments.
 # CLOCK0_50 drives the Terasic HDMI PLL; CLOCK1_50 feeds the RISC-C system
-# PLL, which generates the 225 MHz SoC clock.
+# PLL, which generates the 166 2/3 MHz SoC clock.
 set_instance_assignment -name IO_STANDARD "1.2-V" -to CLOCK0_50
 set_location_assignment PIN_K43 -to CLOCK0_50
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to CLOCK1_50
@@ -132,3 +134,129 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_ISEL
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_PD_n
 set_location_assignment PIN_J2 -to HDMI_ISEL
 set_location_assignment PIN_J1 -to HDMI_PD_n
+
+# External SDRAM pinout from the board's SDRAM reference design.
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_clk
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_cke
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[3]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[4]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[5]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[6]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[7]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[8]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[9]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[10]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[11]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_addr[12]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_ba[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_ba[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[3]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[4]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[5]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[6]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[7]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[8]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[9]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[10]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[11]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[12]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[13]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[14]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[15]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[16]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[17]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[18]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[19]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[20]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[21]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[22]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[23]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[24]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[25]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[26]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[27]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[28]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[29]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[30]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dq[31]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_cs_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_we_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_cas_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_ras_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dqm[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dqm[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dqm[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to sd_dqm[3]
+set_location_assignment PIN_BK32 -to sd_clk
+set_location_assignment PIN_BK40 -to sd_cke
+set_location_assignment PIN_BN26 -to sd_addr[0]
+set_location_assignment PIN_BH27 -to sd_addr[1]
+set_location_assignment PIN_BM26 -to sd_addr[2]
+set_location_assignment PIN_BH21 -to sd_addr[3]
+set_location_assignment PIN_BH26 -to sd_addr[4]
+set_location_assignment PIN_BH18 -to sd_addr[5]
+set_location_assignment PIN_BK18 -to sd_addr[6]
+set_location_assignment PIN_BH32 -to sd_addr[7]
+set_location_assignment PIN_BM24 -to sd_addr[8]
+set_location_assignment PIN_BH35 -to sd_addr[9]
+set_location_assignment PIN_BN27 -to sd_addr[10]
+set_location_assignment PIN_BN29 -to sd_addr[11]
+set_location_assignment PIN_BK26 -to sd_addr[12]
+set_location_assignment PIN_BH43 -to sd_ba[0]
+set_location_assignment PIN_BM29 -to sd_ba[1]
+set_location_assignment PIN_BM50 -to sd_dq[0]
+set_location_assignment PIN_BM51 -to sd_dq[1]
+set_location_assignment PIN_BN47 -to sd_dq[2]
+set_location_assignment PIN_BM47 -to sd_dq[3]
+set_location_assignment PIN_BL51 -to sd_dq[4]
+set_location_assignment PIN_BH50 -to sd_dq[5]
+set_location_assignment PIN_BK50 -to sd_dq[6]
+set_location_assignment PIN_BH46 -to sd_dq[7]
+set_location_assignment PIN_BM37 -to sd_dq[8]
+set_location_assignment PIN_BN37 -to sd_dq[9]
+set_location_assignment PIN_BM42 -to sd_dq[10]
+set_location_assignment PIN_BN42 -to sd_dq[11]
+set_location_assignment PIN_BM44 -to sd_dq[12]
+set_location_assignment PIN_BN45 -to sd_dq[13]
+set_location_assignment PIN_BN39 -to sd_dq[14]
+set_location_assignment PIN_BM45 -to sd_dq[15]
+set_location_assignment PIN_BG2  -to sd_dq[16]
+set_location_assignment PIN_BA2  -to sd_dq[17]
+set_location_assignment PIN_BC2  -to sd_dq[18]
+set_location_assignment PIN_BJ1  -to sd_dq[19]
+set_location_assignment PIN_BE4  -to sd_dq[20]
+set_location_assignment PIN_BG1  -to sd_dq[21]
+set_location_assignment PIN_BC1  -to sd_dq[22]
+set_location_assignment PIN_BD1  -to sd_dq[23]
+set_location_assignment PIN_BN5  -to sd_dq[24]
+set_location_assignment PIN_BM9  -to sd_dq[25]
+set_location_assignment PIN_BM8  -to sd_dq[26]
+set_location_assignment PIN_BN11 -to sd_dq[27]
+set_location_assignment PIN_BN8  -to sd_dq[28]
+set_location_assignment PIN_BN14 -to sd_dq[29]
+set_location_assignment PIN_BM11 -to sd_dq[30]
+set_location_assignment PIN_BN16 -to sd_dq[31]
+set_location_assignment PIN_BN34 -to sd_cs_n
+set_location_assignment PIN_BM34 -to sd_we_n
+set_location_assignment PIN_BH40 -to sd_cas_n
+set_location_assignment PIN_BM31 -to sd_ras_n
+set_location_assignment PIN_BE6  -to sd_dqm[0]
+set_location_assignment PIN_BM19 -to sd_dqm[1]
+set_location_assignment PIN_BJ2  -to sd_dqm[2]
+set_location_assignment PIN_BM14 -to sd_dqm[3]
+
+# Shared external memory and video scanout.
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_fabric.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_scanout.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_sdram.v
+set_global_assignment -name VERILOG_FILE ../../../boards/atum_a3_nano/rtl/atum_sdram_pll.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_bridge.v
+
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_video_palette.v

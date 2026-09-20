@@ -22,6 +22,10 @@ OTHER_ROWS = (
     ("fast soft", "fast_soft", 16),
     ("fast32 DSP", "fast32_dsp", 32),
     ("fast32 soft", "fast32_soft", 32),
+    ("cached DSP", "cached_dsp", 16),
+    ("cached soft", "cached_soft", 16),
+    ("cached32 DSP", "cached32_dsp", 32),
+    ("cached32 soft", "cached32_soft", 32),
 )
 
 
@@ -30,7 +34,9 @@ def load_results(paths):
     for path in paths:
         with path.open(newline="") as stream:
             for row in csv.DictReader(stream, delimiter="\t"):
-                key = (row["profile"], int(row["width"]))
+                # Accept measurements recorded before the Cached core rename.
+                profile = row["profile"].replace("faster", "cached", 1)
+                key = (profile, int(row["width"]))
                 if key in results:
                     raise RuntimeError(
                         f"duplicate Agilex result for {key[0]}/{key[1]}")

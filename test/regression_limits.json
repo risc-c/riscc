@@ -1,4 +1,6 @@
 {
+  "fast_timing": "Registered one-clock SRAM responses use one Decode holding slot; exact ALU/memory/redirect spacing is checked by test-fast-pipeline.",
+  "fast_area": "Pipeline SRAM throughput is checked separately; area ceilings allow approximately 5% above the measured fixed-recipe implementation.",
   "file_sizes": [
     {"name": "RC16 benchmark image", "path": "build/bin/bench.bin", "max": 706},
     {"name": "Nano benchmark image", "path": "build/bin/bench-nano.bin", "max": 912}
@@ -10,10 +12,10 @@
     {"name": "RC16 Full /8", "tb": "build/test/rc16/native/full/8/tb", "image": "build/bin/bench.bin", "max": 20028},
     {"name": "RC16 Full /16", "tb": "build/test/rc16/native/full/16/tb", "image": "build/bin/bench.bin", "max": 9746},
     {"name": "Nano", "tb": "build/test/nano/tb", "image": "build/bin/bench-nano.bin", "max": 263691},
-    {"name": "Fast soft", "tb": "build/test/fast/ecp5-block/soft/tb", "image": "build/bin/bench.bin", "max": 5259},
-    {"name": "Fast DSP", "tb": "build/test/fast/ecp5-block/dsp/tb", "image": "build/bin/bench.bin", "max": 4811},
-    {"name": "RC32 Fast soft", "tb": "build/test/fast32/ecp5-block/soft/tb", "image": "build/bin/bench-rc32.bin", "max": 1441},
-    {"name": "RC32 Fast DSP", "tb": "build/test/fast32/ecp5-block/dsp/tb", "image": "build/bin/bench-rc32.bin", "max": 960}
+    {"name": "Fast soft", "tb": "build/test/fast/ecp5-block/soft/tb", "image": "build/bin/bench.bin", "max": 4777},
+    {"name": "Fast DSP", "tb": "build/test/fast/ecp5-block/dsp/tb", "image": "build/bin/bench.bin", "max": 4329},
+    {"name": "RC32 Fast soft", "tb": "build/test/fast32/ecp5-block/soft/tb", "image": "build/bin/bench-rc32.bin", "max": 1378},
+    {"name": "RC32 Fast DSP", "tb": "build/test/fast32/ecp5-block/dsp/tb", "image": "build/bin/bench-rc32.bin", "max": 898}
   ],
   "numbers": [
     {"name": "RC16 Sys /2 area", "path": "build/area/ecp5-block/rc16/sys/2.lut", "max": 157},
@@ -24,7 +26,8 @@
     {"name": "RC32 Full /8 area", "path": "build/area/ecp5-block/rc32/full/8.lut", "max": 305},
     {"name": "RC32 Full /16 area", "path": "build/area/ecp5-block/rc32/full/16.lut", "max": 432},
     {"name": "Nano area", "path": "build/area/ecp5-block/nano.lut", "max": 96},
-    {"name": "Fast soft area", "path": "build/area/ecp5-block/fast/soft.resources", "field": 0, "max": 715},
+    {"name": "Fast soft area", "path": "build/area/ecp5-block/fast/soft.resources", "field": 0, "max": 596},
+    {"name": "Fast DSP area", "path": "build/area/ecp5-block/fast/dsp.resources", "field": 0, "max": 538},
     {"name": "RC16 Sys /2 Fmax", "path": "build/fmax/ecp5/rc16/sys/2.mhz", "min": 74.0},
     {"name": "RC32 Sys /2 Fmax", "path": "build/fmax/ecp5/rc32/sys/2.mhz", "min": 74.0},
     {"name": "RC32 Full /1 Fmax", "path": "build/fmax/ecp5/rc32/full/1.mhz", "min": 72.0},
@@ -34,8 +37,9 @@
     {"name": "RC32 Full /16 Fmax", "path": "build/fmax/ecp5/rc32/full/16.mhz", "min": 64.0},
     {"name": "Nano Fmax", "path": "build/fmax/ecp5/nano.mhz", "min": 80.0},
     {"name": "Fast soft Fmax", "path": "build/fmax/ecp5/fast/soft.mhz", "min": 48.0},
-    {"name": "RC32 Fast soft area", "path": "build/area/ecp5-block/fast32/soft.resources", "field": 0, "max": 1310},
-    {"name": "RC32 Fast DSP area", "path": "build/area/ecp5-block/fast32/dsp.resources", "field": 0, "max": 1250},
+    {"name": "Fast DSP Fmax", "path": "build/fmax/ecp5/fast/dsp.mhz", "min": 50.0},
+    {"name": "RC32 Fast soft area", "path": "build/area/ecp5-block/fast32/soft.resources", "field": 0, "max": 1000},
+    {"name": "RC32 Fast DSP area", "path": "build/area/ecp5-block/fast32/dsp.resources", "field": 0, "max": 927},
     {"name": "RC32 Fast soft Fmax", "path": "build/fmax/ecp5/fast32/soft.mhz", "min": 45.0},
     {"name": "RC32 Fast DSP Fmax", "path": "build/fmax/ecp5/fast32/dsp.mhz", "min": 45.0}
   ]

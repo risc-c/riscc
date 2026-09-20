@@ -9,7 +9,7 @@ import sys
 
 
 MARKER_RE = re.compile(r"MARKER cycle=(\d+)")
-STALL_RE = re.compile(r"STALL cycle=(\d+)")
+WAIT_RE = re.compile(r"(?:STALL|WAIT) cycle=(\d+)")
 
 
 def run(command):
@@ -71,7 +71,7 @@ def main():
             return 1
 
         waits = sorted({int(match.group(1))
-                        for match in STALL_RE.finditer(report.stdout)})
+                        for match in WAIT_RE.finditer(report.stdout)})
         edges = {cycle + 1 for index, cycle in enumerate(waits)
                  if index + 1 == len(waits) or waits[index + 1] != cycle + 1}
         targeted = sorted(set(waits) | edges)

@@ -2,19 +2,20 @@
 
 `default_nettype none
 
-// ECP5 PLL for a 50 MHz input, producing 25 MHz pixels, a 125 MHz shift
-// clock, and the 250 MHz feedback clock required by the primitive.
+// ECP5 PLL for a 50 MHz input, producing 74.286 MHz pixels, a 371.429 MHz shift
+// clock, and the 371.429 MHz feedback clock required by the primitive.
 module icepi_dvi_pll (
     input  wire clk_in,
     output wire clkp,
-    output wire clkt,
     output wire clk5x,
     output wire locked
 );
+    wire clkt;
+
     (* FREQUENCY_PIN_CLKI="50" *)
-    (* FREQUENCY_PIN_CLKOP="250" *)
-    (* FREQUENCY_PIN_CLKOS="25" *)
-    (* FREQUENCY_PIN_CLKOS2="125" *)
+    (* FREQUENCY_PIN_CLKOP="371.429" *)
+    (* FREQUENCY_PIN_CLKOS="74.285714" *)
+    (* FREQUENCY_PIN_CLKOS2="371.429" *)
     (* ICP_CURRENT="12" *)
     (* LPF_RESISTOR="8" *)
     (* MFG_ENABLE_FILTEROPAMP="1" *)
@@ -29,21 +30,21 @@ module icepi_dvi_pll (
         .OUTDIVIDER_MUXB("DIVB"),
         .OUTDIVIDER_MUXC("DIVC"),
         .OUTDIVIDER_MUXD("DIVD"),
-        .CLKI_DIV(12),
+        .CLKI_DIV(7),
         .CLKOP_ENABLE("ENABLED"),
         .CLKOP_DIV(2),
         .CLKOP_CPHASE(0),
         .CLKOP_FPHASE(0),
         .CLKOS_ENABLE("ENABLED"),
-        .CLKOS_DIV(20),
+        .CLKOS_DIV(10),
         .CLKOS_CPHASE(0),
         .CLKOS_FPHASE(0),
         .CLKOS2_ENABLE("ENABLED"),
-        .CLKOS2_DIV(4),
+        .CLKOS2_DIV(2),
         .CLKOS2_CPHASE(0),
         .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("CLKOP"),
-        .CLKFB_DIV(60)
+        .CLKFB_DIV(52)
     ) pll_i (
         .RST(1'b0),
         .STDBY(1'b0),

@@ -35,6 +35,13 @@ constexpr uint16_t UART_DATA_W = 0x7ff8;  // byte 0xfff0: write TX, read RX
 constexpr uint16_t UART_STATE_W = 0x7ff9; // byte 0xfff2: read status, write IRQ enables
 constexpr uint16_t TEST_IRQ_W = 0x7ffd;   // byte 0xfffa: read ack, write raise
 constexpr uint16_t RESULT_W = 0x7fff;     // byte 0xfffe: test result
+constexpr uint32_t BOARD_UART_DATA = 0xffffffe0u;
+constexpr uint32_t BOARD_UART_STATE = 0xffffffe4u;
+constexpr uint32_t BOARD_TIMER = 0xffffffe8u;
+constexpr uint32_t BOARD_IRQ_STATE = 0xffffffecu;
+constexpr uint32_t BOARD_LED = 0xfffffff0u;
+constexpr uint32_t BOARD_PALETTE_BASE = 0xfffff800u;
+constexpr uint32_t BOARD_PALETTE_END = BOARD_PALETTE_BASE + 256u * 4u;
 constexpr uint16_t RESET_PC = 0x0000;
 constexpr uint64_t TIMER_TICK_HZ = 1000;
 constexpr double DEFAULT_TIMER_MHZ = 50.0;
@@ -170,9 +177,10 @@ struct Rgb
 
 struct FramebufferLayout
 {
-    uint16_t base_word;
+    uint32_t base_word;
     int width;
     int height;
+    bool indexed8;
 };
 
 constexpr std::array<Rgb, 16> FB_PALETTE = {{
@@ -229,6 +237,7 @@ struct Opts
     bool min = false;
     bool rc32 = false;
     bool rc32_sys = false;
+    bool board_rc32 = false;
     bool full = false;
     bool mdu = false;
     bool nano = false;
@@ -283,11 +292,13 @@ struct Opts
 
 FramebufferLayout framebuffer_layout(const Opts &opts)
 {
+    if (opts.board_rc32)
+        return {0x08000000u, 320, 180, true};
     if (opts.fb_icepi)
-        return {0x4000u, 320, 180};
+        return {0x4000u, 320, 180, false};
     if (opts.fast)
-        return {0x4000u, 320, 180};
-    return {0x4000u, 160, 120};
+        return {0x4000u, 320, 180, false};
+    return {0x4000u, 160, 120, false};
 }
 
 bool host_stdin_ready()
@@ -925,6 +936,7 @@ struct RC32Sim
     std::map<uint32_t, bool> mem_written;
     std::array<uint32_t, 8> r{};
     std::array<uint32_t, 8> s{};
+    std::array<Rgb, 256> palette{};
     uint32_t pc = 0;
     bool ie = false;
     bool irq_line = false;
@@ -934,8 +946,14 @@ struct RC32Sim
     uint64_t cycles = 3;
     uint64_t trace_steps = 0;
 
-    RC32Sim(const std::vector<uint8_t> &image, const Opts &opts) : opts(opts)
+    Sim peripherals;
+    uint64_t peripheral_cycles = 3;
+
+    RC32Sim(const std::vector<uint8_t> &image, const Opts &opts)
+        : opts(opts), peripherals({}, opts)
     {
+        if (opts.board_rc32 && image.size() > 16384)
+            throw std::runtime_error("RC32 board image exceeds 16 KiB SRAM");
         for (size_t i = 0; i < image.size(); i += 2)
         {
             uint16_t hi = (i + 1 < image.size()) ? image[i + 1] : 0;
@@ -944,24 +962,129 @@ struct RC32Sim
         }
     }
 
-    static bool fixture_io(uint32_t baddr)
+    bool fixture_io(uint32_t baddr) const
     {
-        return static_cast<uint16_t>(baddr) >= 0xfff0;
+        return !opts.board_rc32 && static_cast<uint16_t>(baddr) >= 0xfff0;
     }
 
-    static uint32_t halfword_address(uint32_t baddr)
+    uint32_t halfword_address(uint32_t baddr) const
     {
         return fixture_io(baddr) ?
             static_cast<uint32_t>(static_cast<uint16_t>(baddr) >> 1) :
             (baddr >> 1);
     }
 
+    bool board_memory(uint32_t baddr) const
+    {
+        const uint32_t sdram_end = opts.fb_icepi ? 0x12000000u : 0x14000000u;
+        return baddr < 16384 || (baddr >= 0x10000000u && baddr < sdram_end);
+    }
+
+    bool board_mmio_word(uint32_t baddr) const
+    {
+        return baddr == BOARD_UART_DATA || baddr == BOARD_UART_STATE ||
+               baddr == BOARD_TIMER || baddr == BOARD_IRQ_STATE ||
+               baddr == BOARD_LED ||
+               (baddr >= BOARD_PALETTE_BASE && baddr < BOARD_PALETTE_END &&
+                (baddr & 3u) == 0u);
+    }
+
+    bool board_palette_word(uint32_t baddr) const
+    {
+        return baddr >= BOARD_PALETTE_BASE && baddr < BOARD_PALETTE_END &&
+               (baddr & 3u) == 0u;
+    }
+
+    uint32_t load_board_word(uint32_t baddr)
+    {
+        if (board_palette_word(baddr))
+            return 0;
+
+        switch (baddr)
+        {
+        case BOARD_UART_DATA:
+            {
+                const uint32_t value = peripherals.uart_rx_data;
+                peripherals.uart_rx_ready = false;
+                peripherals.uart_rx_overflow = false;
+                return value;
+            }
+        case BOARD_UART_STATE:
+            return static_cast<uint32_t>(
+                (peripherals.uart_rx_overflow ? 4 : 0) |
+                (peripherals.uart_rx_ready ? 2 : 0) |
+                (peripherals.uart_tx_ready ? 1 : 0));
+        case BOARD_TIMER:
+            return peripherals.ticks;
+        case BOARD_IRQ_STATE:
+            return peripherals.peripheral_pending();
+        case BOARD_LED:
+            return 0;
+        default:
+            return 0;
+        }
+    }
+
+    void store_board_word(uint32_t baddr, uint32_t value)
+    {
+        if (board_palette_word(baddr))
+        {
+            const uint32_t index = (baddr - BOARD_PALETTE_BASE) >> 2;
+            palette[index] = Rgb{
+                static_cast<uint8_t>((value >> 16) & 0xffu),
+                static_cast<uint8_t>((value >> 8) & 0xffu),
+                static_cast<uint8_t>(value & 0xffu)};
+            return;
+        }
+
+        switch (baddr)
+        {
+        case BOARD_UART_DATA:
+            if (opts.uart_enabled())
+            {
+                std::putchar(static_cast<unsigned char>(value));
+                std::fflush(stdout);
+                peripherals.uart_tx_ready = true;
+            }
+            return;
+        case BOARD_UART_STATE:
+            if (opts.uart_enabled())
+                peripherals.uart_irq_en = static_cast<uint8_t>(value & 3);
+            return;
+        case BOARD_TIMER:
+            peripherals.timer_count = static_cast<uint16_t>(value);
+            peripherals.timer_pending = false;
+            return;
+        case BOARD_IRQ_STATE:
+            peripherals.irq_enable = static_cast<uint8_t>(value & 3);
+            return;
+        case BOARD_LED:
+            return;
+        default:
+            return;
+        }
+    }
+
     uint16_t load_half(uint32_t baddr)
     {
         if (baddr & 1)
             throw std::runtime_error("unaligned RC32 halfword load");
+        if (opts.board_rc32)
+        {
+            const uint32_t word_addr = baddr & ~uint32_t(3);
+            if (board_mmio_word(word_addr))
+            {
+                if (board_palette_word(word_addr))
+                    return 0;
+                if (baddr != word_addr)
+                    return 0;
+                return static_cast<uint16_t>(load_board_word(word_addr));
+            }
+            if (!board_memory(baddr))
+                return 0;
+        }
         const uint32_t waddr = halfword_address(baddr);
-        if (waddr == TEST_IRQ_W)
+        if (!opts.board_rc32 && waddr == TEST_IRQ_W)
         {
             const uint16_t cause = irq_line ? 1 : 0;
             irq_line = false;
@@ -975,12 +1098,26 @@ struct RC32Sim
     {
         if (baddr & 1)
             throw std::runtime_error("unaligned RC32 halfword store");
+        if (opts.board_rc32)
+        {
+            const uint32_t word_addr = baddr & ~uint32_t(3);
+            if (board_mmio_word(word_addr))
+            {
+                if (board_palette_word(word_addr))
+                    return;
+                if (baddr == word_addr)
+                    store_board_word(word_addr, value);
+                return;
+            }
+            if (!board_memory(baddr))
+                return;
+        }
         const uint32_t waddr = halfword_address(baddr);
         mem[waddr] = value;
         mem_written[waddr] = true;
-        if (waddr == TEST_IRQ_W)
+        if (!opts.board_rc32 && waddr == TEST_IRQ_W)
             irq_line = true;
-        if (waddr == RESULT_W)
+        if (!opts.board_rc32 && waddr == RESULT_W)
             done = true;
     }
 
@@ -988,6 +1125,8 @@ struct RC32Sim
     {
         if (baddr & 3)
             throw std::runtime_error("unaligned RC32 word load");
+        if (opts.board_rc32 && board_mmio_word(baddr))
+            return load_board_word(baddr);
         return static_cast<uint32_t>(load_half(baddr)) |
                (static_cast<uint32_t>(load_half(baddr + 2)) << 16);
     }
@@ -996,14 +1135,31 @@ struct RC32Sim
     {
         if (baddr & 3)
             throw std::runtime_error("unaligned RC32 word store");
+        if (opts.board_rc32 && board_mmio_word(baddr))
+        {
+            store_board_word(baddr, value);
+            return;
+        }
         store_half(baddr, static_cast<uint16_t>(value));
         store_half(baddr + 2, static_cast<uint16_t>(value >> 16));
     }
 
     uint32_t load_byte(uint32_t baddr, bool is_signed)
     {
-        const uint16_t half = load_half(baddr & ~uint32_t(1));
-        uint32_t value = (baddr & 1) ? (half >> 8) : (half & 0xff);
+        uint32_t value;
+        const uint32_t word_addr = baddr & ~uint32_t(3);
+        if (opts.board_rc32 && board_mmio_word(word_addr))
+        {
+            // Only the low UART byte consumes RX; other registers have no
+            // read side effects and may expose bits in the second byte.
+            value = word_addr == BOARD_UART_DATA && baddr != word_addr ? 0 :
+                (load_board_word(word_addr) >> ((baddr & 3) * 8)) & 0xff;
+        }
+        else
+        {
+            const uint16_t half = load_half(baddr & ~uint32_t(1));
+            value = (baddr & 1) ? (half >> 8) : (half & 0xff);
+        }
         if (is_signed && (value & 0x80))
             value |= 0xffffff00u;
         return value;
@@ -1012,6 +1168,15 @@ struct RC32Sim
     void store_byte(uint32_t baddr, uint32_t value)
     {
         const uint32_t half_addr = baddr & ~uint32_t(1);
+        const uint32_t word_addr = baddr & ~uint32_t(3);
+        if (opts.board_rc32 && board_mmio_word(word_addr))
+        {
+            if (board_palette_word(word_addr))
+                return;
+            if (baddr == word_addr)
+                store_board_word(word_addr, value & 0xff);
+            return;
+        }
         const uint16_t old = load_half(half_addr);
         const uint16_t merged = (baddr & 1) ?
             static_cast<uint16_t>((old & 0x00ff) | ((value & 0xff) << 8)) :
@@ -1045,9 +1210,16 @@ struct RC32Sim
 
     void step()
     {
+        if (opts.board_rc32)
+        {
+            peripherals.advance_cycles(cycles - peripheral_cycles);
+            peripheral_cycles = cycles;
+            peripherals.service_uart();
+        }
         const uint32_t pc_before = pc;
         const uint16_t ir = load_half(pc);
-        if (opts.rc32_sys && ie && irq_line)
+        if (opts.rc32_sys && ie && (irq_line ||
+                (opts.board_rc32 && peripherals.peripheral_irq())))
         {
             s[0] = pc;
             ie = false;
@@ -1282,7 +1454,43 @@ std::string run_rc32_sim(RC32Sim &sim, uint64_t max_insns)
     return sim.done ? "DONE" : sim.halted ? "HALT" : "TIMEOUT";
 }
 
-void render_framebuffer_rgb(const Sim &sim, const FramebufferLayout &layout,
+uint16_t framebuffer_word(const Sim &sim, uint32_t address)
+{
+    return sim.mem[address];
+}
+
+uint16_t framebuffer_word(const RC32Sim &sim, uint32_t address)
+{
+    const auto it = sim.mem.find(address);
+    return it == sim.mem.end() ? 0 : it->second;
+}
+
+uint8_t framebuffer_byte(const Sim &sim, uint32_t address)
+{
+    const uint16_t word = framebuffer_word(sim, address >> 1);
+    return static_cast<uint8_t>((word >> ((address & 1u) * 8u)) & 0xffu);
+}
+
+uint8_t framebuffer_byte(const RC32Sim &sim, uint32_t address)
+{
+    const auto it = sim.mem.find(address >> 1);
+    if (it == sim.mem.end())
+        return 0;
+    return static_cast<uint8_t>((it->second >> ((address & 1u) * 8u)) & 0xffu);
+}
+
+Rgb framebuffer_palette(const Sim &, uint8_t index)
+{
+    return FB_PALETTE[index & 0x0fu];
+}
+
+Rgb framebuffer_palette(const RC32Sim &sim, uint8_t index)
+{
+    return sim.palette[index];
+}
+
+template<typename Model>
+void render_framebuffer_rgb(const Model &sim, const FramebufferLayout &layout,
         std::vector<uint8_t> &pixels)
 {
     const int pixels_count = layout.width * layout.height;
@@ -1290,8 +1498,19 @@ void render_framebuffer_rgb(const Sim &sim, const FramebufferLayout &layout,
     pixels.resize(pixels_count * 3);
     for (int pix = 0; pix < pixels_count; pix++)
     {
-        uint16_t word = sim.mem[layout.base_word + (pix >> 2)];
-        Rgb rgb = FB_PALETTE[(word >> ((pix & 3) * 4)) & 0xf];
+        uint8_t index;
+        if (layout.indexed8)
+        {
+            index = framebuffer_byte(sim, layout.base_word * 2u +
+                                     static_cast<uint32_t>(pix));
+        }
+        else
+        {
+            const uint16_t word = framebuffer_word(
+                sim, layout.base_word + (pix >> 2));
+            index = static_cast<uint8_t>((word >> ((pix & 3) * 4)) & 0xf);
+        }
+        const Rgb rgb = framebuffer_palette(sim, index);
         pixels[pix * 3 + 0] = rgb.r;
         pixels[pix * 3 + 1] = rgb.g;
         pixels[pix * 3 + 2] = rgb.b;
@@ -1359,7 +1578,8 @@ struct FramebufferWindow
         }
     }
 
-    bool update(const Sim &sim)
+    template<typename Model>
+    bool update(const Model &sim)
     {
         if (is_closed)
             return false;
@@ -1392,7 +1612,8 @@ struct FramebufferWindow
     }
 };
 
-std::string run_sim(Sim &sim, uint64_t max_insns, double mhz,
+template<typename Model>
+std::string run_sim(Model &sim, uint64_t max_insns, double mhz,
         FramebufferWindow *fb_window, bool *window_closed)
 {
     using Clock = std::chrono::steady_clock;
@@ -1441,7 +1662,8 @@ std::string run_sim(Sim &sim, uint64_t max_insns, double mhz,
     return sim.done ? "DONE" : sim.halted ? "HALT" : "TIMEOUT";
 }
 
-void write_framebuffer_png(const Sim &sim, const FramebufferLayout &layout,
+template<typename Model>
+void write_framebuffer_png(const Model &sim, const FramebufferLayout &layout,
         const std::string &path)
 {
     std::vector<uint8_t> pixels;
@@ -1461,6 +1683,7 @@ void print_usage(const char *prog)
         << "  --rc32                     RC32 Min architectural model\n"
         << "  --rc32-sys                 RC32 Sys architectural model\n"
         << "  --rc32-full                RC32 Full architectural model\n"
+        << "  --board-rc32               RC32 board SRAM, SDRAM, and high MMIO map\n"
         << "  --nano\n"
         << "  --fast [--fast-soft]      approximate Fast timing; DSP by default (full ISA)\n"
         << "  --width W --max-insns N --mhz N --trace --state --require-result\n"
@@ -1496,6 +1719,10 @@ Opts parse_args(int argc, char **argv)
         else if (opt == "--min")
         {
             opts.min = true;
+        }
+        else if (opt == "--board-rc32")
+        {
+            opts.board_rc32 = true;
         }
         else if (opt == "--rc32")
         {
@@ -1608,6 +1835,8 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("missing image");
     if (opts.min && opts.full)
         throw std::runtime_error("--min and --full are mutually exclusive");
+    if (opts.board_rc32 && !opts.rc32_sys)
+        throw std::runtime_error("--board-rc32 requires --rc32-sys or --rc32-full");
     if (opts.rc32 && (opts.nano || opts.fast))
         throw std::runtime_error("RC32 cannot be combined with RC16 profile options");
     if (opts.rc32_sys && opts.min)
@@ -1632,15 +1861,24 @@ int main(int argc, char **argv)
 
         if (opts.rc32)
         {
-            if (opts.fb_window || !opts.fb_dump_png.empty() || opts.uart)
+            if (!opts.board_rc32 && (opts.fb_window || !opts.fb_dump_png.empty() || opts.uart))
                 throw std::runtime_error("framebuffer and UART models are not available in RC32 mode");
 
             RC32Sim sim(image, opts);
-            const std::string outcome = run_rc32_sim(sim, opts.max_insns);
+            const FramebufferLayout fb_layout = framebuffer_layout(opts);
+            std::unique_ptr<FramebufferWindow> fb_window;
+            if (opts.fb_window)
+                fb_window = std::make_unique<FramebufferWindow>(opts.fb_scale, fb_layout);
+            bool window_closed = false;
+            const std::string outcome = opts.board_rc32 ?
+                run_sim(sim, opts.max_insns, opts.mhz, fb_window.get(), &window_closed) :
+                run_rc32_sim(sim, opts.max_insns);
+            if (!opts.fb_dump_png.empty())
+                write_framebuffer_png(sim, fb_layout, opts.fb_dump_png);
             const uint16_t result = sim.load_half(static_cast<uint32_t>(RESULT_W) << 1);
             const bool normal_halt = !opts.require_result &&
                 outcome == "HALT" && result == 0;
-            const bool pass = result == 0x600d || normal_halt;
+            const bool pass = result == 0x600d || normal_halt || window_closed;
             const double ipc = sim.cycles ? static_cast<double>(sim.insns) /
                 static_cast<double>(sim.cycles) : 0.0;
             std::fprintf(stderr, "%s after %llu insns, %llu cycles, IPC=%.3f, result=0x%04X: %s\n",

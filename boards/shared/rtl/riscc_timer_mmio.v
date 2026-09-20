@@ -8,19 +8,21 @@
 // without adding an architecturally visible prescaler register.
 module riscc_timer_mmio #(
     parameter integer TICK_DIV = 1,
+    parameter integer DATA_WIDTH = 16,
     parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
     input  wire        cpu_we,
+    // Word index: 2-byte spacing on RC16, 4-byte spacing on RC32 boards.
     input  wire [3:0]  cpu_addr,
-    input  wire [15:0] cpu_wdata,
-    output wire [15:0] cpu_rdata,
+    input  wire [DATA_WIDTH-1:0] cpu_wdata,
+    output wire [DATA_WIDTH-1:0] cpu_rdata,
     output wire        irq
 );
     // Direction disambiguates the one-shot command from the elapsed time:
-    // write byte 0xfff4 to arm/rearm; read it to obtain free-running ticks.
-    localparam [3:0] TIMER_W = 4'ha; // byte 0xfff4
+    // write slot 10 to arm/rearm; read it to obtain free-running ticks.
+    localparam [3:0] TIMER_W = 4'ha; // slot 10
     localparam integer DIV_BITS = (TICK_DIV <= 1) ? 1 : $clog2(TICK_DIV);
 
     localparam [DIV_BITS-1:0] TICK_DIV_LAST =
@@ -47,7 +49,7 @@ module riscc_timer_mmio #(
                 end else begin
                     write_q <= cpu_we;
                     write_addr_q <= cpu_addr;
-                    write_data_q <= cpu_wdata;
+                    write_data_q <= cpu_wdata[15:0];
                 end
             end
             assign write_fire = write_q;
@@ -56,7 +58,7 @@ module riscc_timer_mmio #(
         end else begin : g_direct_writes
             assign write_fire = cpu_we;
             assign write_addr = cpu_addr;
-            assign write_data = cpu_wdata;
+            assign write_data = cpu_wdata[15:0];
         end
     endgenerate
     wire count_write = write_fire && (write_addr == TIMER_W);
@@ -64,7 +66,7 @@ module riscc_timer_mmio #(
     wire count_active = |count_q;
     wire count_last = count_q[0] && !(|count_q[15:1]);
 
-    assign cpu_rdata = timer_sel ? ticks_q : 16'h0000;
+    assign cpu_rdata = timer_sel ? {{(DATA_WIDTH-16){1'b0}}, ticks_q} : {DATA_WIDTH{1'b0}};
     assign irq = pending_q;
 
     always @(posedge clk) begin

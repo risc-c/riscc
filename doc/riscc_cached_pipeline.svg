@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="570" viewBox="0 0 1080 570" role="img" aria-labelledby="title desc">
+  <title id="title">RISC-C Cached pipeline with internal instruction and data caches</title>
+  <desc id="desc">The three-stage Cached pipeline uses separate two kilobyte instruction and data caches with registered data and full-address tag reads. DSP multiplication takes four Execute clocks. All instruction fetches are cached. One high address bit selects uncached data accesses. Cache misses and uncached data accesses share a 32-bit backing port.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: sans-serif; fill: #172033; font-size: 16px; }
+      .title { font-size: 25px; font-weight: bold; }
+      .label { font-size: 18px; font-weight: bold; }
+      .small { font-size: 14px; fill: #475569; }
+      .geometry { font-size: 13px; }
+      .pipe { stroke: #527694; stroke-width: 1.5; fill: #eef6ff; }
+      .cache { stroke: #52856c; stroke-width: 1.5; fill: #eefaf3; }
+      .memory { stroke: #9a7542; stroke-width: 1.5; fill: #fff8eb; }
+      .flow { fill: none; stroke: #334155; stroke-width: 2; marker-end: url(#arrow); }
+      .control { fill: none; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1080" height="570" fill="#fff"/>
+  <text x="35" y="40" class="title">RISC-C Cached · RC16 / RC32 Full</text>
+  <text x="35" y="68" class="small">Fast pipeline with 2 KiB instruction and data caches and one 32-bit backing port</text>
+
+  <rect x="35" y="112" width="250" height="105" rx="8" class="pipe"/>
+  <text x="55" y="143" class="label">1 · Fetch</text>
+  <text x="55" y="173">PC → I-cache lookup</text>
+  <text x="55" y="198" class="small">16-bit response held on stalls</text>
+
+  <path d="M285 164H370" class="flow"/>
+  <rect x="370" y="112" width="300" height="105" rx="8" class="pipe"/>
+  <text x="390" y="143" class="label">2 · Decode / RF</text>
+  <text x="390" y="173">Instruction decode</text>
+  <text x="390" y="198" class="small">Synchronous operand reads</text>
+
+  <path d="M670 164H755" class="flow"/>
+  <rect x="755" y="112" width="290" height="105" rx="8" class="pipe"/>
+  <text x="775" y="143" class="label">3 · Execute</text>
+  <text x="775" y="173">ALU · shifts · 4-cycle DSP MUL</text>
+  <text x="775" y="198" class="small">D-cache request; store held to ACK</text>
+
+  <path d="M900 112V88H155V112" class="control"/>
+  <path d="M900 217V247H520V217" class="flow"/>
+  <text x="705" y="271" text-anchor="middle" class="small">Writeback and forwarding</text>
+
+  <rect x="35" y="302" width="250" height="95" rx="8" class="cache"/>
+  <text x="55" y="334" class="label">I-cache · 2 KiB</text>
+  <text x="55" y="363" class="small geometry">RC16 64×32 B · RC32 32×64 B</text>
+  <text x="55" y="384" class="small">Read-only, line fill on miss</text>
+  <path d="M160 302V217" class="flow"/>
+
+  <rect x="755" y="302" width="290" height="95" rx="8" class="cache"/>
+  <text x="775" y="334" class="label">D-cache · 2 KiB</text>
+  <text x="775" y="363" class="small geometry">RC16 64×32 B · RC32 32×64 B</text>
+  <text x="775" y="384" class="small">Write-through, no write-allocate</text>
+  <path d="M900 217V302" class="flow" marker-start="url(#arrow)"/>
+  <text x="880" y="290" text-anchor="end" class="small">Data + saved byte mask</text>
+
+  <text x="520" y="349" text-anchor="middle" class="small">Registered tag and data reads</text>
+  <text x="520" y="373" text-anchor="middle" class="small">Hit check in the response clock</text>
+
+  <path d="M160 397V447H390" class="flow"/>
+  <path d="M900 397V447H690" class="flow"/>
+  <rect x="390" y="414" width="300" height="98" rx="8" class="memory"/>
+  <text x="410" y="447" class="label">Shared 32-bit backing port</text>
+  <text x="410" y="476" class="small">SRAM · fills · uncached reads · stores</text>
+  <text x="410" y="497" class="small">Wishbone B4 pipelined handshakes</text>
+
+  <text x="35" y="550">ALU chains sustain 1 IPC · misses fill complete cache lines · external DMA is not coherent</text>
+</svg>

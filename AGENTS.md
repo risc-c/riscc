@@ -9,6 +9,11 @@
 - `README.md` is the overview; use `doc/HARDWARE.md` for RTL/board/PPA,
   `doc/PROGRAMMING.md` for software, `doc/RISC-C-ISA.md` for normative ISA,
   and `doc/RISC-C-ABI.md` for normative ABI. Change ISA only when asked.
+- Documentation is for human readers, not an agent's implementation log.
+  Describe the current design, usage, constraints, and measurements concisely.
+  Omit session narratives, optimization diaries, self-justification, temporary
+  artifact inventories, and test-run transcripts. Keep working notes and raw
+  logs under `build/`; report task progress and validation in the conversation.
 - Refresh affected measurements and `doc/HARDWARE.md` before finishing an
   implementation or measurement change. Compare with recorded results, not a
   newly built `HEAD` baseline.
@@ -19,6 +24,7 @@ Run the narrowest functional test after each edit:
 
 - RC16: `make test-core PROFILE=<profile> WIDTH=<width>`
 - Nano: `make test-nano`; Fast: `make test-fast-all test-fast-irq-all`
+- Cached: `make test-cached-all test-cached-irq-all`
 - Shared RF, assembler, test, or profile changes: `make test-all`
 - Atum RTL/demo: `make atum-a3-demo-rtlsim`
 
@@ -28,6 +34,8 @@ Every RTL change also needs its relevant fuzz target:
 - Fast, including synchronous ECP5 block-RF cases: `make fuzz-fast fuzz-fast32`
   It uses final written-memory comparison and the generated program's
   architectural self-check because Fast has no retirement-trace interface.
+- Cached: `make fuzz-cached fuzz-cached32`, with the same architectural checks
+  through the internal caches.
 
 Before every commit or release, run `make test-all` and all applicable fuzz
 targets; report the commands and results. For CPI changes run `make bench`;
@@ -49,10 +57,11 @@ recorded results.
   variants. Specialize only for a real architectural need or a reproducible
   benefit unavailable from a generic form.
 - Reject affected LUT/site increases or Fmax decreases without a measured
-  compensating benefit. RC16/Nano are area-first; Fast prioritizes MIPS.
+  compensating benefit. RC16/Nano are area-first; Fast targets MIPS per LUT/LE.
 
 Quartus Pro is required for Agilex characterization. Set `QUARTUS_SH` to the
-configured executable when needed; `make atum-a3-demo` builds the SOF but is
+configured executable and run Quartus outside the sandbox; sandboxed runs can
+report a false device-license error. `make atum-a3-demo` builds the SOF but is
 not an aggregate prerequisite. Build Icepi Zero with `make icepi-zero-demo-bit`.
 Hardware programming needs explicit approval; after programming, wait for USB
 re-enumeration before connecting serial/video interfaces.

@@ -3,25 +3,13 @@
 Author: Arto Vuori <avuori@iki.fi>
 
 RISC-C is an open processor architecture and FPGA soft-core family for compact
-systems. Its compact RISC-style instruction set is designed for compiled C and
+systems. Its RISC-style instruction set is designed for compiled C and
 C++, and the family includes both 16- and 32-bit architectures. Implementations
 range from tiny bit-serial cores to a three-stage pipelined core.
 
-[`rtl/riscc_serial.v`](rtl/riscc_serial.v) provides the sliced multicycle core.
-[`rtl/riscc_wide.v`](rtl/riscc_wide.v) provides the full-width multicycle core
-with `XLEN=16/32`, Min/Sys/Full profiles, and optional paired multiply/divide.
-RC16 `/16`, RC32 `/32`, and the `mulh`/`muldiv` build targets select this core.
-[`rtl/riscc_fast.v`](rtl/riscc_fast.v) provides the three-stage Full pipeline with `XLEN=16/32`.
-See the [Hardware manual](doc/HARDWARE.md#parameterized-full-width-core)
-for parameters and measured comparisons.
-
-RISC-C Nano is the smallest practical C/C++-programmable FPGA soft
-CPU, using 94 ECP5 LUT4 sites plus one EBR. Despite its size, it is a
-conventional register-based CPU supported by LLVM/Clang. A version with
-interrupts, preemptive RTOS support, 32-bit registers, and a 32-bit
-address space still uses only 172 ECP5 LUT4 sites plus one EBR, while keeping
-the compact instruction set. Optional hardware multiplication and division
-are also available.
+RISC-C Nano is the smallest practical C/C++-programmable FPGA soft CPU,
+using just 94 ECP5 LUT4 sites plus one memory block. Even a 32-bit RISC-C core
+with interrupts and preemptive RTOS support uses only 172 LUT4 sites.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
