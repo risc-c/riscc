@@ -11,7 +11,8 @@ and one-bubble redirects. CASE=8 checks RC32 native loads whose destination
 aliases the base or index register. CASE=10 checks MUL destination aliases,
 back-to-back dependent MUL, and dependent ALU/store consumers,
 including an IRQ before the indexed load. CASE=9 withdraws IRQ while an older
-fetch delays interrupt entry. The main programs run with registered
+fetch delays interrupt entry. CASE=11 raises IRQ during soft MUL and checks
+deferred entry plus the dependent result. The main programs run with registered
 responses, delayed ACK, request STALL, same-cycle ACK, and mixed response
 timing.
 """
@@ -50,10 +51,12 @@ def run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedP
 
 
 def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
-                multiplier: str, block_rf: bool, max_cycles: int,
-                coverage: dict[str, int], rtl_source: Path) -> bool:
+                multiplier: str, block_rf: bool, register_fetch: bool,
+                max_cycles: int, coverage: dict[str, int],
+                rtl_source: Path) -> bool:
     rf_name = "block" if block_rf else "distributed"
-    name = f"xlen{xlen}-{multiplier}-{rf_name}"
+    fetch_name = "registered-fetch" if register_fetch else "compact-fetch"
+    name = f"xlen{xlen}-{multiplier}-{rf_name}-{fetch_name}"
     mdir = build_root / name
     mdir.mkdir(parents=True, exist_ok=True)
     binary = mdir / "Vriscc_cached_pipeline_tb"
@@ -67,6 +70,7 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         verilator, "--binary", "--timing", "-Wno-UNOPTFLAT",
         "-Wno-WIDTH", "-Wno-INITIALDLY",
         "--top-module", "riscc_cached_pipeline_tb", f"-GXLEN={xlen}",
+        f"-GREGISTER_FETCH={int(register_fetch)}",
         "--Mdir", str(mdir), *defines,
         str(rtl_source),
         str(root / "rtl/riscc_fast.v"),
@@ -77,27 +81,49 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         sys.stderr.write(f"{name}: Verilator build failed\n{built.stdout}")
         return False
 
-    checks: list[tuple[int, str, int]] = [
-        (0, "", 0), (1, "", 0), (2, "", 0), (2, "WAIT", 0),
-        (3, "", 0), (3, "WAIT", 0), (4, "", 0), (4, "WAIT", 0),
-        (6, "", 0), (6, "ACK_HIGH", 0), (9, "", 0), (9, "STALL", 0),
-    ]
-    checks.extend((case, "STALL", 0) for case in range(5))
-    checks.extend((case, "ZERO", 0) for case in range(5))
-    checks.extend((case, "MIX", 0) for case in range(5))
-    checks.extend((case, "ACK_HIGH", 0) for case in range(5))
-    checks.extend((7, mode, 0)
-                  for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
-    checks.extend((10, mode, 0)
-                  for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
-    if xlen == 32:
-        checks.extend((8, mode, 0)
+    if register_fetch:
+        # Cover every functional program in every timing class. ZERO and
+        # ACK_HIGH exercise same-cycle acknowledgements; WAIT, STALL, and MIX
+        # exercise held and changing delayed responses.
+        registered_modes = ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH")
+        registered_cases = (0, 1, 2, 3, 4, 6, 7, 9, 10)
+        if multiplier == "soft":
+            registered_cases += (11,)
+        checks = [(case, mode, 0)
+                  for case in registered_cases for mode in registered_modes]
+        if xlen == 32:
+            # The split raw data port carries one complete RC32 native word.
+            # Raise IRQ after that accepted request; the handler uses
+            # CLI/STI/RETI and checks that EPC is the following instruction.
+            checks.extend((5, mode, 1)
+                          for mode in ("", "WAIT", "STALL", "ZERO", "MIX"))
+            checks.extend((8, mode, 0)
+                          for mode in registered_modes)
+    else:
+        checks: list[tuple[int, str, int]] = [
+            (0, "", 0), (1, "", 0), (2, "", 0), (2, "WAIT", 0),
+            (3, "", 0), (3, "WAIT", 0), (4, "", 0), (4, "WAIT", 0),
+            (6, "", 0), (6, "ACK_HIGH", 0), (9, "", 0), (9, "STALL", 0),
+        ]
+        checks.extend((case, "STALL", 0) for case in range(5))
+        checks.extend((case, "ZERO", 0) for case in range(5))
+        checks.extend((case, "MIX", 0) for case in range(5))
+        checks.extend((case, "ACK_HIGH", 0) for case in range(5))
+        checks.extend((7, mode, 0)
                       for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
-        # The split raw data port carries one complete RC32 native word.
-        # Raise IRQ after that accepted request; the handler uses
-        # CLI/STI/RETI and checks that EPC is the following instruction.
-        checks.extend((5, mode, 1)
-                      for mode in ("", "WAIT", "STALL", "ZERO", "MIX"))
+        checks.extend((10, mode, 0)
+                      for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
+        if multiplier == "soft":
+            checks.extend((11, mode, 0)
+                          for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
+        if xlen == 32:
+            checks.extend((8, mode, 0)
+                          for mode in ("", "WAIT", "STALL", "ZERO", "MIX", "ACK_HIGH"))
+            # The split raw data port carries one complete RC32 native word.
+            # Raise IRQ after that accepted request; the handler uses
+            # CLI/STI/RETI and checks that EPC is the following instruction.
+            checks.extend((5, mode, 1)
+                          for mode in ("", "WAIT", "STALL", "ZERO", "MIX"))
     for case, mode, irq_beat in checks:
         command = [str(binary), f"+CASE={case}"]
         if mode:
@@ -158,9 +184,11 @@ def main() -> int:
     coverage = {key: 0 for key in ("early", "ack_stalls", "stalls", "stable",
                                    "drops", "ack_idle")}
     for xlen, multiplier, block_rf in variants:
-        if not one_variant(root, args.verilator, build_root, xlen, multiplier,
-                           block_rf, args.max_cycles, coverage, rtl_source):
-            return 1
+        for register_fetch in (False, True):
+            if not one_variant(root, args.verilator, build_root, xlen,
+                               multiplier, block_rf, register_fetch,
+                               args.max_cycles, coverage, rtl_source):
+                return 1
     if not coverage["early"]:
         sys.stderr.write("Cached pipeline coverage failed: no same-cycle ACK\n")
         return 1
@@ -170,8 +198,9 @@ def main() -> int:
     if not coverage["ack_idle"]:
         sys.stderr.write("Cached pipeline coverage failed: no held idle ACK\n")
         return 1
-    print(f"Cached pipeline cycle checks PASS ({len(variants)} variants, "
-          f"44 base cases plus 11 RC32-specific cases; early_acks={coverage['early']} "
+    print(f"Cached pipeline cycle checks PASS ({len(variants)} variants in both "
+          f"fetch modes; registered mode covers functional timing classes; "
+          f"early_acks={coverage['early']} "
           f"ack_stalls={coverage['ack_stalls']} stalls={coverage['stalls']} "
           f"stable_stalls={coverage['stable']} response_drops={coverage['drops']} "
           f"ack_idle={coverage['ack_idle']})")

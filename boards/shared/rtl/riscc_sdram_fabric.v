@@ -53,9 +53,8 @@ module riscc_sdram_fabric (
 
     // Command storage is shared with the crossing; arbitration adds no stage.
     wire host_direction_matches = !owner_write_q || host_we;
-    assign host_stall = !state_q[1] || (!owner_write_q && issued_q[4]) ||
-                        !host_direction_matches || memory_stall;
-    assign video_stall = !state_q[2] || issued_q[4] || memory_stall;
+    assign host_stall = !state_q[1] || !host_direction_matches || memory_stall;
+    assign video_stall = !state_q[2] || memory_stall;
     wire cpu_accept = host_request && !host_stall;
     wire video_accept = video_request && !video_stall;
     wire accept = cpu_accept || video_accept;
@@ -65,19 +64,22 @@ module riscc_sdram_fabric (
     assign memory_we = !owner_video_q && host_we;
     // The controller uses STB for admission; CYC need not delimit grants.
     assign memory_cyc = 1'b1;
-    assign memory_stb = (owner_write_q || !issued_q[4]) &&
-        ((state_q[1] && host_request && host_direction_matches) ||
-         (state_q[2] && video_request));
+    assign memory_stb = (state_q[1] && host_request && host_direction_matches) ||
+                        (state_q[2] && video_request);
     wire response = memory_ack;
     // Writes release capacity at controller capture. Their later physical
     // replies only drain the grant, never acknowledge another CPU request.
-    assign host_ack = (cpu_accept && host_we) ||
+    // A write already satisfies the direction check. Decode its capture
+    // directly instead of routing the reply through the general STALL mux.
+    assign host_ack = (host_request && host_we && state_q[1] && !memory_stall) ||
                       (response && !owner_video_q && !owner_write_q);
     assign video_ack = response && owner_video_q;
     assign video_rdata = memory_rdata;
 
     wire start = state_q[0] && memory_ready && (host_request || video_request);
-    wire read_limit = issued_q[4];
+    // End a read grant on its sixteenth acceptance. The state register
+    // then blocks the next command without a count-limit mux on STB/STALL.
+    wire read_limit = (&issued_q[3:0]) && !memory_stall;
     wire finish_cpu = owner_write_q ?
         (video_request || (host_request && !host_we)) :
         (!host_request || read_limit);

@@ -142,6 +142,15 @@ module riscc_sdram #(
     wire pop = !pref_count_q[1] && !empty_q;
     wire write_first = issue && writing;
     wire accept = mem_cyc && mem_stb && !mem_stall;
+    // Predecode occupancy carries independently of command acceptance.
+    wire [FIFO_BITS:0] count_toggle;
+    assign count_toggle[0] = accept ^ pop;
+    genvar count_bit;
+    generate for (count_bit = 1; count_bit <= FIFO_BITS; count_bit = count_bit + 1) begin : g_count
+        assign count_toggle[count_bit] =
+            (accept && !pop && (&count_q[count_bit-1:0])) ||
+            (pop && !accept && !(|count_q[count_bit-1:0]));
+    end endgenerate
     reg blocked_q;
     assign mem_stall = blocked_q;
     always @(posedge clk) begin
@@ -240,11 +249,7 @@ module riscc_sdram #(
         // mux on the FIFO-to-command backpressure path.
         full_q <= !pop && (full_q || (accept && count_q == FIFO_FULL - 1'b1));
         empty_q <= !accept && (empty_q || (pop && count_q == 1));
-        case ({accept, pop})
-            2'b10: count_q <= count_q + 1'b1;
-            2'b01: count_q <= count_q - 1'b1;
-            default: ;
-        endcase
+        count_q <= count_q ^ count_toggle;
 
         // SDR data launches CAS-1 edges after READ and is captured at the
         // following device edge (CAS). Assemble on the next fabric edge.

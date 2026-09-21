@@ -10,7 +10,8 @@
 `default_nettype none
 
 module riscc_cached_pipeline_tb #(
-    parameter integer XLEN = 16
+    parameter integer XLEN = 16,
+    parameter integer REGISTER_FETCH = 0
 );
     localparam integer MEM_WORDS = 65536;
     localparam integer DATA_BYTE = 16'h0080;
@@ -21,6 +22,10 @@ module riscc_cached_pipeline_tb #(
     localparam integer DONE_HALF = DONE_BYTE >> 1;
     localparam [15:0] DONE_VALUE = 16'h005a;
     localparam integer CALL_TARGET = XLEN == 32 ? 32'h10040 : 32'h0040;
+    localparam integer COMPACT_FETCH_STARTUP_GAP = 2;
+    localparam integer REGISTERED_FETCH_STARTUP_GAP = 3;
+    localparam integer COMPACT_FETCH_REDIRECT_GAP = 2;
+    localparam integer REGISTERED_FETCH_REDIRECT_GAP = 3;
 
     reg clk;
     reg rst;
@@ -107,6 +112,7 @@ module riscc_cached_pipeline_tb #(
     integer reti_count;
     integer main_data_accepts;
     integer irq_shift_entry_errors;
+    integer irq_mul_entry_errors;
     integer alias_data_accepts;
     integer alias_addr_errors;
     integer alias_irq_entry_errors;
@@ -132,7 +138,9 @@ module riscc_cached_pipeline_tb #(
     reg d_response_drop_q;
     reg [31:0] d_last_response_data_q;
 
-    riscc_cached_pipe #(.XLEN(XLEN), .RESET_PC(0)) dut (
+    riscc_cached_pipe #(.XLEN(XLEN), .RESET_PC(0),
+                        .FETCH_RESPONSE_HELD(REGISTER_FETCH ? 1 : 0),
+                        .REGISTER_FETCH(REGISTER_FETCH)) dut (
         .clk(clk), .rst(rst), .irq(irq),
         .imem_addr(imem_addr), .imem_rdata(imem_rdata),
         .imem_cyc(imem_cyc), .imem_stb(imem_stb),
@@ -439,6 +447,27 @@ module riscc_cached_pipeline_tb #(
                 put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd6, 3'd7,
                         DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 11) begin
+                // Raise IRQ during a soft MUL. The handler records the
+                // completed product, then RETI resumes at a dependent ALU
+                // consumer so both deferred entry and writeback are checked.
+                mem[0] = enc_branch(3'd4, 8'sd7); // JMP8 -> 8
+                put_mem(2, 1'b1, 3'd3, 3'd7,
+                        RESULT_BYTE-DATA_BYTE+4);       // handler observes r3
+                mem[3] = enc_r(3'd5, 3'd0, 5'h1f, 3'd0); // RETI S0
+                pc = 8;
+                put_i(pc, 3'd7, 3'd0, DATA_BYTE); pc = pc + 1;
+                put_i(pc, 3'd1, 3'd0, 8'd3); pc = pc + 1;
+                put_i(pc, 3'd2, 3'd0, 8'd4); pc = pc + 1;
+                mem[pc] = enc_r(3'd2, 3'd0, 5'h1f, 3'd0); pc = pc + 1; // CLI
+                mem[pc] = enc_r(3'd7, 3'd0, 5'h1f, 3'd0); pc = pc + 1; // STI
+                put_r(pc, 3'd3, 3'd1, 5'h07, 3'd2); pc = pc + 1; // MUL
+                put_r(pc, 3'd4, 3'd3, 5'h00, 3'd2); pc = pc + 1; // ADD
+                put_mem(pc, 1'b1, 3'd4, 3'd7,
+                        RESULT_BYTE-DATA_BYTE); pc = pc + 1;
+                put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
+                put_mem(pc, 1'b1, 3'd6, 3'd7,
+                        DONE_BYTE-DATA_BYTE);
             end else begin
                 // Typed accesses are one beat at either width. Native and
                 // indexed accesses use one native data request.
@@ -521,8 +550,12 @@ module riscc_cached_pipeline_tb #(
                       (d_response_pending_q &&
                        (d_response_wait_q == 3'd1)) ||
                       d_early_response;
+    // The registered-fetch core retains a fetched response while Decode or
+    // Execute is occupied, so the memory model must keep its last response
+    // value valid while the port is idle in that mode.
     assign imem_rdata = i_response_pending_q ? i_response_data_q :
-                        i_live_read ? mem[imem_addr] : 16'hdead;
+                        i_live_read ? mem[imem_addr] :
+                        REGISTER_FETCH ? i_response_data_q : 16'hdead;
     assign dmem_rdata = d_response_pending_q ? d_response_data_q :
                         d_early_response ? d_live_read : 32'hdead_beef;
 
@@ -730,6 +763,7 @@ module riscc_cached_pipeline_tb #(
             reti_count <= 0;
             main_data_accepts <= 0;
             irq_shift_entry_errors <= 0;
+            irq_mul_entry_errors <= 0;
             alias_data_accepts <= 0;
             alias_addr_errors <= 0;
             alias_irq_entry_errors <= 0;
@@ -746,7 +780,12 @@ module riscc_cached_pipeline_tb #(
                 irq_raised_q <= 1'b1;
                 irq <= 1'b1;
             end
-            if (test_case == 9 && dut.take_irq && dut.fetch_pending &&
+            if (test_case == 11 && dut.in_mul && !irq_raised_q) begin
+                irq_raised_q <= 1'b1;
+                irq <= 1'b1;
+            end
+            if (test_case == 9 && dut.take_irq &&
+                (dut.fetch_pending || (REGISTER_FETCH && dut.fetch_held_q)) &&
                 !imem_ack && !irq_withdrawn_q) begin
                 irq <= 1'b0;
                 irq_withdrawn_q <= 1'b1;
@@ -774,11 +813,14 @@ module riscc_cached_pipeline_tb #(
                     irq <= 1'b1;
             end
             if ((test_case == 5 || test_case == 7 || test_case == 8 ||
-                 test_case == 9) && dut.take_irq && dut.frontend_flush) begin
+                 test_case == 9 || test_case == 11) && dut.take_irq &&
+                dut.frontend_flush) begin
                 irq_take_count <= irq_take_count + 1;
                 irq <= 1'b0;
                 if ((test_case == 7 || test_case == 9) && dut.in_shift)
                     irq_shift_entry_errors <= irq_shift_entry_errors + 1;
+                if (test_case == 11 && dut.in_mul)
+                    irq_mul_entry_errors <= irq_mul_entry_errors + 1;
                 if ((test_case == 5 || test_case == 8) && dut.data_pending)
                     fail("IRQ entered with a data request still pending");
                 if (test_case == 5 &&
@@ -803,12 +845,17 @@ module riscc_cached_pipeline_tb #(
         if (!rst) begin
             if (dut.commit_valid && !dut.run_commit &&
                 test_case != 6 && test_case != 7 && test_case != 9 &&
-                test_case != 10)
+                test_case != 10 && test_case != 11)
                 fail("non-multicycle test committed without run_commit");
             if (dut.commit_valid) begin
                 if (!have_last_commit && strict_timing &&
-                    (test_case == 0 || test_case == 1) && cycle_q != 2) begin
-                    fail("compact fetch startup did not take three edges");
+                    (test_case == 0 || test_case == 1)) begin
+                    if (REGISTER_FETCH) begin
+                        if (cycle_q != REGISTERED_FETCH_STARTUP_GAP)
+                            fail("registered fetch startup did not take three edges");
+                    end else if (cycle_q != COMPACT_FETCH_STARTUP_GAP) begin
+                        fail("compact fetch startup did not take three edges");
+                    end
                 end
                 if (test_case == 3) begin
                     if (dut.x_pc_q == 3)
@@ -817,16 +864,27 @@ module riscc_cached_pipeline_tb #(
                     if (have_last_commit && strict_timing) begin
                         if (last_commit_pc == 2 &&
                             (dut.x_pc_q != (CALL_TARGET >> 1) ||
-                             cycle_q - last_commit_cycle != 2))
-                            fail("JALL target did not commit after one redirect bubble");
+                             cycle_q - last_commit_cycle !=
+                             (REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
+                              COMPACT_FETCH_REDIRECT_GAP)))
+                            fail(REGISTER_FETCH ?
+                                 "JALL target did not commit after registered redirect" :
+                                 "JALL target did not commit after one redirect bubble");
                         if (last_commit_pc == (CALL_TARGET >> 1) &&
-                            (dut.x_pc_q != 4 || cycle_q - last_commit_cycle != 2))
-                            fail("RET target did not commit after one redirect bubble");
+                             (dut.x_pc_q != 4 ||
+                             cycle_q - last_commit_cycle !=
+                             (REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
+                              COMPACT_FETCH_REDIRECT_GAP)))
+                            fail(REGISTER_FETCH ?
+                                 "RET target did not commit after registered redirect" :
+                                 "RET target did not commit after one redirect bubble");
                     end
                 end
                 if (test_case == 5 && dut.x_pc_q == 6)
                     reti_count <= reti_count + 1;
                 if ((test_case == 7 || test_case == 9) && dut.x_pc_q == 3)
+                    reti_count <= reti_count + 1;
+                if (test_case == 11 && dut.x_pc_q == 3)
                     reti_count <= reti_count + 1;
                 if (test_case == 8 && dut.x_pc_q == 6)
                     reti_count <= reti_count + 1;
@@ -863,7 +921,8 @@ module riscc_cached_pipeline_tb #(
                         ((last_commit_pc == 3 && dut.x_pc_q == 2) ||
                          (last_commit_pc == 4 && dut.x_pc_q == 7) ||
                          (last_commit_pc == 10 && dut.x_pc_q == 12)))
-                        wanted_gap = 2;
+                        wanted_gap = REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
+                                      COMPACT_FETCH_REDIRECT_GAP;
                     if (cycle_q - last_commit_cycle != wanted_gap) begin
                         $display("GAP pc=%0d expected=%0d actual=%0d", dut.x_pc_q,
                                  wanted_gap, cycle_q-last_commit_cycle);
@@ -952,7 +1011,8 @@ module riscc_cached_pipeline_tb #(
                     fail("IRQ was not deferred until shift completion");
                 if (reti_count != 1)
                     fail("shift IRQ handler did not return through RETI");
-                if (test_case == 9 && wait_mode && !irq_withdrawn_q)
+                if (test_case == 9 && wait_mode && !REGISTER_FETCH &&
+                    !irq_withdrawn_q)
                     fail("IRQ was not withdrawn during a pending redirect");
             end else if (test_case == 8) begin
                 if (XLEN != 32)
@@ -985,6 +1045,17 @@ module riscc_cached_pipeline_tb #(
                     fail("MUL alias or dependent result mismatch");
                 if (simple_gap_errors != 0)
                     fail("MUL or dependent consumer latency changed");
+            end else if (test_case == 11) begin
+                if (mem[RESULT_HALF] !== 16'h0010 ||
+                    (XLEN == 32 && mem[RESULT_HALF + 1] !== 16'h0000) ||
+                    mem[RESULT_HALF + 2] !== 16'h000c ||
+                    (XLEN == 32 && mem[RESULT_HALF + 3] !== 16'h0000))
+                    fail("IRQ-interrupted MUL result mismatch");
+                if (irq_take_count != 1 || irq_epc_errors != 0 ||
+                    irq_mul_entry_errors != 0)
+                    fail("IRQ was not deferred until MUL completion");
+                if (reti_count != 1)
+                    fail("MUL IRQ handler did not return through RETI");
             end else begin
                 if (mem[RESULT_HALF] !== 16'h00a5)
                     fail("LDB result mismatch");

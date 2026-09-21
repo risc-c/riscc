@@ -1,4 +1,4 @@
-// IcePi SDRAM PLL: 166 2/3 MHz from the 50 MHz oscillator.
+// IcePi clocks: 166 2/3 MHz SDRAM and 55 5/9 MHz CPU from 50 MHz.
 
 `default_nettype none
 
@@ -8,11 +8,13 @@ module icepi_sdram_pll (
     input wire rst,
     output wire outclk,
     output wire pinclk,
+    output wire cpu_clk,
     output wire locked
 );
     (* FREQUENCY_PIN_CLKI="50" *)
     (* FREQUENCY_PIN_CLKOP="166.667" *)
     (* FREQUENCY_PIN_CLKOS="166.667" *)
+    (* FREQUENCY_PIN_CLKOS2="55.555556" *)
     (* ICP_CURRENT="12" *)
     (* LPF_RESISTOR="8" *)
     (* MFG_ENABLE_FILTEROPAMP="1" *)
@@ -23,6 +25,9 @@ module icepi_sdram_pll (
         .STDBY_ENABLE("DISABLED"),
         .DPHASE_SOURCE("DISABLED"),
         .OUTDIVIDER_MUXA("DIVA"),
+        .OUTDIVIDER_MUXB("DIVB"),
+        .OUTDIVIDER_MUXC("DIVC"),
+        .OUTDIVIDER_MUXD("DIVD"),
         .CLKI_DIV(3),
         .CLKOP_ENABLE("ENABLED"),
         .CLKOP_DIV(4),
@@ -33,6 +38,10 @@ module icepi_sdram_pll (
         .CLKOS_DIV(4),
         .CLKOS_CPHASE(5),
         .CLKOS_FPHASE(2),
+        .CLKOS2_ENABLE("ENABLED"),
+        .CLKOS2_DIV(12),
+        .CLKOS2_CPHASE(2),
+        .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("CLKOP"),
         .CLKFB_DIV(10)
     ) pll_i (
@@ -41,6 +50,8 @@ module icepi_sdram_pll (
         .CLKI(refclk),
         .CLKOP(outclk),
         .CLKOS(pinclk),
+        .CLKOS2(cpu_clk),
+        .CLKOS3(),
         .CLKFB(outclk),
         .CLKINTFB(),
         .PHASESEL0(1'b0),
@@ -51,6 +62,8 @@ module icepi_sdram_pll (
         .PLLWAKESYNC(1'b0),
         .ENCLKOP(1'b0),
         .ENCLKOS(1'b0),
+        .ENCLKOS2(1'b0),
+        .ENCLKOS3(1'b0),
         .LOCK(locked)
     );
 endmodule

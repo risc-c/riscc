@@ -2,7 +2,7 @@
 `default_nettype none
 module cpu_memory_tb #(
     parameter integer DATA_BITS = 16,
-    parameter realtime CPU_PERIOD = 20.0
+    parameter realtime CPU_PERIOD = 18.0
 );
     localparam integer ADDRESS_BITS = DATA_BITS == 16 ? 23 : 24;
     reg cpu_clk = 0, memory_clk = 0;

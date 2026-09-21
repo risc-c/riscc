@@ -94,7 +94,7 @@ module top (
     wire [23:0] palette_wdata;
     atum_a3_nano_soc #(
         .MEM_HEX("mem/demo.memh"),
-        .UART_CLK_DIV(1447)
+        .UART_CLK_DIV(1736)
     ) soc (
         .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
         .clk(sys_clk),

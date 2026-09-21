@@ -36,7 +36,7 @@ set_global_assignment -name SDC_FILE ../../../boards/atum_a3_nano/atum_a3_nano.s
 
 # Board pin assignments. SDRAM test tools extract these assignments.
 # CLOCK0_50 drives the Terasic HDMI PLL; CLOCK1_50 feeds the RISC-C system
-# PLL, which generates the 166 2/3 MHz SoC clock.
+# PLL, which generates the 200 MHz CPU and 166 2/3 MHz SDRAM clocks.
 set_instance_assignment -name IO_STANDARD "1.2-V" -to CLOCK0_50
 set_location_assignment PIN_K43 -to CLOCK0_50
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to CLOCK1_50

@@ -68,7 +68,8 @@ Cached uses the same handshake on a 32-bit, word-addressed backing port:
 The port carries cache-line fills, write-through stores, and uncached
 accesses; instruction requests are 16 bits and data requests are 32 bits internally.
 
-The board SRAM/MMIO adapters return ACK and read data one clock after
+The board SRAM connects directly to the CPU instruction and data ports,
+ahead of the caches. SRAM and MMIO return ACK and read data one clock after
 acceptance. Writes and MMIO side effects occur at acceptance.
 
 Nano keeps a smaller synchronous-SRAM interface. `mem_oe_n` is the active-low
@@ -222,14 +223,28 @@ loads add one clock. DSP multiplication takes four Execute clocks, or
 The data cache is write-through and does not allocate on a store miss.
 `DCACHE_UNCACHED_BIT` selects uncached data and MMIO; its default, `XLEN-1`,
 makes the upper half of the address space uncached. Instruction fetches are
-always cached, so executable memory must support side-effect-free reads of
-complete cache lines.
+cached outside the optional local SRAM, so external executable memory must
+support side-effect-free reads of complete cache lines.
+
+`SRAM_ADDR_BITS` optionally places a dual-port SRAM at address zero,
+bypassing both caches; 14 selects 16 KiB. `SRAM_HEX` supplies its initial
+contents. Instruction and data accesses run independently on the CPU clock
+and complete in one clock. A simultaneous instruction fetch and store to
+the same SRAM word retries the fetch after the write. With local SRAM enabled,
+external instruction-cache lookups take two clocks; data-cache hits take one.
+`REGISTER_FETCH` adds an instruction register before decode for higher CPU
+clock rates. Arithmetic still sustains one instruction per clock; taken
+branches have two bubbles instead of one. Branch targets go directly to the
+fetch port. Atum enables this option.
 
 Reset clears cache validity in 64 clocks for RC16 or 32 for RC32. Stores
 invalidate the corresponding instruction-cache index; a taken jump discards
 prefetched instructions. External writers and DMA are not cache-coherent.
 
 ![RISC-C Cached pipeline and caches](riscc_cached_pipeline.svg)
+
+*Default pipeline; optional local SRAM connects directly to the CPU instruction
+and data ports, ahead of the caches.*
 
 ### FPGA build selection
 
@@ -271,9 +286,8 @@ MIPS per LUT4 site.
 Agilex 3 results use Quartus Pro 26.1, seed 1, and a 4 ns target. The recipe
 is Aggressive Area for Full, MulH, and MulDiv, and High Performance Effort
 for other profiles. Area is Quartus's **ALMs needed** for the core and MLAB
-register file, accounting for estimated dense packing. Actual placement counts
-are listed separately for Fast and Cached. Fmax is the post-fit restricted-Fmax
-estimate; it does not guarantee timing closure at that clock. One ALM counts as
+register file, accounting for estimated dense packing. Fmax is the post-fit
+restricted-Fmax estimate; it does not guarantee timing closure at that clock. One ALM counts as
 2.95 LEs for efficiency.
 
 Core-only measurements exclude board initialization and are not programmable
@@ -327,10 +341,10 @@ board images.
 | RC16 Fast soft | 567 | 592 | 567 | 246.5 |
 | RC32 Fast DSP | 882 | 968 | 899 | 438.0 |
 | RC32 Fast soft | 952 | 1045 | 952 | 426.6 |
-| RC16 Cached DSP | 1002 | 1048 | 1005 | 438.4 |
-| RC16 Cached soft | 1050 | 1094 | 1066 | 435.9 |
-| RC32 Cached DSP | 1547 | 1653 | 1547 | 649.4 |
-| RC32 Cached soft | 1625 | 1715 | 1625 | 642.0 |
+| RC16 Cached DSP | 1017 | 1058 | 1088 | 435.5 |
+| RC16 Cached soft | 1062 | 1110 | 1142 | 454.3 |
+| RC32 Cached DSP | 1571 | 1668 | 1691 | 660.6 |
+| RC32 Cached soft | 1639 | 1735 | 1792 | 677.7 |
 
 ECP5 Nano uses one RF EBR; Fast uses two at either width. ECP5 Fast DSP
 uses one DSP block at XLEN=16 and three at XLEN=32; Agilex uses one and two.
@@ -340,19 +354,6 @@ ECP5 or one M20K on Agilex. Fast ECP5 timing uses the median over seeds 1–32;
 Cached ECP5 timing uses seed 1.
 
 The timed-recipe area column is used for Fmax and efficiency comparisons.
-
-Final-placement counts are available for the Fast and Cached configurations:
-
-| Core | Agilex 3 ALMs used in final placement, RF included |
-|---|---:|
-| RC16 Fast DSP | 280.7 |
-| RC16 Fast soft | 286.0 |
-| RC32 Fast DSP | 472.2 |
-| RC32 Fast soft | 463.7 |
-| RC16 Cached DSP | 506.9 |
-| RC16 Cached soft | 518.6 |
-| RC32 Cached DSP | 698.5 |
-| RC32 Cached soft | 731.5 |
 
 ### Clock rate
 
@@ -389,10 +390,10 @@ Final-placement counts are available for the Fast and Cached configurations:
 | RC16 Fast soft | 57.68 | 241.72 |
 | RC32 Fast DSP | 54.67 | 223.26 |
 | RC32 Fast soft | 54.65 | 216.68 |
-| RC16 Cached DSP | 54.21 | 226.76 |
-| RC16 Cached soft | 52.61 | 212.40 |
-| RC32 Cached DSP | 53.66 | 216.78 |
-| RC32 Cached soft | 53.97 | 212.22 |
+| RC16 Cached DSP | 57.04 | 219.01 |
+| RC16 Cached soft | 55.47 | 217.16 |
+| RC32 Cached DSP | 53.77 | 213.08 |
+| RC32 Cached soft | 53.06 | 206.31 |
 
 Fast ECP5 Fmax values are medians over seeds 1–32; Cached values use seed 1.
 
@@ -421,8 +422,8 @@ below. ECP5 uses the block RF. All cores have the same cycle count on both targe
 | Nano | 2.80 | 9.40 | 29.8 | 40.4 |
 | RC16 Fast DSP | 44.88 | 175.30 | 87.7 | 228.4 |
 | RC16 Fast soft | 39.10 | 163.85 | 69.0 | 225.3 |
-| RC16 Cached DSP | 35.13 | 146.97 | 35.0 | 113.6 |
-| RC16 Cached soft | 32.04 | 129.37 | 30.1 | 100.6 |
+| RC16 Cached DSP | 36.97 | 141.94 | 34.0 | 110.5 |
+| RC16 Cached soft | 33.79 | 132.27 | 29.6 | 98.7 |
 
 | Core | Cycles |
 |---|---:|
@@ -455,8 +456,8 @@ fixture.
 | RC32 Full /32 | 2619 | 14.56 | 43.02 | 28.7 | 58.0 |
 | RC32 Fast soft | 1378 | 20.90 | 82.87 | 22.0 | 65.8 |
 | RC32 Fast DSP | 898 | 32.08 | 131.02 | 35.7 | 101.4 |
-| RC32 Cached DSP | 1115 | 25.36 | 102.46 | 16.4 | 53.5 |
-| RC32 Cached soft | 1531 | 18.58 | 73.05 | 11.4 | 38.6 |
+| RC32 Cached DSP | 1115 | 25.41 | 100.71 | 15.0 | 51.7 |
+| RC32 Cached soft | 1531 | 18.26 | 71.02 | 10.2 | 35.5 |
 
 Cached results include reset initialization and cold-cache misses.
 
@@ -534,7 +535,7 @@ state, use `make trace PROFILE=full WIDTH=4`, `make trace-nano`, or
 
 Both board demos use RC32 Cached with a flat address space and provide:
 
-- 16 KiB on-chip program/data RAM and cached SDRAM;
+- 16 KiB directly attached program/data SRAM and cached SDRAM;
 - an 8-bit indexed framebuffer in SDRAM and board-local video output;
 - a UART, a 1 kHz timer, and a two-source interrupt controller; and
 - LED outputs and button inputs.
@@ -557,7 +558,8 @@ The shared software-visible map is:
 [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines the shared
 C interface. Board builds select RC32 Full firmware automatically. SDRAM
 uses a flat physical mapping with no bank register or uncached alias.
-Accesses wait in hardware until SDRAM initialization completes.
+SRAM uses separate CPU instruction and data ports and bypasses the caches
+and SDRAM clock crossing. Only SDRAM accesses wait for SDRAM initialization.
 
 MMIO registers are 32-bit and four-byte aligned; peripheral values occupy the low bits.
 
@@ -574,8 +576,8 @@ Credits return as the controller captures commands, without a round-trip
 handshake for each write. Writes stream until reads or video need the port,
 then physical write completions drain before switching. Read grants contain
 up to 16 words.
-SDRAM runs at 166⅔ MHz; CPU clocks remain 50 MHz on Icepi and 166⅔ MHz on
-Atum. Atum uses separate PLL output dividers for CPU and memory.
+SDRAM runs at 166⅔ MHz; CPU clocks are 55.56 MHz on Icepi and 200 MHz on
+Atum. Both use separate PLL output dividers for CPU and memory.
 
 Video fetches 320-byte source rows into two line buffers and reuses each row
 for vertical scaling. The CPU is the only framebuffer writer; write-through
@@ -634,14 +636,14 @@ The Julia demo builds remain separate.
 
 Measured CPU throughput with video active (KiB/s):
 
-| Access | Icepi, CPU 50 MHz | Atum, CPU 166⅔ MHz |
+| Access | Icepi, CPU 55.56 MHz | Atum, CPU 200 MHz |
 |---|---:|---:|
-| Warm-cache read, 1 KiB | 72,352 | 241,144 |
-| Sequential read, 1 MiB | 36,352 | 101,022 |
-| Scattered read, 1 MiB | 2,566 | 6,584 |
-| Cached write-through, 1 KiB | 43,722 | 145,940 |
-| Sequential write, 1 MiB | 40,387 | 135,032 |
-| Scattered write, 1 MiB | 7,948 | 26,368 |
+| Warm-cache read, 1 KiB | 93,353 | 321,514 |
+| Sequential read, 1 MiB | 39,481 | 114,176 |
+| Scattered read, 1 MiB | 2,797 | 7,340 |
+| Cached write-through, 1 KiB | 49,542 | 175,631 |
+| Sequential write, 1 MiB | 51,454 | 182,930 |
+| Scattered write, 1 MiB | 9,035 | 31,032 |
 
 Both boards passed the full-memory pattern checks and benchmark verification.
 
@@ -650,14 +652,14 @@ SDRAM I/O timing is hardware-tested but not fully closed by static analysis.
 
 ### Icepi Zero
 
-The [Icepi demo](../boards/icepi_zero) runs RC32 Cached at 50 MHz and
+The [Icepi demo](../boards/icepi_zero) runs RC32 Cached at 55.56 MHz and
 scales the 320×180 framebuffer 4× to 1280×720 DVI at 60 Hz. The video PLL
 produces 74.286 MHz pixels (60.03 frames/s). Dedicated four-bit I/O gearing
 serializes TMDS at 742.86 Mbit/s, with the fabric running at 185.714 MHz.
-The test-firmware build uses 3,454 LUT4 sites, 1,754 registers, 14 EBRs,
-and three DSP blocks.
-Post-route Fmax is 52.39 MHz for the CPU, 170.36 MHz for SDRAM,
-100.11 MHz for pixels, and 246.43 MHz for the serializer fabric.
+The register file uses LUTRAM. The test-firmware build uses 3,736 LUT4 sites,
+1,772 registers, 12 EBRs, and three DSP blocks.
+Post-route Fmax is 56.66 MHz for the CPU, 173.64 MHz for SDRAM,
+95.41 MHz for pixels, and 221.04 MHz for the serializer fabric.
 
 ```sh
 make icepi-zero-demo-iss
@@ -687,7 +689,7 @@ openFPGALoader -cft231X --pins=7:3:5:6 build/icepi_zero/demo.bit
 
 ### Terasic Atum A3 Nano
 
-The [Atum demo](../boards/atum_a3_nano) runs RC32 Cached at 166⅔ MHz
+The [Atum demo](../boards/atum_a3_nano) runs RC32 Cached at 200 MHz
 and scales the 320×180 framebuffer to 1920×1080p60 through the TFP410.
 Board settings and pin assignments are in
 [atum_a3_nano.qsf](../boards/atum_a3_nano/atum_a3_nano.qsf).
@@ -714,10 +716,10 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-The Quartus Pro 26.1 test-firmware build uses 1,364 ALMs, 2,134 registers,
-16 RAM blocks, two DSP blocks, and two IOPLLs. Restricted Fmax is 176.71 MHz for the CPU,
-172.03 MHz for SDRAM, and 289.86 MHz for video. Internal setup and hold
-slack are +0.187 ns and +0.008 ns at the configured clocks.
+The Quartus Pro 26.1 test-firmware build uses 1,601 ALMs, 2,506 registers,
+16 RAM blocks, two DSP blocks, and two IOPLLs. Restricted Fmax is 200.32 MHz
+for the CPU, 172.29 MHz for SDRAM, and 304.04 MHz for video. Across timing
+corners, internal setup and hold slack are +0.008 ns and +0.004 ns.
 
 Persistent QSPI programming is outside the normal flow; see Terasic's
 [Atum A3 Nano documentation](https://www.terasic.com.tw/cgi-bin/page/archive.pl?CategoryNo=44&Language=English&No=1373&PartNo=4).

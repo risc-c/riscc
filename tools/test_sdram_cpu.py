@@ -35,8 +35,8 @@ def main():
     binary = (build / 'test.bin').read_bytes()
     binary += bytes((-len(binary)) % 4)
     (build / 'test.memh').write_text(''.join(f'{int.from_bytes(binary[i:i+4], "little"):08x}\n' for i in range(0, len(binary), 4)))
-    for board, width, led, period in [('icepi_zero', 16, 5, 20),
-                                      ('atum_a3_nano', 32, 4, 6),
+    for board, width, led, period in [('icepi_zero', 16, 5, 18),
+                                      ('atum_a3_nano', 32, 4, 5),
                                       ('atum_a3_nano', 32, 4, 7)]:
         name = board + ('-async' if period == 7 else '')
         output = build / name
@@ -45,9 +45,10 @@ def main():
                    ROOT / 'rtl/riscc_cached.v', ROOT / 'rtl/riscc_fast.v', ROOT / 'test/riscc_sdram_model.v']
         sources += [ROOT / f'boards/shared/rtl/riscc_{name}.v' for name in
                     ('uart_mmio','timer_mmio','irq_ctrl','sdram','sdram_fabric','sdram_bridge')]
+        rf_defines = ['-DRISCC_ECP5'] if board == 'icepi_zero' else ['-DRISCC_FAST_BLOCK_RF']
         command([args.verilator, '--binary', '--timing', '-j', '4', '-Wno-UNOPTFLAT',
                  '--top-module', 'cpu_memory_tb', '--Mdir', output,
-                 '-DRISCC_FAST_BLOCK_RF', f'-DSOC_NAME={board}_soc', f'-DLED_BITS={led}',
+                 *rf_defines, f'-DSOC_NAME={board}_soc', f'-DLED_BITS={led}',
                  f'-DFIRMWARE="{build / "test.memh"}"', f'-GDATA_BITS={width}', f'-GCPU_PERIOD={period}',
                  *sources], output / 'build.log')
         for seed in range(1, args.seeds + 1):

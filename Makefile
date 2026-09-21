@@ -175,6 +175,7 @@ help:
 	  '  test-cached-pipeline         run Cached split-memory pipeline checks' \
 	  '  test-cached-hits             check warmed Cached cache-hit timing' \
 	  '  test-cached-address          check full-address caching and code coherence' \
+	  '  test-cached-sram             check Cached low-address SRAM timing and hazards' \
 	  '  test-cache                   run Cached cache checks' \
 	  '  test-sdram / fuzz-sdram       test both board SDRAM controllers and cache access' \
 	  '  test-sdram-bench / fuzz-sdram-bench  test queued SDRAM traffic on both boards' \

@@ -102,6 +102,8 @@ module riscc_sdram_bridge #(
     wire [1:0] next_get = get_q == 2 ? 0 : get_q + 1'b1;
     wire last_issue = head_write || READ_WORD_BITS == 0 || (&issued_q);
     wire last_reply = head_write || READ_WORD_BITS == 0 || reply_last_q;
+    wire issue_last = memory_stb && !memory_stall && last_issue;
+    wire complete = !empty_q && memory_ack && last_reply;
     assign memory_addr = head_write ? address[get_q] :
         (address[get_q] & ~LINE_MASK) | {{(ADDR_BITS-BEAT_BITS){1'b0}}, issued_q};
     assign memory_wdata = data[get_q];
@@ -113,13 +115,21 @@ module riscc_sdram_bridge #(
         head_write <= writing[get_q];
         producer_meta_q <= producer_gray_q;
         producer_sync_q <= producer_meta_q;
-        empty_q <= consumer_gray_q == producer_sync_q;
-        request_valid_q <= consumer_gray_q != producer_sync_q && !issued_last_q && memory_ready;
+        // A completion consumes an occupied head, so the current and next
+        // empty cases are disjoint. Keep ACK out of a priority mux.
+        empty_q <= (consumer_gray_q == producer_sync_q) ||
+                   (complete && next_consumer_gray == producer_sync_q);
+        // Completion can replace the head on the same edge. Express readiness
+        // directly instead of a chain of issue/response priority multiplexers.
+        // A final reply implies the final command has already been issued.
+        request_valid_q <= memory_ready &&
+            ((complete && next_consumer_gray != producer_sync_q) ||
+             (!issue_last && !issued_last_q &&
+              consumer_gray_q != producer_sync_q));
         if (memory_stb && !memory_stall) begin
             issued_q <= issued_q + 1'b1;
             if (last_issue) begin
                 issued_last_q <= 1;
-                request_valid_q <= 0;
             end
         end
         // Sampling the current word speculatively removes ACK from the RAM
@@ -131,8 +141,6 @@ module riscc_sdram_bridge #(
             if (last_reply) begin
                 head_write <= writing[next_get];
                 get_q <= next_get;
-                empty_q <= next_consumer_gray == producer_sync_q;
-                request_valid_q <= next_consumer_gray != producer_sync_q && memory_ready;
                 consumer_gray_q <= next_consumer_gray;
                 issued_last_q <= 0;
                 issued_q <= 0;

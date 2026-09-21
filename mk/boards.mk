@@ -111,7 +111,8 @@ ICEPI_VIDEO_TEST_JSON := $(ICEPI_BUILD)/video_test.json
 ICEPI_VIDEO_TEST_CONFIG := $(ICEPI_BUILD)/video_test.config
 ICEPI_VIDEO_TEST_BIT := $(ICEPI_BUILD)/video_test.bit
 ICEPI_RTLSIM := $(ICEPI_BUILD)/rtlsim/Vicepi_zero_soc_sim
-ICEPI_CPU_DEFINES := -DRISCC_FAST_BLOCK_RF
+# LUTRAM keeps CPU operand reads off the slower EBR output path.
+ICEPI_CPU_DEFINES := -DRISCC_ECP5
 ICEPI_DEFINES := -DRISCC_ICEPI_ZERO
 ICEPI_SYNTH_OPTIONS ?= -abc9
 ICEPI_SPEED ?= 6
@@ -123,8 +124,8 @@ ICEPI_SYNTH_REPORT = '/Number of cells:/ { cells = $$4 } \
 	END { printf "Icepi synth: %d cells, %d LUT4, %d EBR, %d DSP\n", \
 	             cells, lut, ebr, dsp }'
 ICEPI_TIMING_REPORT = '/Max frequency for clock/ { \
-	first = second; second = latest; latest = $$0 \
-	} END { if (first) print first; if (second) print second; print latest }'
+	if (!($$6 in clocks)) order[++count] = $$6; clocks[$$6] = $$0 \
+	} END { for (i = 1; i <= count; ++i) print clocks[order[i]] }'
 ICEPI_DVI_RTL := \
   $(ICEPI_DIR)/rtl/icepi_fb_dvi.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
@@ -174,7 +175,7 @@ $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-icepi --fb-window --mhz 50 --max-insns 0
+	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-icepi --fb-window --mhz 55.555556 --max-insns 0
 
 icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@mkdir -p build/icepi_zero
@@ -199,7 +200,7 @@ icepi-zero-demo-rtlsim: $(ICEPI_RTLSIM)
 
 $(ICEPI_JSON): $(ICEPI_MEMH) $(ICEPI_SYNTH_RTL) $(RISCC_RF_RTL) $(BOARD_RULES)
 	@mkdir -p $(@D)
-	@$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFINES) $(ICEPI_SYNTH_RTL); \
+	@$(YOSYS) -p "read_verilog $(ICEPI_CPU_DEFINES) $(ICEPI_SYNTH_RTL); \
 	  chparam -set MEM_HEX \"$(ICEPI_MEMH)\" top; \
 	  hierarchy -top top; setattr -mod -set keep_hierarchy 1 A:hdlname=*riscc_sdram; \
 	  synth_ecp5 $(ICEPI_SYNTH_OPTIONS) -top top; \
@@ -227,7 +228,7 @@ icepi-zero-demo-bit: $(ICEPI_BIT)
 $(ICEPI_VIDEO_TEST_JSON): $(ICEPI_MEMH) $(ICEPI_SYNTH_RTL) \
 		$(RISCC_RF_RTL) $(BOARD_RULES)
 	@mkdir -p $(@D)
-	@$(YOSYS) -p "read_verilog -DRISCC_ECP5 $(ICEPI_CPU_DEFINES) \
+	@$(YOSYS) -p "read_verilog $(ICEPI_CPU_DEFINES) \
 	  -DICEPI_VIDEO_TEST $(ICEPI_SYNTH_RTL); \
 	  chparam -set MEM_HEX \"$(ICEPI_MEMH)\" top; \
 	  synth_ecp5 $(ICEPI_SYNTH_OPTIONS) -top top -json $@" \
@@ -263,7 +264,7 @@ ATUM_OBJ := $(ATUM_BUILD)/demo.o
 ATUM_PROGRAM_SELECTION := $(ATUM_BUILD)/demo.program
 ATUM_ELF := $(ATUM_BUILD)/demo.elf
 ATUM_MEMH := $(ATUM_BUILD)/mem/demo.memh
-ATUM_MIF := $(ATUM_BUILD)/mem/demo.mif
+ATUM_MIF := $(ATUM_MEMH).mif
 ATUM_RTLSIM := $(ATUM_BUILD)/rtlsim/Vatum_a3_nano_soc_sim
 ATUM_QUARTUS_BUILD := $(ATUM_BUILD)/quartus
 ATUM_QUARTUS_QPF := $(ATUM_QUARTUS_BUILD)/atum_a3_nano.qpf
@@ -319,7 +320,7 @@ $(ATUM_MIF): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH) $(ATUM_MIF)
 
 atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-window --fb-scale 4 --mhz 166.666667 --max-insns 0
+	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-window --fb-scale 4 --mhz 200 --max-insns 0
 
 $(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp $(BOARD_RULES)
 	@mkdir -p $(@D)
@@ -365,10 +366,6 @@ $(ATUM_FULL_BUILD_STAMP): $(ATUM_FULL_BUILD_DEPS) | \
 	@touch $@
 
 $(ATUM_SOF): $(ATUM_FULL_BUILD_STAMP) $(ATUM_MIF)
-	@quartus_mif=$$(find $(ATUM_QUARTUS_BUILD)/qdb \
-	  -path '*/mifs/ram0_top_*.hdl.mif' -type f -print -quit); \
-	  test -n "$$quartus_mif"; \
-	  cp $(ATUM_MIF) "$$quartus_mif"
 	cd $(ATUM_QUARTUS_BUILD) && \
 	  RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) \
 	  $(QUARTUS_CDB) --update_mif atum_a3_nano

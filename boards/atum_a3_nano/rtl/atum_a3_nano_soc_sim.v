@@ -6,7 +6,7 @@
 module atum_a3_nano_soc_sim #(
     parameter MEM_HEX = "build/atum_a3_nano/mem/demo.memh",
     parameter integer UART_CLK_DIV = 8,
-    parameter integer TIMER_TICK_DIV = 166667
+    parameter integer TIMER_TICK_DIV = 200000
 ) (
     input  wire clk,
     input  wire rst,

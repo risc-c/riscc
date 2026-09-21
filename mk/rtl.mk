@@ -554,9 +554,9 @@ $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MU
   $(eval $(call CACHED_TEST,$(memory),$(multiplier),$(xlen))))))
 
 .PHONY: test-cached test-cached-all test-cached-irq-all test-cached-pipeline \
-	test-cached-hits test-cached-address test-cache bench-cached
+	test-cached-hits test-cached-address test-cached-sram test-cache bench-cached
 test-cached: build/test/$(call cached_family,$(XLEN))/$(MEMORY)/$(MULTIPLIER).ok
-test-cached-all: test-cached-pipeline test-cached-hits test-cached-address test-cache $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+test-cached-all: test-cached-pipeline test-cached-hits test-cached-address test-cached-sram test-cache $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
   build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier).ok)))
 test-cached-irq-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
   build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier)-irq.ok)))
@@ -566,6 +566,8 @@ test-cached-hits:
 	$(PYTHON) tools/test_cached_hits.py --verilator $(VERILATOR)
 test-cached-address:
 	$(PYTHON) tools/test_cached_address.py --verilator $(VERILATOR)
+test-cached-sram:
+	$(PYTHON) tools/test_cached_sram.py --verilator $(VERILATOR)
 test-cache:
 	$(PYTHON) tools/test_cache.py --verilator $(VERILATOR)
 bench-cached: $(BENCH_BIN) build/bin/bench-rc32.bin

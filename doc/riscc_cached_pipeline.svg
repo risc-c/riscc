@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="570" viewBox="0 0 1080 570" role="img" aria-labelledby="title desc">
   <title id="title">RISC-C Cached pipeline with internal instruction and data caches</title>
-  <desc id="desc">The three-stage Cached pipeline uses separate two kilobyte instruction and data caches with registered data and full-address tag reads. DSP multiplication takes four Execute clocks. All instruction fetches are cached. One high address bit selects uncached data accesses. Cache misses and uncached data accesses share a 32-bit backing port.</desc>
+  <desc id="desc">The default three-stage Cached pipeline, without optional local SRAM, uses separate two kilobyte instruction and data caches with registered data and full-address tag reads. DSP multiplication takes four Execute clocks. All instruction fetches are cached. One high address bit selects uncached data accesses. Cache misses and uncached data accesses share a 32-bit backing port.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#334155"/>
@@ -65,7 +65,7 @@
   <path d="M900 397V447H690" class="flow"/>
   <rect x="390" y="414" width="300" height="98" rx="8" class="memory"/>
   <text x="410" y="447" class="label">Shared 32-bit backing port</text>
-  <text x="410" y="476" class="small">SRAM · fills · uncached reads · stores</text>
+  <text x="410" y="476" class="small">Memory · fills · uncached reads · stores</text>
   <text x="410" y="497" class="small">Wishbone B4 pipelined handshakes</text>
 
   <text x="35" y="550">ALU chains sustain 1 IPC · misses fill complete cache lines · external DMA is not coherent</text>

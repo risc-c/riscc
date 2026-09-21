@@ -1,9 +1,9 @@
 # CLOCK1_50 feeds one IOPLL with separate CPU and SDRAM output counters.
-# CPU_DIV=9 selects 166 2/3 MHz; update this ratio when tuning that divider.
+# CPU_DIV=10 selects 200 MHz; update this ratio when tuning that divider.
 create_clock -name sys_clk_ref -period 20.000 [get_ports {CLOCK1_50}]
 create_generated_clock -name sys_clk \
     -source [get_ports {CLOCK1_50}] \
-    -multiply_by 10 -divide_by 3 \
+    -multiply_by 4 \
     [get_pins {memory_pll|pll|out_clk[2]}]
 
 create_clock -name hdmi_clk_ref -period 20.000 [get_ports {CLOCK0_50}]
@@ -21,7 +21,7 @@ create_generated_clock -name pix_clk \
 create_generated_clock -name sdram_core -source [get_ports CLOCK1_50] \
     -multiply_by 10 -divide_by 3 [get_pins {memory_pll|pll|out_clk[0]}]
 create_generated_clock -name sdram_forward -source [get_ports CLOCK1_50] \
-    -multiply_by 10 -divide_by 3 -phase 320 [get_pins {memory_pll|pll|out_clk[1]}]
+    -multiply_by 10 -divide_by 3 -phase 318.75 [get_pins {memory_pll|pll|out_clk[1]}]
 create_generated_clock -name sdram_clk \
     -source [get_pins {memory_pll|pll|out_clk[1]}] -invert [get_ports sd_clk]
 set_false_path -to [get_registers {memory_lock_sync[0]}]
@@ -51,7 +51,7 @@ set_input_delay -clock sdram_clk -min 1.800 [get_ports {sd_dq[*]}]
 
 # CAS=3 launches the first read word two SDRAM edges after READ.
 # READ_DELAY=1 / IO_CAPTURE=1 samples it four core edges after issue:
-# 4*6 - (2*6 + 2.333) = 9.667 ns nominal launch-to-capture time.
+# 4*6 - (2*6 + 2.3125) = 9.6875 ns nominal launch-to-capture time.
 # Select that edge, including the next streamed word's hold check.
 # Deliberately do not add a hold multicycle: that would incorrectly
 # allow the following word to overwrite the sampled word early.

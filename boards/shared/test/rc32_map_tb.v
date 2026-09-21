@@ -5,6 +5,9 @@
 // Backend bus driver replacing only the CPU/cache instance for this test.
 module riscc_cached #(
     parameter integer XLEN = 32,
+    parameter integer SRAM_ADDR_BITS = 0,
+    parameter REGISTER_FETCH = 1'b0,
+    parameter SRAM_HEX = "",
     parameter RESET_PC = 0
 ) (
     input wire clk, rst, irq,
@@ -127,8 +130,6 @@ module board_map_tb;
     task automatic alias_check(input [31:0] a);
         access(a, 1, 4'hf, 32'hdeadbeef, 0);
         read_check(a, 4'hf, 0);
-        read_check(0, 4'hf, 32'h01234567);
-        read_check(32'h3ffc, 4'hf, 32'h89abcdef);
         if (fb_count != 0 || tx_count != 0 || led != 0)
             $fatal(1, "Unmapped address %h changed a peripheral", a);
     endtask
@@ -136,22 +137,7 @@ module board_map_tb;
     initial begin
         repeat (3) @(posedge clk);
         @(negedge clk); rst = 0;
-        // Full-width SRAM values and byte/halfword lane preservation.
-        access(32'h100, 1, 4'hf, 32'h76543210, 0);
-        read_check(32'h100, 4'hf, 32'h76543210);
-        access(32'h100, 1, 4'h1, 32'hffffffaa, 0);
-        access(32'h101, 1, 4'h2, 32'hffffbbff, 0);
-        access(32'h102, 1, 4'h4, 32'hffccffff, 0);
-        access(32'h103, 1, 4'h8, 32'hddffffff, 0);
-        read_check(32'h100, 4'hf, 32'hddccbbaa);
-        access(32'h100, 1, 4'h3, 32'hffff1234, 0);
-        access(32'h102, 1, 4'hc, 32'h5678ffff, 0);
-        read_check(32'h100, 4'hf, 32'h56781234);
-        access(32'h100, 1, 4'h0, 32'hffffffff, 0);
-        read_check(32'h100, 4'hf, 32'h56781234);
-        access(0, 1, 4'hf, 32'h01234567, 0);
-        access(32'h3ffc, 1, 4'hf, 32'h89abcdef, 0);
-        // SRAM boundary, old RC16 addresses, SDRAM boundary and high aliases.
+        // Backend-only address aliases, SDRAM boundary, and high aliases.
         alias_check(32'h4000);
         alias_check(32'h8000);
         alias_check(32'hfff0);

@@ -5,8 +5,8 @@
 
 module icepi_zero_soc #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
-    parameter integer UART_CLK_DIV = 434,
-    parameter integer TIMER_TICK_DIV = 50000,
+    parameter integer UART_CLK_DIV = 482,
+    parameter integer TIMER_TICK_DIV = 55556,
     parameter integer PIPELINE_MMIO_WRITES = 0
 ) (
     input  wire        clk,
@@ -36,7 +36,6 @@ module icepi_zero_soc #(
     output wire [31:0] dbg_uart_rx_count
 );
     localparam [3:0] LED_ADDR = 4'hc; // byte 0xfffffff0
-    localparam [1:0] READ_RAM  = 2'd0;
     localparam [1:0] READ_UNMAPPED   = 2'd1;
     localparam [1:0] READ_MMIO = 2'd2;
     localparam [1:0] READ_SDRAM = 2'd3;
@@ -51,8 +50,6 @@ module icepi_zero_soc #(
     reg         mem_ack_q;
     wire        cpu_irq;
 
-    (* ram_style = "block" *) reg [31:0] ram [0:4095];
-    reg [31:0] ram_rdata_q;
     reg [31:0] mmio_rdata_q;
     reg [1:0]  read_source_q;
     reg [4:0]  led_q;
@@ -61,7 +58,6 @@ module icepi_zero_soc #(
 `endif
 
     // SDRAM is a flat cached region; only high MMIO bypasses the cache.
-    wire ram_sel = (mem_addr[29:12] == 18'd0);
     wire periph_region = &mem_addr[29:4];
     wire sdram_sel = mem_addr[29:23] == 7'h08;
     reg sdram_pending_q;
@@ -96,14 +92,11 @@ module icepi_zero_soc #(
     wire timer_irq;
     wire [31:0] irq_rdata;
 
-    initial begin
-        if (MEM_HEX != "")
-            $readmemh(MEM_HEX, ram);
-    end
-
     riscc_cached #(
         .XLEN(32),
-        // High MMIO is uncached; low SRAM uses the default data cache.
+        .SRAM_ADDR_BITS(14),
+        .SRAM_HEX(MEM_HEX),
+        // High MMIO is uncached; SDRAM uses the data cache.
         .RESET_PC(0)
     ) cpu (
         .clk(clk),
@@ -120,7 +113,7 @@ module icepi_zero_soc #(
         .mem_ack(mem_ack_q || sdram_ack)
     );
 
-    // The inferred RAM and MMIO read mux are synchronous.  ACK is one cycle
+    // The MMIO read mux is synchronous. ACK is one cycle
     // after request acceptance and may remain asserted for back-to-back
     // accepted requests.
     always @(posedge clk) begin
@@ -184,9 +177,8 @@ module icepi_zero_soc #(
         .irq(cpu_irq)
     );
 
-    // Read response, memory writes, and board-visible state.
+    // Read response and board-visible state.
     assign mem_rdata =
-        (read_source_q == READ_RAM) ? ram_rdata_q :
         (read_source_q == READ_UNMAPPED) ? 32'd0 :
         (read_source_q == READ_SDRAM) ? sdram_rdata :
         mmio_rdata_q;
@@ -198,24 +190,9 @@ module icepi_zero_soc #(
 `endif
 
     always @(posedge clk) begin
-        if (mem_accept && ram_sel)
-            ram_rdata_q <= ram[mem_addr[11:0]];
-        if (cpu_write_commit && ram_sel) begin
-            if (mem_wmask[0])
-                ram[mem_addr[11:0]][7:0] <= mem_wdata[7:0];
-            if (mem_wmask[1])
-                ram[mem_addr[11:0]][15:8] <= mem_wdata[15:8];
-            if (mem_wmask[2])
-                ram[mem_addr[11:0]][23:16] <= mem_wdata[23:16];
-            if (mem_wmask[3])
-                ram[mem_addr[11:0]][31:24] <= mem_wdata[31:24];
-        end
-    end
-
-    always @(posedge clk) begin
         if (rst) begin
             mmio_rdata_q <= 32'h00000000;
-            read_source_q <= READ_RAM;
+            read_source_q <= READ_UNMAPPED;
             led_q <= 5'h00;
 `ifdef VERILATOR
             fb_writes_q <= 32'd0;
@@ -223,7 +200,7 @@ module icepi_zero_soc #(
         end else begin
             if (mem_accept) begin
                 mmio_rdata_q <= uart_rdata | timer_rdata | irq_rdata;
-                read_source_q <= sdram_sel ? READ_SDRAM : ram_sel ? READ_RAM :
+                read_source_q <= sdram_sel ? READ_SDRAM :
                                  mmio_sel ? READ_MMIO : READ_UNMAPPED;
             end
 

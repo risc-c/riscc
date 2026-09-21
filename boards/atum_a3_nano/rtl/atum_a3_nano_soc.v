@@ -5,8 +5,8 @@
 
 module atum_a3_nano_soc #(
     parameter MEM_HEX = "mem/demo.memh",
-    parameter integer UART_CLK_DIV = 1447,
-    parameter integer TIMER_TICK_DIV = 166667
+    parameter integer UART_CLK_DIV = 1736,
+    parameter integer TIMER_TICK_DIV = 200000
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -33,7 +33,6 @@ module atum_a3_nano_soc #(
     output wire [31:0] dbg_uart_rx_count
 );
     localparam [3:0] LED_W = 4'hc;  // byte 0xfffffff0
-    localparam [1:0] RSEL_RAM      = 2'd0;
     localparam [1:0] RSEL_UNMAPPED = 2'd1;
     localparam [1:0] RSEL_MMIO     = 2'd2;
     localparam [1:0] RSEL_SDRAM    = 2'd3;
@@ -47,9 +46,6 @@ module atum_a3_nano_soc #(
     wire mem_stall;
     reg mem_ack_q;
     wire cpu_irq;
-    // Unified 16 KiB boot/program/data SRAM, stored as 4096 32-bit words.
-    (* ramstyle = "M20K" *) reg [31:0] ram [0:4095];
-    reg [31:0] ram_rdata_q;
     reg [31:0] mmio_rdata_q;
     reg [1:0] rsel_q;
     reg [3:0] led_q;
@@ -58,7 +54,6 @@ module atum_a3_nano_soc #(
 `endif
 
     // SDRAM is a flat cached region; only high MMIO bypasses the cache.
-    wire ram_sel = (mem_addr[29:12] == 18'd0);
     wire periph_region = &mem_addr[29:4];
     wire sdram_sel = mem_addr[29:24] == 6'h04;
     reg sdram_pending_q;
@@ -95,14 +90,12 @@ module atum_a3_nano_soc #(
     wire timer_irq;
     wire [31:0] irq_rdata;
 
-    initial begin
-        if (MEM_HEX != "")
-            $readmemh(MEM_HEX, ram);
-    end
-
     riscc_cached #(
         .XLEN(32),
-        // High MMIO is uncached; low SRAM uses the default data cache.
+        .SRAM_ADDR_BITS(14),
+        .REGISTER_FETCH(1'b1),
+        .SRAM_HEX(MEM_HEX),
+        // High MMIO is uncached; SDRAM uses the data cache.
         .RESET_PC(0)
     ) cpu (
         .clk(clk),
@@ -119,7 +112,7 @@ module atum_a3_nano_soc #(
         .mem_ack(mem_ack_q || sdram_ack)
     );
 
-    // The inferred RAM and MMIO read mux are synchronous.  ACK is one cycle
+    // The MMIO read mux is synchronous. ACK is one cycle
     // after request acceptance and may remain asserted for back-to-back
     // accepted requests.
     always @(posedge clk) begin
@@ -182,9 +175,8 @@ module atum_a3_nano_soc #(
         .irq(cpu_irq)
     );
 
-    // Read response, memory writes, and board-visible state.
-    assign mem_rdata = (rsel_q == RSEL_RAM) ? ram_rdata_q :
-                       (rsel_q == RSEL_UNMAPPED) ? 32'd0 :
+    // Read response and board-visible state.
+    assign mem_rdata = (rsel_q == RSEL_UNMAPPED) ? 32'd0 :
                        (rsel_q == RSEL_SDRAM) ? sdram_rdata :
                        mmio_rdata_q;
     assign led = led_q;
@@ -195,24 +187,9 @@ module atum_a3_nano_soc #(
 `endif
 
     always @(posedge clk) begin
-        if (mem_accept && ram_sel)
-            ram_rdata_q <= ram[mem_addr[11:0]];
-        if (cpu_write_commit && ram_sel) begin
-            if (mem_wmask[0])
-                ram[mem_addr[11:0]][7:0] <= mem_wdata[7:0];
-            if (mem_wmask[1])
-                ram[mem_addr[11:0]][15:8] <= mem_wdata[15:8];
-            if (mem_wmask[2])
-                ram[mem_addr[11:0]][23:16] <= mem_wdata[23:16];
-            if (mem_wmask[3])
-                ram[mem_addr[11:0]][31:24] <= mem_wdata[31:24];
-        end
-    end
-
-    always @(posedge clk) begin
         if (rst) begin
             mmio_rdata_q <= 32'h00000000;
-            rsel_q <= RSEL_RAM;
+            rsel_q <= RSEL_UNMAPPED;
             led_q <= 4'h0;
 `ifdef VERILATOR
             fb_writes_q <= 32'd0;
@@ -220,7 +197,7 @@ module atum_a3_nano_soc #(
         end else begin
             if (mem_accept) begin
                 mmio_rdata_q <= uart_rdata | timer_rdata | irq_rdata;
-                rsel_q <= sdram_sel ? RSEL_SDRAM : ram_sel ? RSEL_RAM :
+                rsel_q <= sdram_sel ? RSEL_SDRAM :
                           mmio_sel ? RSEL_MMIO : RSEL_UNMAPPED;
             end
             if (cpu_write_commit) begin

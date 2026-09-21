@@ -64,7 +64,7 @@ module icepi_sdram #(
     genvar bit_index;
     generate for (bit_index = 0; bit_index < 16; bit_index = bit_index + 1) begin : g_input
         (* syn_useioff = 1, ioff_dir = "input" *)
-        TRELLIS_FF #(.CLKMUX("CLK"), .CEMUX("1"), .LSRMUX("LSR"),
+        TRELLIS_FF #(.CLKMUX("CLK"), .CEMUX("CE"), .LSRMUX("LSR"),
                      .REGSET("RESET"), .SRMODE("ASYNC")) capture (
             .DI(dq_input[bit_index]), .CLK(clk), .CE(1'b1), .LSR(1'b0),
             .Q(dq_sample[bit_index])

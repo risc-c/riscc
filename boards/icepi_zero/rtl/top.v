@@ -17,7 +17,7 @@ module top #(
     output wire [3:0] gpdi_dp,
     output wire [4:0] led
 );
-    wire memory_clk, memory_pin_clk, memory_locked;
+    wire cpu_clk, memory_clk, memory_pin_clk, memory_locked;
     wire [23:0] cpu_addr, video_addr, memory_addr;
     wire [31:0] cpu_wdata, cpu_rdata, video_rdata, memory_wdata, memory_rdata;
     wire [3:0] cpu_wmask, memory_wmask;
@@ -39,7 +39,7 @@ module top #(
     reg [7:0] reset_count_q = 8'h00;
     wire reset_request = !reset_count_q[7] || !pll_locked || !memory_locked || !button[0];
     (* ASYNC_REG = "TRUE" *) reg [1:0] cpu_reset_sync = 2'b11;
-    always @(posedge clk or posedge reset_request) begin
+    always @(posedge cpu_clk or posedge reset_request) begin
         if (reset_request) cpu_reset_sync <= 2'b11;
         else cpu_reset_sync <= {cpu_reset_sync[0], 1'b0};
     end
@@ -57,12 +57,12 @@ module top #(
     wire [23:0] palette_wdata;
     icepi_zero_soc #(
         .MEM_HEX(MEM_HEX),
-        .UART_CLK_DIV(434),
-        .TIMER_TICK_DIV(50000),
+        .UART_CLK_DIV(482),
+        .TIMER_TICK_DIV(55556),
         .PIPELINE_MMIO_WRITES(1)
     ) soc (
         .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
-        .clk(clk),
+        .clk(cpu_clk),
 `ifdef ICEPI_VIDEO_TEST
         // The fixed-pattern test isolates video from CPU and SDRAM activity.
         .rst(1'b1),
@@ -83,7 +83,7 @@ module top #(
     );
 
     icepi_fb_dvi video (
-        .cpu_clk(clk),
+        .cpu_clk(cpu_clk),
         .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
         .memory_clk(memory_clk),
 `ifdef ICEPI_VIDEO_TEST
@@ -108,7 +108,7 @@ module top #(
     wire memory_rst = memory_reset_sync[1];
 
     riscc_sdram_fabric fabric (
-        .cpu_clk(clk), .cpu_rst(soc_rst),
+        .cpu_clk(cpu_clk), .cpu_rst(soc_rst),
         .memory_clk(memory_clk), .memory_rst(memory_rst),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_wmask(cpu_wmask),
         .cpu_we(cpu_we), .cpu_cyc(cpu_cyc), .cpu_stb(cpu_stb),
@@ -128,7 +128,7 @@ module top #(
     end
     icepi_sdram_pll memory_pll (
         .refclk(clk), .rst(1'b0), .outclk(memory_clk),
-        .pinclk(memory_pin_clk), .locked(memory_locked)
+        .pinclk(memory_pin_clk), .cpu_clk(cpu_clk), .locked(memory_locked)
     );
     icepi_sdram #(.CLK_MHZ(167), .READ_DELAY(1)) memory (
         .clk(memory_clk), .pin_clk(memory_pin_clk),
