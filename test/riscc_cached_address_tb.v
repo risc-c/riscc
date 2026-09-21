@@ -95,8 +95,9 @@ module riscc_cached_address_tb #(
     wire backend_response = immediate_mode ? backend_accept : backend_pending;
 
     // Keep backpressure deterministic and independent of the memory contents.
-    assign mem_stall = stall_mode && (cycle_count > 20) &&
-                       ((cycle_count % 7) == 2);
+    assign mem_stall = (!immediate_mode && backend_delay != 0) ||
+                       (stall_mode && (cycle_count > 20) &&
+                        ((cycle_count % 7) == 2));
     assign mem_ack = backend_response;
     assign mem_rdata = immediate_mode ? sparse_read(backend_now_addr) : backend_data;
 

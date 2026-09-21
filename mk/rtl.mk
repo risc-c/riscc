@@ -493,23 +493,25 @@ test-fast-irq: build/test/$(call fast_family,$(XLEN))/$(MEMORY)/$(MULTIPLIER)-ir
 test-fast-irq-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
 	build/test/$(call fast_family,$(xlen))/$(memory)/$(multiplier)-irq.ok)))
 
-.PHONY: bench
-bench: $(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
+.PHONY: bench bench-rc16 bench-rc32
+bench: bench-rc16 bench-rc32
+
+bench-rc16: $(foreach width,$(WIDTHS),build/test/rc16/native/full/$(width)/tb) \
 	build/test/nano/tb \
 	$(foreach multiplier,$(MULTIPLIERS), \
 	  build/test/fast/ecp5-block/$(multiplier)/tb) \
 	$(BENCH_BIN) $(NANO_BENCH_BIN)
 	@for width in $(WIDTHS); do \
 	  tb=build/test/rc16/native/full/$$width/tb; \
-	  out="$$($$tb $(BENCH_BIN) --max-cycles 800000 2>&1 | tail -1)"; \
-	  printf 'rc16/%-3s %s\n' $$width "$$out"; \
+	  printf 'rc16/%s ' $$width; \
+	  $$tb $(BENCH_BIN) --max-cycles 800000 || exit; \
 	done
-	@out="$$(build/test/nano/tb $(NANO_BENCH_BIN) \
-	  --max-cycles 2000000 2>&1 | tail -1)"; printf '%-8s %s\n' nano "$$out"
+	@printf 'nano '
+	@build/test/nano/tb $(NANO_BENCH_BIN) --max-cycles 2000000
 	@for multiplier in $(MULTIPLIERS); do \
 	  tb=build/test/fast/ecp5-block/$$multiplier/tb; \
-	  out="$$($$tb $(BENCH_BIN) --max-cycles 800000 2>&1 | tail -1)"; \
-	  printf 'fast/%-4s %s\n' $$multiplier "$$out"; \
+	  printf 'fast/%s ' $$multiplier; \
+	  $$tb $(BENCH_BIN) --max-cycles 800000 || exit; \
 	done
 
 build/bin/bench-rc32.bin: test/test_rc32_bench.asm test/flat.ld | llvm-riscc
@@ -524,9 +526,33 @@ bench-fast32: build/bin/bench-rc32.bin $(RISCC_SIM) \
 	  build/test/fast32/ecp5-block/$$multiplier/tb $< --max-cycles 100000 || exit; \
 	done
 
+bench-rc32: bench-fast32 $(foreach width,$(WIDTHS),build/test/rc32/full/$(width)/tb) \
+	build/test/wide/32/full/0/native/tb
+	@for width in $(WIDTHS); do \
+	  printf 'rc32/%s ' $$width; \
+	  build/test/rc32/full/$$width/tb build/bin/bench-rc32.bin --max-cycles 1000000 || exit; \
+	done
+	@printf 'rc32/32 '
+	@build/test/wide/32/full/0/native/tb build/bin/bench-rc32.bin --max-cycles 1000000
+
 # Cached includes its instruction and data caches. The legacy C++ fixture
 # reaches its 32-bit backing port through a test-only width adapter.
 cached_family = $(if $(filter 32,$(1)),cached32,cached)
+
+# Native 32-bit backing SRAM, shared with the assembly benchmark runner.
+cached_bench_tb = build/split-cache/bench/$(1)-$(2)-$(3)-cache/Vriscc_cached_bench_tb
+define CACHED_BENCH
+$(call cached_bench_tb,$(1),$(2),$(3)): rtl/riscc_fast.v rtl/riscc_cached.v \
+		test/riscc_cached_bench_tb.v $(RTL_RULES)
+	@mkdir -p $$(@D)
+	+$$(VERILATOR) --binary --timing $$(VERILATOR_MAKEFLAGS_ARG) \
+	  --top-module riscc_cached_bench_tb -GXLEN=$(1) -GCACHED=1 --Mdir $$(@D) \
+	  $$(FAST_MEMORY_DEFINES_$(3)) $$(FAST_DEFINES_$(2)) \
+	  rtl/riscc_fast.v rtl/riscc_cached.v test/riscc_cached_bench_tb.v
+endef
+$(foreach xlen,16 32,$(foreach multiplier,$(MULTIPLIERS),$(foreach memory,$(FAST_MEMORIES), \
+	$(eval $(call CACHED_BENCH,$(xlen),$(multiplier),$(memory))))))
+
 define CACHED_TEST
 build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v rtl/riscc_cached.v rtl/test/riscc_cached_test_top.v $(RTL_RULES)
 	@mkdir -p $$(@D)

@@ -3,7 +3,6 @@
 module riscc_cache_tb #(
     parameter integer CACHE_READ_ONLY = 0,
     parameter integer CPU_BITS = 32,
-    parameter integer HOLD_PAYLOAD = 0,
     parameter integer UNCACHED_BIT = 13,
     parameter integer LINE_WORD_BITS = 3
 );
@@ -37,12 +36,15 @@ module riscc_cache_tb #(
     reg [ADDR_BITS-1:0] inv_addr;
 
     reg [31:0] memory [0:MEM_WORDS-1];
-    reg backend_pending;
-    integer backend_delay;
-    reg [ADDR_BITS-1:0] backend_addr;
+    reg [2:0] backend_valid_pipe;
+    reg [2:0] backend_we_pipe;
+    reg [ADDR_BITS-1:0] backend_addr_pipe [0:2];
+    reg [31:0] backend_rdata_pipe [0:2];
+    reg [31:0] backend_wdata_pipe [0:2];
+    reg [3:0] backend_sel_pipe [0:2];
     integer backend_accepts;
     integer backend_writes;
-    integer expected_writes;
+    integer backend_write_acks;
     integer cycle_count;
     integer stall_count;
     integer ack_stall_count;
@@ -66,8 +68,7 @@ module riscc_cache_tb #(
     riscc_cached_cache #(.ADDR_BITS(ADDR_BITS),
                          .LINE_WORD_BITS(LINE_WORD_BITS),
                          .UNCACHED_BIT(UNCACHED_BIT),
-                         .READ_ONLY(CACHE_READ_ONLY), .CPU_BITS(CPU_BITS),
-                         .HOLD_PAYLOAD(HOLD_PAYLOAD)) dut (
+                         .READ_ONLY(CACHE_READ_ONLY), .CPU_BITS(CPU_BITS)) dut (
         .clk(clk), .rst(rst),
         .c_addr(c_addr), .c_wdata(c_wdata), .c_sel(c_sel), .c_we(c_we),
         .c_cyc(c_cyc), .c_stb(c_stb), .c_rdata(c_rdata),
@@ -75,7 +76,7 @@ module riscc_cache_tb #(
         .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),
         .m_cyc(m_cyc), .m_stb(m_stb), .m_rdata(m_rdata),
         .m_stall(m_stall), .m_ack(m_ack),
-        .inv_valid(inv_valid), .inv_addr(inv_addr)
+        .inv_valid(inv_valid), .inv_addr(inv_addr), .store_posted()
     );
 
     wire m_accept = m_cyc && m_stb && !m_stall;
@@ -115,6 +116,12 @@ module riscc_cache_tb #(
     localparam [ADDR_BITS-1:0] HIGHEST_TAG_ADDR =
         {1'b1, {(ADDR_BITS-1){1'b0}}};
     localparam [31:0] HIGH_TAG_DATA = 32'hb17ecafe;
+    localparam [CPU_BITS-1:0] POSTED_DATA0 =
+        {{(CPU_BITS-8){1'b0}}, 8'h11};
+    localparam [CPU_BITS-1:0] POSTED_DATA1 =
+        {{(CPU_BITS-8){1'b0}}, 8'h22};
+    localparam [CPU_BITS-1:0] POSTED_DATA2 =
+        {{(CPU_BITS-8){1'b0}}, 8'h33};
 
     function automatic [31:0] backend_word(input [ADDR_BITS-1:0] address);
         begin
@@ -132,12 +139,16 @@ module riscc_cache_tb #(
         end
     endfunction
     integer i;
+    integer pipe_slot;
     always @* begin
-        m_ack = backend_pending ||
-                (immediate_mode && m_cyc && m_stb && !m_stall);
+        m_ack = immediate_mode ? (m_cyc && m_stb && !m_stall) :
+                backend_valid_pipe[0];
         m_rdata = immediate_mode ? backend_word(m_addr) :
-                  backend_word(backend_addr);
+                  backend_rdata_pipe[0];
         // Deterministic target backpressure exercises held refill commands.
+        // The cache limits outstanding commands to the three response slots;
+        // a full pipeline drains its oldest command while accepting a
+        // replacement on the same edge.
         m_stall = (cycle_count > 40) && ((cycle_count % 7) == 2);
     end
 
@@ -194,12 +205,12 @@ module riscc_cache_tb #(
              m_sel != stalled_sel || m_we != stalled_we ||
              !m_cyc || !m_stb))
             $fatal(1, "backend command changed while stalled");
-        if (!immediate_mode && backend_delay != 0 && m_accept)
-            $fatal(1, "backend accepted a second request while delayed");
         if (stalled_last && !(m_cyc && m_stb && m_stall))
             stall_release_count <= stall_release_count + 1;
         if (m_ack && m_stall)
             ack_stall_count <= ack_stall_count + 1;
+        if (!rst && !immediate_mode && (|backend_valid_pipe) && !m_cyc)
+            $fatal(1, "backend CYC dropped with queued response");
         if (m_cyc && m_stb && m_stall) begin
             stalled_last <= 1'b1;
             stalled_addr <= m_addr;
@@ -213,10 +224,40 @@ module riscc_cache_tb #(
             stalled_last <= 1'b0;
         end
 
-        if (immediate_mode) begin
-            backend_pending <= 1'b0;
+        if (rst) begin
+            backend_valid_pipe <= 3'b000;
+            backend_we_pipe <= 3'b000;
+        end else if (immediate_mode) begin
             if (m_accept) begin
-                backend_addr <= m_addr;
+                backend_accepts <= backend_accepts + 1;
+                if (m_we) begin
+                    if (m_sel[0]) memory[m_addr[13:0]][7:0] <= m_wdata[7:0];
+                    if (m_sel[1]) memory[m_addr[13:0]][15:8] <= m_wdata[15:8];
+                    if (m_sel[2]) memory[m_addr[13:0]][23:16] <= m_wdata[23:16];
+                    if (m_sel[3]) memory[m_addr[13:0]][31:24] <= m_wdata[31:24];
+                    backend_writes <= backend_writes + 1;
+                    backend_write_acks <= backend_write_acks + 1;
+                end
+            end
+        end else begin
+            // Shift the oldest command toward its response slot.  A command
+            // accepted on this edge enters slot 2 and is ACKed three clocks
+            // later from slot 0, with all payload fields retained.
+            for (pipe_slot = 0; pipe_slot < 2; pipe_slot = pipe_slot + 1) begin
+                backend_valid_pipe[pipe_slot] <= backend_valid_pipe[pipe_slot+1];
+                backend_we_pipe[pipe_slot] <= backend_we_pipe[pipe_slot+1];
+                backend_addr_pipe[pipe_slot] <= backend_addr_pipe[pipe_slot+1];
+                backend_rdata_pipe[pipe_slot] <= backend_rdata_pipe[pipe_slot+1];
+                backend_wdata_pipe[pipe_slot] <= backend_wdata_pipe[pipe_slot+1];
+                backend_sel_pipe[pipe_slot] <= backend_sel_pipe[pipe_slot+1];
+            end
+            backend_valid_pipe[2] <= m_accept;
+            if (m_accept) begin
+                backend_we_pipe[2] <= m_we;
+                backend_addr_pipe[2] <= m_addr;
+                backend_rdata_pipe[2] <= m_we ? 32'b0 : backend_word(m_addr);
+                backend_wdata_pipe[2] <= m_wdata;
+                backend_sel_pipe[2] <= m_sel;
                 backend_accepts <= backend_accepts + 1;
                 if (m_we) begin
                     if (m_sel[0]) memory[m_addr[13:0]][7:0] <= m_wdata[7:0];
@@ -226,40 +267,8 @@ module riscc_cache_tb #(
                     backend_writes <= backend_writes + 1;
                 end
             end
-        end else if (backend_pending) begin
-            backend_pending <= 1'b0;
-            if (m_accept) begin
-                // Leave a real response gap after a replacement acceptance.
-                // This exercises the cache's one-outstanding-request state
-                // independently of target STALL.
-                backend_delay <= 2;
-                backend_addr <= m_addr;
-                backend_accepts <= backend_accepts + 1;
-                if (m_we) begin
-                    if (m_sel[0]) memory[m_addr[13:0]][7:0] <= m_wdata[7:0];
-                    if (m_sel[1]) memory[m_addr[13:0]][15:8] <= m_wdata[15:8];
-                    if (m_sel[2]) memory[m_addr[13:0]][23:16] <= m_wdata[23:16];
-                    if (m_sel[3]) memory[m_addr[13:0]][31:24] <= m_wdata[31:24];
-                    backend_writes <= backend_writes + 1;
-                end
-            end
-        end else if (backend_delay != 0) begin
-            if (backend_delay == 1) begin
-                backend_pending <= 1'b1;
-                backend_delay <= 0;
-            end else
-                backend_delay <= backend_delay - 1;
-        end else if (m_accept) begin
-            backend_delay <= 2;
-            backend_addr <= m_addr;
-            backend_accepts <= backend_accepts + 1;
-            if (m_we) begin
-                if (m_sel[0]) memory[m_addr[13:0]][7:0] <= m_wdata[7:0];
-                if (m_sel[1]) memory[m_addr[13:0]][15:8] <= m_wdata[15:8];
-                if (m_sel[2]) memory[m_addr[13:0]][23:16] <= m_wdata[23:16];
-                if (m_sel[3]) memory[m_addr[13:0]][31:24] <= m_wdata[31:24];
-                backend_writes <= backend_writes + 1;
-            end
+            if (m_ack && backend_valid_pipe[0] && backend_we_pipe[0])
+                backend_write_acks <= backend_write_acks + 1;
         end
     end
 
@@ -280,18 +289,15 @@ module riscc_cache_tb #(
                 // In particular, do not sample STALL after the edge: reset
                 // clear may have just exposed IDLE at that edge.
                 accept_now = (accepted == 0) && !c_stall;
-                ack_now = (accepted != 0) && c_ack;
+                ack_now = c_ack && ((accepted != 0) || accept_now);
                 if (ack_now) ack_data = c_rdata;
                 @(posedge clk); #1;
                 timeout = timeout + 1;
                 if (accept_now) begin
                     accepted = 1; accepts = accepts + 1; c_stb = 0;
                     // A generic pipelined master can change accepted payload.
-                    // The private Execute port instead holds it through ACK.
-                    if (HOLD_PAYLOAD == 0) begin
-                        c_wdata = ~c_wdata;
-                        c_we = !c_we;
-                    end
+                    c_wdata = ~c_wdata;
+                    c_we = !c_we;
                 end
                 if (ack_now) begin
                     responses = responses + 1;
@@ -371,17 +377,14 @@ module riscc_cache_tb #(
             accepted = 0; accepts = 0; responses = 0; timeout = 0; done = 0;
             while (!done) begin
                 accept_now = (accepted == 0) && !c_stall;
-                ack_now = (accepted != 0) && c_ack;
+                ack_now = c_ack && ((accepted != 0) || accept_now);
                 @(posedge clk); #1;
                 timeout = timeout + 1;
                 if (accept_now) begin
                     accepted = 1; accepts = accepts + 1; c_stb = 0;
                     // A generic pipelined master can change accepted payload.
-                    // The private Execute port instead holds it through ACK.
-                    if (HOLD_PAYLOAD == 0) begin
-                        c_wdata = ~c_wdata;
-                        c_we = !c_we;
-                    end
+                    c_wdata = ~c_wdata;
+                    c_we = !c_we;
                 end
                 if (ack_now) begin
                     responses = responses + 1; done = 1;
@@ -410,7 +413,7 @@ module riscc_cache_tb #(
             c_we = 0; c_cyc = 1; c_stb = 1;
             accepted = 0; responses = 0; timeout = 0;
             burst_edges = 0; done = 0;
-            max_edges = (CACHE_READ_ONLY != 0) ? 9 : 16;
+            max_edges = 9;
             while (!done) begin
                 accept_now = (accepted < 8) && c_stb && !c_stall;
                 ack_now = (responses < 8) && c_ack;
@@ -420,34 +423,22 @@ module riscc_cache_tb #(
                 burst_edges = burst_edges + 1;
                 if (burst_edges > max_edges)
                     $fatal(1, "hit burst exceeded %0d edges", max_edges);
-                if (CACHE_READ_ONLY != 0) begin
-                    if (burst_edges <= 8 && !accept_now)
-                        $fatal(1, "I hit burst acceptance gap at edge %0d", burst_edges);
-                    if (burst_edges >= 2 && !ack_now)
-                        $fatal(1, "I hit burst response gap at edge %0d", burst_edges);
-                    if (burst_edges == 1 && ack_now)
-                        $fatal(1, "I hit burst responded before first acceptance");
-                    if (burst_edges == 9 && accept_now)
-                        $fatal(1, "I hit burst accepted after eighth command");
-                end else begin
-                    // RW data cache lookup keeps c_stall asserted while its
-                    // one-cycle hit ACK is presented.  The master therefore
-                    // alternates acceptance and response: 16 edges for eight
-                    // requests, with no simultaneous replacement.
-                    if ((burst_edges & 1) != 0) begin
-                        if (!accept_now || ack_now)
-                            $fatal(1, "D hit burst expected accept at edge %0d", burst_edges);
-                    end else if (!ack_now || accept_now) begin
-                        $fatal(1, "D hit burst expected response at edge %0d", burst_edges);
-                    end
-                end
+                // Both cache variants accept the next hit on the same edge
+                // that returns the preceding word.  The first edge only
+                // accepts the first command; the ninth only returns word 7.
+                if (burst_edges <= 8 && !accept_now)
+                    $fatal(1, "hit burst acceptance gap at edge %0d", burst_edges);
+                if (burst_edges >= 2 && !ack_now)
+                    $fatal(1, "hit burst response gap at edge %0d", burst_edges);
+                if (burst_edges == 1 && ack_now)
+                    $fatal(1, "hit burst responded before first acceptance");
+                if (burst_edges == 9 && accept_now)
+                    $fatal(1, "hit burst accepted after eighth command");
                 if (accept_now) begin
                     accepted = accepted + 1;
-                    if (CACHE_READ_ONLY != 0) begin
-                        if (accepted < 8) begin
-                            c_addr = accepted[ADDR_BITS-1:0];
-                            c_stb = 1;
-                        end else c_stb = 0;
+                    if (accepted < 8) begin
+                        c_addr = accepted[ADDR_BITS-1:0];
+                        c_stb = 1;
                     end else begin
                         c_stb = 0;
                     end
@@ -459,16 +450,67 @@ module riscc_cache_tb #(
                     if (ack_data !== expected_word[CPU_BITS-1:0])
                         $fatal(1, "burst word %0d got %h", responses, ack_data);
                     responses = responses + 1;
-                    if (CACHE_READ_ONLY == 0 && accepted < 8) begin
-                        c_addr = accepted[ADDR_BITS-1:0];
-                        c_stb = 1;
-                    end
                 end
                 if (accepted == 8 && responses == 8) done = 1;
                 if (timeout > 500) $fatal(1, "burst timeout");
                 if (!done) @(negedge clk);
             end
             @(negedge clk); c_cyc = 0; c_stb = 0;
+        end
+    endtask
+
+    // A posted write acknowledges once its payload is captured, while the
+    // backing write may still be stalled or awaiting ACK. Keep three stores
+    // in flight to check the bounded backing-write counter and its drain.
+    task automatic cpu_write_burst3;
+        integer accepted, responses, timeout;
+        reg accept_now, ack_now;
+        begin
+            @(negedge clk);
+            c_addr = 30'd16; c_wdata = POSTED_DATA0; c_sel = 4'b1111;
+            c_we = 1; c_cyc = 1; c_stb = 1;
+            accepted = 0; responses = 0; timeout = 0;
+            while (responses < 3) begin
+                accept_now = (accepted < 3) && c_stb && !c_stall;
+                ack_now = (responses < 3) && c_ack &&
+                          ((accepted != 0) || accept_now);
+                @(posedge clk); #1;
+                timeout = timeout + 1;
+                if (accept_now) begin
+                    accepted = accepted + 1;
+                    case (accepted)
+                        1: begin c_addr = 30'd17; c_wdata = POSTED_DATA1; end
+                        2: begin c_addr = 30'd18; c_wdata = POSTED_DATA2; end
+                        default: c_stb = 0;
+                    endcase
+                end
+                if (ack_now)
+                    responses = responses + 1;
+                if (timeout > 500)
+                    $fatal(1, "write burst timeout accepts=%0d responses=%0d",
+                           accepted, responses);
+                if (responses < 3) @(negedge clk);
+            end
+            if (accepted != 3)
+                $fatal(1, "write burst accepted %0d commands", accepted);
+            @(negedge clk); c_cyc = 0; c_stb = 0;
+        end
+    endtask
+
+    task automatic wait_write_drain(input integer expected);
+        integer timeout;
+        begin
+            timeout = 0;
+            while (m_cyc || backend_write_acks < expected) begin
+                @(posedge clk); #1;
+                timeout = timeout + 1;
+                if (timeout > 500)
+                    $fatal(1, "write drain timeout cyc=%b writes=%0d acks=%0d",
+                           m_cyc, backend_writes, backend_write_acks);
+            end
+            if (backend_write_acks != expected || backend_writes != expected)
+                $fatal(1, "write ACK count writes=%0d acks=%0d expected=%0d",
+                       backend_writes, backend_write_acks, expected);
         end
     endtask
 
@@ -536,9 +578,15 @@ module riscc_cache_tb #(
 
     initial begin
         c_addr = 0; c_wdata = 0; c_sel = 0; c_we = 0; c_cyc = 0; c_stb = 0;
-        inv_valid = 0; inv_addr = 0; backend_pending = 0; backend_delay = 0;
-        backend_addr = 0;
-        backend_accepts = 0; backend_writes = 0; expected_writes = 0;
+        inv_valid = 0; inv_addr = 0;
+        backend_valid_pipe = 0; backend_we_pipe = 0;
+        for (i = 0; i < 3; i = i + 1) begin
+            backend_addr_pipe[i] = 0;
+            backend_rdata_pipe[i] = 0;
+            backend_wdata_pipe[i] = 0;
+            backend_sel_pipe[i] = 0;
+        end
+        backend_accepts = 0; backend_writes = 0; backend_write_acks = 0;
         cycle_count = 0; stall_count = 0; ack_stall_count = 0;
         stall_release_count = 0; stalled_last = 0;
         rdata_hold_valid = 0; rdata_hold = 0;
@@ -590,14 +638,14 @@ module riscc_cache_tb #(
             if (backend_accepts != LINE_WORDS) $fatal(1, "fill accepted %0d beats", backend_accepts);
             i = backend_accepts;
             cpu_read(LAST_WORD_ADDR, LAST_WORD_VALUE);
-            if (backend_accepts != i) $fatal(1, "last-word hit accessed backing memory");
+            if (backend_accepts != i) $fatal(1, "last-word hit accessed backing memory before=%0d after=%0d",
+                                             i, backend_accepts);
             cpu_read(30'd1, 32'h10000001);
             if (backend_accepts != LINE_WORDS) $fatal(1, "hit accessed backing memory");
             cpu_read(30'd7, 32'h10000007);
 
-            // Reset must invalidate the line.  Read-only I-cache hits issue
-            // one word per response edge; RW D-cache hits alternate acceptance
-            // and response, with no backing accesses in either case.
+            // Reset must invalidate the line.  Both cache variants then
+            // accept hit replacements while returning the preceding word.
             rst = 1; repeat (2) @(posedge clk); rst = 0;
             i = backend_accepts;
             cpu_read(30'd0, 32'h10000000);
@@ -640,17 +688,47 @@ module riscc_cache_tb #(
             // Partial write hit updates the cache and backing word exactly once.
             if (CACHE_READ_ONLY == 0) begin
                 cpu_write(30'd1, 32'hdeadbeef, 4'b0010);
-                if (backend_writes != 1) $fatal(1, "write-through count %0d", backend_writes);
                 cpu_read(30'd1, 32'h1000be01);
+                wait_write_drain(1);
+                if (backend_writes != 1) $fatal(1, "write-through count %0d", backend_writes);
                 if (memory[1] !== 32'h1000be01) $fatal(1, "write-through data mismatch");
+
+                // A load immediately after a partial store to the same word
+                // must observe the store through the cache RAM write port.
+                // Exercise both byte and halfword masks.
+                cpu_write(30'd2, 32'hcafebabe, 4'b0011);
+                cpu_read(30'd2, 32'h1000babe);
+                wait_write_drain(2);
+                if (backend_writes != 2)
+                    $fatal(1, "halfword write count %0d accepts=%0d acks=%0d",
+                           backend_writes, backend_accepts, backend_write_acks);
+                if (memory[2] !== 32'h1000babe) $fatal(1, "halfword data mismatch");
+
+                // Keep three posted stores outstanding while the registered
+                // target backpressures and delays ACKs.  The cache must emit
+                // exactly one backend write and one ACK for each command.
+                cpu_write_burst3();
+                if (backend_writes != 5) $fatal(1, "posted write count %0d", backend_writes);
+                wait_write_drain(5);
+                cpu_read(30'd16, 32'h00000011);
+                cpu_read(30'd17, 32'h00000022);
+                cpu_read(30'd18, 32'h00000033);
             end
 
             // Store miss bypasses without allocating; a subsequent read refills.
             if (CACHE_READ_ONLY == 0) begin
-                cpu_write(30'd16, 32'hcafebabe, 4'b1111);
-                if (backend_writes != 2) $fatal(1, "store miss did not bypass");
-                cpu_read(30'd16, 32'hcafebabe);
-                if (backend_accepts < (2 * LINE_WORDS + 2)) $fatal(1, "store miss allocated unexpectedly");
+                integer prior_accepts;
+                i = backend_writes;
+                prior_accepts = backend_accepts;
+                cpu_write(30'd32, 32'hcafebabe, 4'b1111);
+                cpu_read(30'd32, 32'hcafebabe);
+                wait_write_drain(i + 1);
+                if (backend_writes != i + 1)
+                    $fatal(1, "store miss did not bypass writes=%0d acks=%0d",
+                           backend_writes, backend_write_acks);
+                if (backend_accepts != prior_accepts + 1 + LINE_WORDS)
+                    $fatal(1, "store miss allocated unexpectedly accepts=%0d prior=%0d",
+                           backend_accepts, prior_accepts);
             end
 
         end
@@ -660,6 +738,9 @@ module riscc_cache_tb #(
             $fatal(1, "registered backend never produced ACK+STALL");
         if (stall_release_count == 0)
             $fatal(1, "backend STALL never released a held command");
+        if (CACHE_READ_ONLY == 0 && backend_write_acks != backend_writes)
+            $fatal(1, "write ACK count writes=%0d acks=%0d",
+                   backend_writes, backend_write_acks);
         $display("PASS riscc_cache accepts=%0d writes=%0d stalls=%0d ack_stall=%0d stall_release=%0d",
                  backend_accepts, backend_writes, stall_count,
                  ack_stall_count, stall_release_count);

@@ -50,23 +50,20 @@ def main() -> int:
     # fixture bit 13 for protocol tests, then exercise the actual default bit
     # 29 (byte address bit 31). Read-only tests cover the all-cached policy.
     fixture_bit = 13
-    configurations = ((32, 0, 0, "rc32-rw", fixture_bit, 3),
-                      (32, 0, 1, "rc32-rw-held", fixture_bit, 3),
-                      (32, 1, 0, "rc32-ro", fixture_bit, 3),
-                      (16, 1, 0, "rc16-ro", fixture_bit, 3),
-                      (32, 0, 0, "rc32-rw-default-bit29", 29, 3),
-                      (32, 0, 0, "rc32-rw-line64", fixture_bit, 4),
-                      (32, 1, 0, "rc32-ro-line64", fixture_bit, 4),
-                      (16, 1, 0, "rc16-ro-line64-default-bit29", 29, 4),
-                      (32, 0, 1, "rc32-rw-held-line64-default-bit29", 29, 4))
-    for cpu_bits, read_only, hold_payload, name, uncached_bit, line_word_bits in configurations:
+    configurations = ((32, 0, "rc32-rw", fixture_bit, 3),
+                      (32, 1, "rc32-ro", fixture_bit, 3),
+                      (16, 1, "rc16-ro", fixture_bit, 3),
+                      (32, 0, "rc32-rw-default-bit29", 29, 3),
+                      (32, 0, "rc32-rw-line64", fixture_bit, 4),
+                      (32, 1, "rc32-ro-line64", fixture_bit, 4),
+                      (16, 1, "rc16-ro-line64-default-bit29", 29, 4))
+    for cpu_bits, read_only, name, uncached_bit, line_word_bits in configurations:
         mdir = build_dir / name
         mdir.mkdir(parents=True, exist_ok=True)
         binary = mdir / "Vriscc_cache_tb"
         command = [args.verilator, "--binary", "--timing", "-Wno-UNOPTFLAT",
                    "--top-module", "riscc_cache_tb",
                    f"-GCACHE_READ_ONLY={read_only}", f"-GCPU_BITS={cpu_bits}",
-                   f"-GHOLD_PAYLOAD={hold_payload}",
                    f"-GUNCACHED_BIT={uncached_bit}",
                    f"-GLINE_WORD_BITS={line_word_bits}",
                    "--Mdir", str(mdir),

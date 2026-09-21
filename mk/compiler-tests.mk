@@ -1,6 +1,6 @@
 COMPILER_RULES := Makefile mk/compiler-tests.mk mk/firmware.mk mk/boards.mk
 
-COMPILER_BUILD ?= build/compiler/rc16/$(PROFILE)
+COMPILER_BUILD ?= build/compiler/$(RISCC_ARCH)/$(PROFILE)
 RC16_COMPILER_SOURCE_DIR := test/compiler/rc16
 COMPILER_MAX_INSNS ?= 1000000
 FLOAT_MAX_INSNS ?= 5000000
@@ -20,7 +20,8 @@ FEATURE_MODULES := feature_main feature_language feature_integer \
 	feature_builtins feature_memory feature_abi feature_abi_callee \
 	feature_varargs feature_varargs_callee feature_tail
 FLOAT_MODULES := float_main feature_float feature_float_callee
-BENCHMARKS := int32 softfloat libm32 matrix structures
+BENCHMARKS := int32 softfloat libm32 matrix structures \
+	memory_copy memory_update memory_chase
 FEATURE_ASM_OBJ := $(COMPILER_BUILD)/features/feature_abi_asm.o
 LIBC_TIME_TESTS_nano :=
 LIBC_TIME_TESTS_min := time timer
@@ -756,6 +757,41 @@ compiler-benchmarks: $(BENCHMARK_BINS) $(RISCC_SIM)
 	      --max-insns $(BENCHMARK_MAX_INSNS) || exit; \
 	  done; \
 	done
+
+# C benchmarks on native-width Full and ECP5 block-RF Fast/Cached cores.
+BENCHMARK_RTL_MAX_CYCLES ?= 30000000
+BENCHMARK_RTL_TIMEOUT ?= 300
+BENCHMARK_RTL_BASE_TB := $(call wide_tb,$(RISCC_XLEN),full,0,native)
+BENCHMARK_RTL_FAST_FAMILY := $(call fast_family,$(RISCC_XLEN))
+BENCHMARK_RTL_TBS := $(BENCHMARK_RTL_BASE_TB) \
+	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb \
+	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb \
+	$(foreach multiplier,$(MULTIPLIERS), \
+	  $(call cached_bench_tb,$(RISCC_XLEN),$(multiplier),ecp5-block))
+
+.PHONY: compiler-benchmarks-rtl
+ifeq ($(PROFILE),full)
+compiler-benchmarks-rtl: $(BENCHMARK_BINS) $(BENCHMARK_RTL_TBS) \
+		tools/bench_compiler.py
+	@mkdir -p $(COMPILER_BUILD)/benchmarks
+	$(PYTHON) tools/bench_compiler.py \
+	  --benchmark-root "$(abspath $(COMPILER_BUILD)/benchmarks)" \
+	  --benchmarks $(BENCHMARKS) \
+	  --opt-levels $(BENCH_OPT_LEVELS) \
+	  --max-cycles $(BENCHMARK_RTL_MAX_CYCLES) \
+	  --timeout $(BENCHMARK_RTL_TIMEOUT) \
+	  --xlen $(RISCC_XLEN) --profile $(PROFILE) \
+	  --output "$(abspath $(COMPILER_BUILD)/benchmarks/rtl-cycles.json)" \
+	  --core full-native="$(abspath $(BENCHMARK_RTL_BASE_TB))" \
+	  --core fast-soft="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb)" \
+	  --core fast-dsp="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb)" \
+	  --native-core cached-soft="$(abspath $(call cached_bench_tb,$(RISCC_XLEN),soft,ecp5-block))" \
+	  --native-core cached-dsp="$(abspath $(call cached_bench_tb,$(RISCC_XLEN),dsp,ecp5-block))"
+else
+compiler-benchmarks-rtl:
+	@echo "compiler-benchmarks-rtl requires PROFILE=full (got PROFILE=$(PROFILE))" >&2
+	@exit 2
+endif
 
 # Floating point
 

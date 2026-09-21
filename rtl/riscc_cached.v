@@ -71,15 +71,15 @@ module riscc_cached #(
         wire [WORD_BITS-1:0] i_word = i_addr[WORD_BITS:1];
         wire [WORD_BITS-1:0] d_word = d_addr[WORD_BITS-1:0];
         wire d_accept = d_cyc && d_stb && d_local && !d_stall && !rst;
-        // Reading SRAM speculatively costs no transaction. Select its response
-        // only for local requests; keep the full address decode off read enable.
-        wire d_read = d_cyc && d_stb && !d_stall && !rst && !d_we;
+        // Speculative SRAM reads have no side effects. Cache backpressure
+        // belongs to a nonlocal reply; it need not gate the SRAM read ports.
+        wire d_read = d_stb && !d_we;
         // Retry a fetch that overlaps a store to the same word. Keeping the
         // comparison out of STALL avoids a data-ALU-to-fetch combinational path.
         reg retry_q;
         reg [WORD_BITS-1:0] retry_addr_q;
         wire i_accept = i_cyc && i_stb && i_local && !i_stall && !rst;
-        wire i_read = (i_cyc && i_stb && !i_stall && !rst) || retry_q;
+        wire i_read = i_stb || retry_q;
         wire [WORD_BITS-1:0] read_word = retry_q ? retry_addr_q : i_word;
         wire instruction_collision = (i_accept || retry_q) && d_accept && d_we && read_word == d_word;
         reg i_local_q, d_local_q, i_ack_q, d_ack_q, i_half_q;
@@ -176,7 +176,9 @@ module riscc_cached #(
     wire [3:0] ib_sel, db_sel;
     wire ib_we, ib_cyc, ib_stb, ib_stall, ib_ack;
     wire db_we, db_cyc, db_stb, db_stall, db_ack;
-    wire invalidate = mem_cyc && mem_stb && !mem_stall && mem_we;
+    // The captured store invalidates code before a following jump executes.
+    // A subsequent instruction miss waits behind the ordered backing write.
+    wire invalidate;
 
     riscc_cached_cache #(.ADDR_BITS(XLEN-2), .READ_ONLY(1), .CPU_BITS(16),
                          .REGISTER_LOOKUP(SRAM_ADDR_BITS != 0),
@@ -187,18 +189,20 @@ module riscc_cached #(
         .c_sel(i_addr[0] ? 4'b1100 : 4'b0011), .c_we(1'b0),
         .c_rdata(cache_i_data), .c_rsel(), .c_cyc(i_cyc),
         .c_stb(i_stb), .c_stall(cache_i_stall), .c_ack(cache_i_ack),
+        .store_posted(),
         .m_addr(ib_addr), .m_wdata(ib_wdata), .m_sel(ib_sel), .m_we(ib_we),
         .m_rdata(mem_rdata), .m_cyc(ib_cyc), .m_stb(ib_stb), .m_stall(ib_stall), .m_ack(ib_ack),
-        .inv_valid(invalidate), .inv_addr(mem_addr)
+        .inv_valid(invalidate), .inv_addr(db_addr)
     );
     riscc_cached_cache #(.ADDR_BITS(XLEN-2),
                          .UNCACHED_BIT(DCACHE_UNCACHED_BIT-2), .READ_ONLY(0),
                          .LOCAL_WORD_BITS(SRAM_ADDR_BITS != 0 ? SRAM_ADDR_BITS-2 : 0),
-                         .HOLD_PAYLOAD(1), .LINE_WORD_BITS(LINE_WORD_BITS)) dcache (
+                         .LINE_WORD_BITS(LINE_WORD_BITS)) dcache (
         .clk(clk), .rst(rst),
         .c_addr(d_addr), .c_wdata(d_wdata), .c_sel(d_sel), .c_we(d_we),
         .c_rdata(cache_d_data), .c_rsel(cache_d_sel), .c_cyc(d_cyc),
         .c_stb(d_stb), .c_stall(cache_d_stall), .c_ack(cache_d_ack),
+        .store_posted(invalidate),
         .m_addr(db_addr), .m_wdata(db_wdata), .m_sel(db_sel), .m_we(db_we),
         .m_rdata(mem_rdata), .m_cyc(db_cyc), .m_stb(db_stb), .m_stall(db_stall), .m_ack(db_ack),
         .inv_valid(1'b0), .inv_addr({(XLEN-2){1'b0}})
@@ -232,19 +236,16 @@ module riscc_cached #(
 endmodule
 `default_nettype wire
 
-// Internal RC16/RC32 Full pipeline.
+// Internal RC16/RC32 Full pipeline: fetch, decode/RF, execute, writeback.
+// ALU results and loads share one RF write port. Execute forwards ALU results;
+// an immediate load consumer waits one clock for the RF's write-first bypass.
+// A memory response can retire while Execute issues the next request.
 //
-// The pipeline is IF, Decode/RF, Execute. Decode drives two replicated
-// synchronous MLAB register files; their registered read outputs are the
-// Execute operands. Both RF mappings provide a write-first architectural
-// view so dependent instructions can issue without a pipeline bubble.
-//
-// Iterative shifts and MUL hold Execute until complete. The independent
-// data port transfers a native RC32 word in one transaction. MUL uses a
-// registered DSP by default; RISCC_FAST_SOFT_MUL selects an iterative fabric
-// implementation. The instruction, destination, and operands remain owned by
-// X until the operation commits. Instruction fetch uses a 16-bit port; the
-// data port is 32 bits wide with byte enables. Both use Wishbone B4 handshakes.
+// Shifts and multiplication hold Execute until complete. MUL uses a registered
+// DSP by default; RISCC_FAST_SOFT_MUL selects iterative fabric multiplication.
+// The instruction port transfers 16 bits, the data port 32 bits with byte
+// enables. Both use Wishbone B4 handshakes; the internal data port
+// responds at least one clock after acceptance, as SRAM and cache hits do.
 
 `default_nettype none
 
@@ -314,7 +315,13 @@ module riscc_cached_pipe #(
     reg d_valid_q;
     reg fetch_held_q;
     reg [15:0] d_instr_q;
-    wire core_advance = 1'b1;
+    // One completion slot shares the RF write port between ALU and loads.
+    // Execute can replace it on the response edge; a miss holds younger work.
+    reg w_we_q;
+    reg [3:0] w_dst_q;
+    reg [XLEN-1:0] w_result_q;
+    reg w_native_q, w_byte_q, w_signed_q;
+    wire core_advance = !data_pending_q || dmem_ack;
     wire data_pending = data_pending_q;
     wire fetch_pending = i_pending_q;
     wire fetch_reply = i_pending_q && imem_ack && !i_discard_q;
@@ -427,7 +434,10 @@ module riscc_cached_pipe #(
     reg x_bitop_q;
     reg x_shift_nonzero_q;
     reg x_shift_left_q;
-    reg x_ldpc_q, x_native_immediate_q, x_native_word_q;
+    reg x_imm_sign_q, x_imm_bit0_q;
+    reg x_alu_a_rf_q, x_alu_a_forward_q, x_alu_a_pc_q;
+    reg x_alu_b_rf_q, x_alu_b_forward_q, x_alu_b_imm_q;
+    reg x_native_immediate_q, x_native_word_q;
     reg x_memory_q;
     reg x_store_q;
     reg x_load_byte_q;
@@ -437,8 +447,6 @@ module riscc_cached_pipe #(
     reg x_move_q;
     reg x_ie_write_q;
     // Decode also registers the result and arithmetic operand selects.
-    reg x_run_imm_s_q;
-    reg x_run_rf_b_q;
     reg x_run_short_imm_q;
     // Bit 1 selects subtraction; bit 0 selects an arithmetic result.
     // 00 bypass, 01 add, 11 subtract, 10 compare. No extra control state.
@@ -469,12 +477,18 @@ module riscc_cached_pipe #(
     wire x_move = x_move_q;
     wire x_ie_write = x_ie_write_q;
 
-    wire [XLEN-1:0] rf_a;
-    wire [XLEN-1:0] rf_b;
+    wire [XLEN-1:0] rf_read_a, rf_read_b;
+    reg x_forward_a_q, x_forward_b_q;
+    wire [XLEN-1:0] rf_a = x_forward_a_q ? w_result_q : rf_read_a;
+    wire [XLEN-1:0] rf_b = x_forward_b_q ? w_result_q : rf_read_b;
     wire [XLEN-1:0] alu_result;
     wire x_mul_start, data_accept, x_finish;
 
-    wire run_x = in_run & x_valid_q;
+    // Finish an older memory response before choosing the IRQ boundary.
+    // This keeps ACK out of the interrupt PC/ALU operand select.
+    wire irq_waiting = interrupt_request_q && interrupt_enable_q;
+    wire run_x = in_run && x_valid_q && core_advance &&
+                 !(data_pending_q && irq_waiting);
     // IRQ enters before a RUN instruction starts, never between data beats.
     // Waiting for an ACK also holds the architectural instruction boundary.
     wire take_irq = run_x && !data_pending && !data_stalled_q &&
@@ -485,12 +499,9 @@ module riscc_cached_pipe #(
     // instruction unchanged between D and X; branch displacement decoding
     // does not need a second mux on the Execute instruction register.
     wire [XLEN-1:0] x_imm_z = {{(XLEN-8){1'b0}}, x_instr_q[7:0]};
-    wire x_imm_sign = x_ldpc_q ? x_instr_q[0] :
-        ((XLEN == 32) && x_native_immediate_q) ? x_instr_q[1] :
-        x_branch ? x_instr_q[0] : x_instr_q[7];
     wire [7:0] immediate_byte = ((XLEN == 32) && x_native_immediate_q) ?
         {x_instr_q[7:2], 2'b00} : x_instr_q[7:0];
-    wire [XLEN-1:0] x_imm_s = {{(XLEN-8){x_imm_sign}}, immediate_byte};
+    wire [XLEN-1:0] x_imm_s = {{(XLEN-8){x_imm_sign_q}}, immediate_byte};
     wire [XLEN-1:0] x_imm_u = {{(XLEN-16){1'b0}}, x_instr_q[7:0], 8'h00};
     reg [XLEN-1:0] side_data_q;
 
@@ -516,8 +527,8 @@ module riscc_cached_pipe #(
     wire [COUNT_BITS-1:0] side_count_q = x_instr_q[2:0];
 `endif
 
-    // Shifts reuse the destination RF register as their accumulator. IRQs
-    // remain deferred until the final step; both RAM mappings forward each write.
+    // Shifts feed the completion value back for their next step. IRQs stay
+    // deferred until the final step; every write uses the ordinary RF port.
     wire [XLEN-1:0] side_shift_source = rf_a;
     wire side_shift_left = x_shift_left;
     wire side_shift_endpoint = x_instr_q[7] ? rf_b[0] :
@@ -551,17 +562,36 @@ module riscc_cached_pipe #(
 `else
     // Four Execute clocks: capture operands, pipeline the low product,
     // retain it for writeback, and commit. Other operations are unchanged.
-    reg [XLEN-1:0] mul_a_q, mul_b_q, mul_product_q;
-    wire [XLEN-1:0] x_mul_result = mul_a_q * mul_b_q;
+    reg [XLEN-1:0] mul_a_q, mul_b_q;
     wire [XLEN-1:0] mul_write_data = side_data_q;
     always @(posedge clk) begin
         if (x_mul_start) begin
             mul_a_q <= rf_a;
             mul_b_q <= rf_b;
         end
-        if (state_q == ST_MUL_CALC) mul_product_q <= x_mul_result;
-        if (state_q == ST_MUL_PIPE) side_data_q <= mul_product_q;
     end
+    generate if (XLEN == 32) begin : g_wide_multiply
+        // Three half-width products supply the low 32 bits. Their sum uses
+        // the existing final multiply stage, avoiding a DSP cascade.
+        reg [31:0] low_q;
+        reg [15:0] cross_a_q, cross_b_q;
+        always @(posedge clk) begin
+            if (state_q == ST_MUL_CALC) begin
+                low_q <= mul_a_q[15:0] * mul_b_q[15:0];
+                cross_a_q <= mul_a_q[31:16] * mul_b_q[15:0];
+                cross_b_q <= mul_a_q[15:0] * mul_b_q[31:16];
+            end
+            if (state_q == ST_MUL_PIPE)
+                side_data_q <= {low_q[31:16] + cross_a_q + cross_b_q,
+                                low_q[15:0]};
+        end
+    end else begin : g_narrow_multiply
+        reg [XLEN-1:0] product_q;
+        always @(posedge clk) begin
+            if (state_q == ST_MUL_CALC) product_q <= mul_a_q * mul_b_q;
+            if (state_q == ST_MUL_PIPE) side_data_q <= product_q;
+        end
+    end endgenerate
 `endif
 
     // Arithmetic and addresses use the adder; other results bypass it.
@@ -571,11 +601,14 @@ module riscc_cached_pipe #(
     wire pc_write = x_indirect || x_jall;
     // Pending loads do not use the ALU. A stalled command still owns its
     // address, so defer IRQ operand selection until it has been accepted.
-    wire irq_alu = interrupt_request_q && interrupt_enable_q && !data_stalled_q;
-    wire alu_a_is_pc = x_branch || x_ldpc_q || pc_write || irq_alu;
+    wire irq_alu = interrupt_request_q && interrupt_enable_q &&
+                   !data_pending_q && !data_stalled_q;
     // Non-arithmetic instructions do not consume the ALU result. Keeping
     // ra as the default removes a full-width zeroing gate on the input.
-    wire [XLEN-1:0] ordinary_alu_a = alu_a_is_pc ? {x_pc_next_q, 1'b0} : rf_a;
+    wire [XLEN-1:0] ordinary_alu_a =
+        ({x_pc_next_q, 1'b0} & {XLEN{irq_alu || x_alu_a_pc_q}}) |
+        ((rf_read_a & {XLEN{x_alu_a_rf_q}}) |
+         (w_result_q & {XLEN{x_alu_a_forward_q}})) & {XLEN{!irq_alu}};
 
     wire [XLEN-1:0] immediate_result = x_aaa[0] ? x_imm_u : x_imm_z;
     wire run_short_imm = x_run_short_imm_q;
@@ -589,10 +622,12 @@ module riscc_cached_pipe #(
     // Branch/LDPC immediates encode their sign in bit 0. Clear it before
     // operand selection so register arithmetic needs no low-bit masking.
     wire [XLEN-1:0] arithmetic_imm =
-        {x_imm_s[XLEN-1:1], x_imm_s[0] && !(x_branch || x_ldpc_q)};
-    wire [XLEN-1:0] ordinary_alu_b =
-        (rf_b & {XLEN{x_run_rf_b_q && !irq_alu}}) |
-        (arithmetic_imm & {XLEN{x_run_imm_s_q && !irq_alu}}) |
+        {x_imm_s[XLEN-1:1], x_imm_bit0_q};
+    wire [XLEN-1:0] selected_alu_b =
+        ((rf_read_b & {XLEN{x_alu_b_rf_q}}) |
+         (w_result_q & {XLEN{x_alu_b_forward_q}}) |
+         (arithmetic_imm & {XLEN{x_alu_b_imm_q}})) & {XLEN{!irq_alu}};
+    wire [XLEN-1:0] ordinary_alu_b = selected_alu_b |
         {{(XLEN-2){1'b0}}, x_jall || irq_alu, 1'b0};
 
     wire ordinary_subtract = irq_alu || x_alu_kind_q[1];
@@ -631,15 +666,14 @@ module riscc_cached_pipe #(
     wire x_shift_start = normal_x & x_shift_nonzero_q;
     assign x_mul_start = normal_x & x_multiply;
     wire x_side_start = x_shift_start | x_mul_start;
-    wire data_complete = dmem_ack && (data_pending_q || data_accept);
     wire run_commit = normal_x && !x_side_start &&
-        (!x_memory || data_complete) && (!x_jall || d_valid);
+        (!x_memory || data_accept) && (!x_jall || d_valid);
 `ifdef RISCC_FAST_SOFT_MUL
     wire mul_commit = mul_finish;
 `else
     wire mul_commit = in_mul;
 `endif
-    wire x_complete = run_commit | shift_finish | mul_commit;
+    wire x_complete = core_advance && (run_commit | shift_finish | mul_commit);
     wire commit_valid = x_finish;
     // Control transfers are RUN instructions with no side state or data
     // transaction. Their redirect does not depend on memory completion logic.
@@ -650,7 +684,9 @@ module riscc_cached_pipe #(
         x_branch ? alu_result[XLEN-1:1] : rf_a[XLEN-1:1];
     wire redirect = take_irq | x_redirect;
     wire i_accept;
-    wire frontend_flush = redirect && (!i_stalled_q || i_accept);
+    // A stalled fetch has not been accepted, so it cannot also be pending.
+    // Its acceptance depends only on STALL, not on Decode's next instruction.
+    wire frontend_flush = redirect && (!i_stalled_q || !imem_stall);
     // The compact frontend shares its target mux with the fetch port.
     // Registered fetch uses a separate parallel selector to shorten the
     // Execute-to-memory path without adding another redirect cycle.
@@ -668,59 +704,146 @@ module riscc_cached_pipe #(
     // A previously offered fetch must remain stable until accepted. Hold a
     // redirect in Execute while that command drains, then discard its reply.
     assign x_finish = x_complete && (!redirect || frontend_flush);
-    wire x_slot_available = !x_valid_q || x_complete;
-    wire d_issue = !rst && d_valid && x_slot_available && !redirect;
+    wire x_slot_available = core_advance && (!x_valid_q || x_complete);
+    // The RF has synchronous reads. An immediate load consumer waits for
+    // writeback, where the RF's write-first bypass supplies the loaded value.
+    // Compare source fields before the RF address mux. Loads only write
+    // ordinary registers, so reads of system registers cannot conflict.
+    wire d_reads_aaa = d_imm_memory || (d_register && !d_f5[4]) ||
+        d_funnel || (d_system && d_bbb[0]);
+    wire d_reads_ddd = d_store || d_funnel ||
+        (d_immediate && (d_aaa[2] || d_aaa[1]) && !d_branch);
+    wire d_reads_bbb = d_reg_alu_group || d_indexed_memory;
+    wire match_aaa = d_aaa == x_dst_q[2:0];
+    wire match_ddd = d_ddd == x_dst_q[2:0];
+    wire match_bbb = d_bbb == x_dst_q[2:0];
+    wire load_use = x_valid_q && x_memory && !x_store &&
+        ((d_reads_aaa && match_aaa) ||
+         (d_reads_ddd && match_ddd) ||
+         (d_reads_bbb && match_bbb) ||
+         (d_branch && !(|x_dst_q)));
+    wire d_issue = !rst && d_valid && x_slot_available && !redirect && !load_use;
+
+    wire d_alu_pc = d_branch | d_ldpc | d_return | d_link_jump;
+    wire d_alu_immediate = d_branch | d_ldpc | d_imm_memory |
+        (d_imm_alu & ~d_aaa[2] & d_aaa[1]);
+    wire d_alu_rf_b = (d_reg_alu_group & ~d_f5[2]) | d_indexed_memory;
+    // Share field comparisons with load-use detection. Compare before
+    // the source-address mux so forwarding does not extend the RF path.
+    wire match_a = d_system ? (match_aaa && x_dst_q[3] != d_bbb[0]) :
+        (!x_dst_q[3] && (d_src_a_is_ddd ? match_ddd : match_aaa));
+    wire match_b = !x_dst_q[3] &&
+        (d_src_b_is_ddd ? match_ddd : d_src_b_is_aaa ? match_aaa : match_bbb);
+    wire forward_a = x_valid_q && x_we_q && match_a;
+    wire forward_b = x_valid_q && x_we_q && match_b;
 
     // ------------------------------------------------------------------
     // Load response and architectural writeback
     // ------------------------------------------------------------------
-    wire [15:0] load_half = (|dmem_rsel[3:2]) ? dmem_rdata[31:16] : dmem_rdata[15:0];
-    wire [7:0] accepted_load_byte = (dmem_rsel[3] || dmem_rsel[1]) ? load_half[15:8] : load_half[7:0];
-    wire load_sign = x_signed_byte &&
-        (x_load_byte ? accepted_load_byte[7] : load_half[15]);
-    wire [XLEN-1:0] accepted_load_value = x_native_word_q ?
-        dmem_rdata[XLEN-1:0] : x_load_byte ?
-        {{(XLEN-8){load_sign}}, accepted_load_byte} :
-        {{(XLEN-16){load_sign}}, load_half};
+    wire load_native = w_native_q;
+    wire load_byte = !load_native && w_byte_q;
+    wire load_signed = w_signed_q;
+    // Select the lane before extending it. Native words always use lane zero,
+    // avoiding another full-width native/halfword/byte result multiplexer.
+    wire load_upper = !load_native && (|dmem_rsel[3:2]);
+    wire load_odd = load_byte && (dmem_rsel[3] || dmem_rsel[1]);
+    wire [15:0] load_half = load_upper ? dmem_rdata[31:16] : dmem_rdata[15:0];
+    wire [7:0] accepted_load_byte = load_odd ? load_half[15:8] : load_half[7:0];
+    // The sign comes from the highest byte of the selected load. Select it
+    // directly so extension does not follow the byte/halfword data muxes.
+    wire sign_odd = load_odd || !load_byte;
+    wire load_sign_bit = load_upper ?
+        (sign_odd ? dmem_rdata[31] : dmem_rdata[23]) :
+        (sign_odd ? dmem_rdata[15] : dmem_rdata[7]);
+    wire load_sign = load_signed && load_sign_bit;
+    wire [31:0] extended_load = {
+        load_native ? dmem_rdata[31:16] : {16{load_sign}},
+        load_byte ? {8{load_sign}} : load_half[15:8], accepted_load_byte};
+    wire [XLEN-1:0] accepted_load_value = extended_load[XLEN-1:0];
 `ifdef RISCC_FAST_SOFT_MUL
     wire [XLEN-1:0] mul_write_data = mul_step;
 `endif
-    // ACK controls state enables, not the operand/result selectors. Their
-    // values are immaterial while the pipeline and RF write port are held.
-    wire rf_we = !rst && core_advance &&
-                 ((take_irq && frontend_flush) || (x_finish && x_we_q) ||
-                  x_shift_start || in_shift);
-    wire [3:0] rf_waddr = take_irq ? 4'h8 : x_dst_q;
+    wire rf_we = !rst && core_advance && w_we_q;
+    wire [3:0] rf_waddr = w_dst_q;
+    wire [XLEN-1:0] rf_wdata = data_pending_q ? accepted_load_value : w_result_q;
+    // Decide whether X needs writeback without routing the returning ACK
+    // through request issue and redirect arbitration. ACK only gates the
+    // final clock enable; stalls retain the forwarded completion value.
+    wire fetch_cancel_ready = !i_stalled_q || !imem_stall;
+    wire run_redirect = (x_branch && x_branch_taken) || x_indirect ||
+                        (x_jall && d_valid);
+    wire run_push_ready = irq_alu ? fetch_cancel_ready :
+        (!x_multiply && (!x_memory || !dmem_stall) &&
+         (!x_jall || d_valid) && (!run_redirect || fetch_cancel_ready));
+    wire w_push = core_advance &&
+        (in_shift || mul_commit ||
+         (in_run && x_valid_q && !(data_pending_q && irq_waiting) && run_push_ready));
+    wire x_write = (take_irq && frontend_flush) || x_we_q;
     // IRQ saves the interrupted PC. Calls and arithmetic share the ALU;
     // short and long calls save PC+1 and PC+2 halfwords respectively.
     wire compare_value = x_f3[0] ? unsigned_less : signed_less;
     wire write_arithmetic = pc_write || x_alu_kind_q[0];
-    wire [XLEN-1:0] rf_wdata = (take_irq || write_arithmetic) ? alu_result :
+    wire [XLEN-1:0] x_result = (take_irq || write_arithmetic) ? alu_result :
         in_mul ? mul_write_data :
-        x_memory ? accepted_load_value :
         x_compare ? {{(XLEN-1){1'b0}}, compare_value} : run_result;
 
-    // Branch conditions observe the last architectural write to r0.
-    // Updating alongside RF writeback forwards directly to a following branch.
-    always @(posedge clk)
+    always @(posedge clk) begin
+        if (rst) begin
+            w_we_q <= 0;
+            x_forward_a_q <= 0;
+            x_forward_b_q <= 0;
+        end else begin
+            if (core_advance) begin
+                w_we_q <= w_push && x_write;
+                w_dst_q <= take_irq ? 4'h8 : x_dst_q;
+                w_native_q <= x_native_word_q;
+                w_byte_q <= x_load_byte;
+                w_signed_q <= x_signed_byte;
+            end
+            if (w_push) w_result_q <= x_result;
+            // Forwarding belongs to the next Execute slot. Refresh it when
+            // that slot opens, even if Decode is empty or has a load hazard.
+            if (x_finish || !x_valid_q) begin
+                x_forward_a_q <= forward_a;
+                // Decode one-hot selects before the full-width operand mux.
+                x_alu_a_pc_q <= d_alu_pc;
+                x_alu_a_rf_q <= !d_alu_pc && !forward_a;
+                x_alu_a_forward_q <= !d_alu_pc && forward_a;
+                x_alu_b_rf_q <= d_alu_rf_b && !forward_b;
+                x_alu_b_forward_q <= d_alu_rf_b && forward_b;
+                x_alu_b_imm_q <= !d_alu_rf_b && d_alu_immediate;
+                x_forward_b_q <= forward_b;
+            end else if (shift_feedback) begin
+                x_forward_a_q <= 1;
+            end
+        end
+    end
+
+    // ALU flags are available at Execute completion; loads supply theirs
+    // at writeback. An Execute result is younger and wins on a shared edge.
+    // Branches then read two flops without a separate forwarding selector.
+    always @(posedge clk) begin
         if (rf_we && !(|rf_waddr)) begin
             r0_negative_q <= rf_wdata[XLEN-1];
             r0_zero_q <= !(|rf_wdata);
         end
+        if (w_push && x_write && !take_irq && !x_memory && !(|x_dst_q)) begin
+            r0_negative_q <= x_result[XLEN-1];
+            r0_zero_q <= !(|x_result);
+        end
+    end
 
-    // Only unfinished shifts need their destination read back. The final
-    // step can read Decode's operands; if Decode is empty no X operand is
-    // consumed. Keep late cache completion out of the RF address selector.
+    // Shifts reuse the completion result; RF reads only belong to Decode.
     wire shift_feedback = core_advance &&
         (x_shift_start || (in_shift && !shift_finish));
     riscc_fast_rf #(.XLEN(XLEN)) regs (
         .clk(clk),
-        .read_en_a((d_issue || shift_feedback) && !rst),
+        .read_en_a(d_issue && !rst),
         .read_en_b(d_issue && !rst),
-        .raddr_a(shift_feedback ? x_dst_q : d_src_a),
-        .rdata_a(rf_a),
+        .raddr_a(d_src_a),
+        .rdata_a(rf_read_a),
         .raddr_b(d_src_b),
-        .rdata_b(rf_b),
+        .rdata_b(rf_read_b),
         .waddr(rf_waddr),
         .wdata(rf_wdata),
         .we(rf_we)
@@ -729,9 +852,9 @@ module riscc_cached_pipe #(
     // ------------------------------------------------------------------
     // Independent instruction and data handshakes
     // ------------------------------------------------------------------
-    // A data request retains Execute and both RF outputs through ACK. The
-    // instruction port continues independently during cache misses and loads.
-    assign dmem_stb = !rst && normal_x && x_memory && !data_pending_q;
+    // Execute releases a request at acceptance. The completion slot retains
+    // its destination and format until the response, allowing replacement.
+    assign dmem_stb = !rst && normal_x && x_memory;
     assign dmem_cyc = !rst && (data_pending_q || dmem_stb);
     assign data_accept = dmem_stb && !dmem_stall;
     assign dmem_addr = alu_result[XLEN-1:2];
@@ -746,10 +869,12 @@ module riscc_cached_pipe #(
     // A registered Decode stage can retain one instruction while the
     // memory port holds the following response during an Execute stall.
     wire decode_space = !d_valid_q || d_issue;
-    // Drain a held response before requesting another: a zero-wait memory
-    // may replace its data combinationally as soon as the next STB is offered.
+    // Caches retain their response until the acceptance edge, allowing a
+    // held response to be consumed and replaced together. A raw zero-wait
+    // target can change data as soon as STB is offered and must drain first.
     wire fetch_space = REGISTER_FETCH ?
-        (!fetch_held_q && (decode_space || !fetch_reply)) : !d_valid || d_issue;
+        ((!fetch_held_q || ((FETCH_RESPONSE_HELD != 0) && decode_space)) &&
+         (decode_space || !fetch_reply)) : !d_valid || d_issue;
     wire redirect_fetch = redirect && !i_stalled_q;
     assign imem_stb = !rst && i_ready &&
         (i_stalled_q || redirect_fetch || (fetch_space && (!REGISTER_FETCH || !redirect)));
@@ -790,8 +915,8 @@ module riscc_cached_pipe #(
         end else begin
             interrupt_request_q <= irq;
             data_stalled_q <= dmem_stb && dmem_stall;
-            if (data_complete) data_pending_q <= 0;
-            else if (data_accept) data_pending_q <= 1;
+            if (core_advance)
+                data_pending_q <= data_accept;
             i_stalled_q <= imem_stb && imem_stall;
             if (i_ready) begin
                 i_pending_q <= i_accept && (i_pending_q || !imem_ack);
@@ -833,7 +958,11 @@ module riscc_cached_pipe #(
                 x_bitop_q <= d_shift | d_funnel;
                 x_shift_nonzero_q <= d_shift & (|d_bbb);
                 x_shift_left_q <= d_f5[1] | (d_f5[4] & ~d_bbb[0]);
-                x_ldpc_q <= d_ldpc;
+                // Predecode the address/PC controls before the ALU input muxes.
+                x_imm_sign_q <= (d_branch || d_ldpc) ? d_instr[0] :
+                    ((XLEN == 32) && d_imm_memory) ? d_instr[1] : d_instr[7];
+                x_imm_bit0_q <= d_instr[0] &&
+                    !(d_branch || d_ldpc || ((XLEN == 32) && d_imm_memory));
                 x_native_immediate_q <= d_imm_memory;
                 x_native_word_q <= (XLEN == 32) && (d_imm_memory || d_native_load || d_ldpc);
                 x_memory_q <= d_memory;
@@ -844,10 +973,6 @@ module riscc_cached_pipe #(
                 x_jall_q <= d_jall;
                 x_move_q <= d_move;
                 x_ie_write_q <= d_ie_write;
-                x_run_imm_s_q <= d_branch | d_ldpc | d_imm_memory |
-                                 (d_imm_alu & ~d_aaa[2] & d_aaa[1]);
-                x_run_rf_b_q <= (d_reg_alu_group & ~d_f5[2]) |
-                                d_indexed_memory;
                 x_run_short_imm_q <= d_imm_alu & ~d_aaa[2] & ~d_aaa[1];
                 x_alu_kind_q <= {
                     (d_imm_alu & ~d_aaa[2] & d_aaa[1] & d_aaa[0]) |
@@ -910,7 +1035,7 @@ module riscc_cached_pipe #(
 endmodule
 
 
-// Internal blocking direct-mapped cache. Addresses count 32-bit words.
+// Internal direct-mapped cache. Addresses count 32-bit words.
 // Each cache holds 2 KiB in lines of eight or sixteen words. Data RAM is synchronous;
 // Tags and valid bits use MLABs, with reads registered alongside cache data.
 // Reads miss by fetching a complete line.  Stores are write-through and do
@@ -930,9 +1055,7 @@ module riscc_cached_cache #(
     // Word-address bit selecting uncached data; ignored by instruction cache.
     parameter integer UNCACHED_BIT = ADDR_BITS-1,
     parameter integer READ_ONLY = 0,
-    parameter integer CPU_BITS = 32,
-    // Execute retains write data and direction until ACK on the data port.
-    parameter integer HOLD_PAYLOAD = 0
+    parameter integer CPU_BITS = 32
 ) (
     input  wire                   clk,
     input  wire                   rst,
@@ -947,6 +1070,7 @@ module riscc_cached_cache #(
     output wire [3:0]             c_rsel,
     output wire                   c_stall,
     output wire                   c_ack,
+    output wire                   store_posted,
 
     output wire [ADDR_BITS-1:0]   m_addr,
     output wire [31:0]            m_wdata,
@@ -993,14 +1117,16 @@ module riscc_cached_cache #(
     reg [ADDR_BITS-1:0] req_addr_q;
     reg [CPU_BITS-1:0]  req_wdata_q;
     reg [3:0]           req_sel_q;
-    reg                 captured_we_q;
-    wire req_we_q = (HOLD_PAYLOAD != 0) ? c_we : captured_we_q;
+    reg                 req_we_q;
     reg [31:0]          data_rdata_q;
     wire [TAG_BITS-1:0] tag_rdata_q;
     wire                lookup_valid_q;
 
     reg [LINE_WORD_BITS-1:0] refill_beat_q;
     reg                 pending_q;
+    // Accepted writes reside in the backing pipeline, not in another FIFO.
+    // Keep ownership until their ordered acknowledgements have drained.
+    reg [1:0] writes_pending_q;
     reg                 refill_invalidated_q;
 
     wire [INDEX_BITS-1:0] c_index = c_addr[8:LINE_WORD_BITS];
@@ -1028,9 +1154,10 @@ module riscc_cached_cache #(
     end endgenerate
 
     wire cpu_request = c_cyc && c_stb && !c_stall;
-    wire local_request = LOCAL_WORD_BITS != 0 && (c_addr >> LOCAL_WORD_BITS) == 0;
-    wire cpu_idle_accept = cpu_request && !local_request;
-    wire lookup_hit = req_cacheable && lookup_valid_q && (tag_rdata_q == req_tag) &&
+    // Decide SRAM versus cache from the captured address. This keeps the
+    // incoming address decode out of request acceptance on both CPU ports.
+    wire req_local = LOCAL_WORD_BITS != 0 && (req_addr_q >> LOCAL_WORD_BITS) == 0;
+    wire lookup_hit = !req_local && req_cacheable && lookup_valid_q && (tag_rdata_q == req_tag) &&
                       !(inv_valid && (inv_index == req_index));
     wire lookup_read_hit = lookup_hit && !req_we_q;
 
@@ -1054,24 +1181,28 @@ module riscc_cached_cache #(
     // An ACK on an accepted command is an immediate response; otherwise the
     // command is held as an outstanding request until ACK arrives.
     wire pass_active = (state_q == ST_PASS) ||
-        ((state_q == ST_LOOKUP) && (!req_cacheable || (read_only && req_we_q)));
+        ((state_q == ST_LOOKUP) && !req_local && (!req_cacheable || req_we_q));
     wire pass_accept = pass_active && m_cyc && m_stb && !m_stall;
-    wire pass_response = pass_active &&
+    wire write_accept = pass_accept && req_we_q;
+    wire write_response = m_ack && ((|writes_pending_q) || write_accept);
+    wire pass_response = pass_active && !req_we_q && !(|writes_pending_q) &&
         ((pending_q && m_ack) ||
          (!pending_q && pass_accept && m_ack));
     // ACK describes the retained transaction, so it remains asserted after
     // STB drops while CYC is held through completion.  It must not be gated
     // by the current CYC/STB inputs: doing so feeds a combinational response
     // loop into masters that derive their next CYC from ACK.
+    assign store_posted = (state_q == ST_LOOKUP) && !req_local && req_we_q;
     assign c_ack = ((state_q == ST_LOOKUP) && lookup_read_hit) ||
-                   (pass_response && req_we_q) || (state_q == ST_REPLY);
-    // Only instruction fetch replaces a hit on its response edge. Execute
-    // holds each data operation through ACK and offers its next request on
-    // the following clock, so data readiness need not depend on the tag.
+                   store_posted || (state_q == ST_REPLY);
+    // Replace a hit immediately. A posted store releases its payload once
+    // the backing port captures it; later writes stall only while it is full.
     assign c_stall =
-        ((state_q == ST_IDLE) || (state_q == ST_REPLY)) ? 1'b0 :
-        (READ_ONLY != 0 && state_q == ST_LOOKUP) ? !lookup_read_hit :
-        1'b1;
+        ((state_q == ST_IDLE) || (state_q == ST_REPLY) ||
+         (req_local && (state_q == ST_LOOKUP ||
+                        (REGISTER_LOOKUP && state_q == ST_RELOOK)))) ? 1'b0 :
+        (state_q == ST_LOOKUP && lookup_read_hit) ? 1'b0 :
+        write_accept ? 1'b0 : 1'b1;
     // Every read response comes from the data RAM output. Uncached replies
     // use the refill write port, then read back the word in ST_UNCACHED.
     wire [31:0] cpu_read_word = (CPU_BITS == 16 && req_sel_q[3]) ?
@@ -1079,15 +1210,16 @@ module riscc_cached_cache #(
     assign c_rdata = cpu_read_word[CPU_BITS-1:0];
     assign c_rsel = req_sel_q;
 
-    assign m_cyc = pass_active || (state_q == ST_REFILL);
-    assign m_stb = pass_active ? !pending_q :
+    assign m_cyc = pass_active || (state_q == ST_REFILL) || (|writes_pending_q);
+    wire pass_ready = req_we_q ? (!(&writes_pending_q) || m_ack) : !(|writes_pending_q);
+    assign m_stb = pass_active ? (!pending_q && pass_ready) :
                    (state_q == ST_REFILL) ?
                        (!pending_q || refill_offer_next) : 1'b0;
     wire [LINE_WORD_BITS-1:0] refill_addr_beat = refill_beat_q +
         {{(LINE_WORD_BITS-1){1'b0}}, pending_q && m_ack};
     assign m_addr = pass_active ? req_addr_q :
                     {req_addr_q[ADDR_BITS-1:LINE_WORD_BITS], refill_addr_beat};
-    wire [CPU_BITS-1:0] store_data = (HOLD_PAYLOAD != 0) ? c_wdata : req_wdata_q;
+    wire [CPU_BITS-1:0] store_data = req_wdata_q;
     assign m_wdata = read_only ? 32'b0 : {{(32-CPU_BITS){1'b0}}, store_data};
     assign m_sel = pass_active ? req_sel_q : 4'b1111;
     assign m_we = req_we_q;
@@ -1140,42 +1272,51 @@ module riscc_cached_cache #(
     always @(posedge clk)
         if (!rst && tag_write_en) tag_mem[tag_write_addr] <= tag_write_data;
 
+    // A store/read collision needs a second RAM read. Other requests enter
+    // lookup directly unless their address is registered before the RAM.
+    wire [2:0] request_state = (REGISTER_LOOKUP ||
+        (!c_we && store_hit && c_data_index == req_data_index)) ? ST_RELOOK : ST_LOOKUP;
+    wire [2:0] idle_or_request = (c_cyc && c_stb) ? request_state : ST_IDLE;
+
     always @(posedge clk) begin
         if (rst) begin
             state_q <= ST_CLEAR;
             req_addr_q[8:LINE_WORD_BITS] <= 0;
             pending_q <= 1'b0;
+            writes_pending_q <= 0;
             refill_beat_q <= 0;
             refill_invalidated_q <= 1'b0;
         end else begin
+            case ({write_accept, write_response})
+                2'b10: writes_pending_q <= writes_pending_q + 1'b1;
+                2'b01: writes_pending_q <= writes_pending_q - 1'b1;
+                default: begin end
+            endcase
             // An idle address has no owner; payload must retain the last reply
             // until a new request. Region selection only controls cache state.
             if (!c_stall) req_addr_q <= c_addr;
             if (cpu_request) begin
-                if (HOLD_PAYLOAD == 0) req_wdata_q <= c_wdata;
+                req_wdata_q <= c_wdata;
                 req_sel_q <= c_sel;
-                if (HOLD_PAYLOAD == 0) captured_we_q <= c_we;
-            end
-            if (cpu_idle_accept) begin
+                req_we_q <= c_we;
                 pending_q <= 1'b0;
-                state_q <= REGISTER_LOOKUP ? ST_RELOOK : ST_LOOKUP;
-            end else case (state_q)
+            end
+            // Only accepting states inspect the offered CPU request. Miss
+            // and refill progress does not depend on the next instruction.
+            case (state_q)
                 ST_CLEAR: begin
                     if (&req_index) state_q <= ST_IDLE;
                     else req_addr_q[8:LINE_WORD_BITS] <= req_index + 1'b1;
                 end
-                ST_IDLE: begin end
+                ST_IDLE: state_q <= idle_or_request;
                 ST_LOOKUP: begin
-                    if (pass_active) begin
-                        state_q <= ST_PASS;
-                    end else if (lookup_read_hit) begin
-                        state_q <= ST_IDLE;
-                    end else if (req_we_q) begin
-                        // Both store hits and misses await the backing write.
-                        // Only a hit updates data RAM; misses do not allocate.
-                        pending_q <= 1'b0;
-                        state_q <= ST_PASS;
-                    end else begin
+                    if (req_local || lookup_read_hit) begin
+                        state_q <= idle_or_request;
+                    end else if (pass_active) begin
+                        if (write_accept) state_q <= idle_or_request;
+                        else if (pass_response) state_q <= ST_UNCACHED;
+                        else state_q <= ST_PASS;
+                    end else if (!(|writes_pending_q)) begin
                         // Read miss. Publish the replacement tag only after
                         // the entire line has arrived.
                         refill_beat_q <= 0;
@@ -1210,7 +1351,7 @@ module riscc_cached_cache #(
                 ST_RELOOK: begin
                     // Read after the final write, avoiding mixed-port RAM
                     // read-during-write behavior at the requested address.
-                    state_q <= ST_LOOKUP;
+                    state_q <= (REGISTER_LOOKUP && req_local) ? idle_or_request : ST_LOOKUP;
                 end
                 ST_UNCACHED: begin
                     // Retry if another index needed the tag write port.
@@ -1218,9 +1359,10 @@ module riscc_cached_cache #(
                 end
 
                 ST_PASS: begin
-                    // Backend completion is handled below.
+                    if (write_accept) state_q <= idle_or_request;
+                    else if (pass_response) state_q <= ST_UNCACHED;
                 end
-                ST_REPLY: state_q <= ST_IDLE;
+                ST_REPLY: state_q <= idle_or_request;
 
                 default: begin
                     state_q <= ST_IDLE;
@@ -1228,10 +1370,9 @@ module riscc_cached_cache #(
                 end
             endcase
 
-            if (pass_active) begin
+            if (pass_active && !req_we_q) begin
                 if (pass_response) begin
                     pending_q <= 0;
-                    state_q <= req_we_q ? ST_IDLE : ST_UNCACHED;
                 end else if (pass_accept) pending_q <= 1;
             end
         end

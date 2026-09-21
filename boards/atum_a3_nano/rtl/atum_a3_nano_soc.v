@@ -57,18 +57,19 @@ module atum_a3_nano_soc #(
     wire periph_region = &mem_addr[29:4];
     wire sdram_sel = mem_addr[29:24] == 6'h04;
     reg sdram_pending_q;
-    assign mem_stall = sdram_pending_q || (sdram_sel && sdram_stall);
+    assign mem_stall = (sdram_pending_q && !sdram_ack) ||
+                       (sdram_sel && sdram_stall);
     assign sdram_addr = mem_addr[23:0];
     assign sdram_wdata = mem_wdata;
     assign sdram_wmask = mem_wmask;
     assign sdram_we = mem_we;
     assign sdram_cyc = mem_cyc && (sdram_sel || sdram_pending_q);
-    assign sdram_stb = mem_stb && sdram_sel && !sdram_pending_q;
+    assign sdram_stb = mem_stb && sdram_sel && (!sdram_pending_q || sdram_ack);
     always @(posedge clk) begin
         if (rst) sdram_pending_q <= 0;
         else begin
-            if (mem_accept && sdram_sel) sdram_pending_q <= 1;
             if (sdram_ack) sdram_pending_q <= 0;
+            if (mem_accept && sdram_sel) sdram_pending_q <= 1;
         end
     end
     wire mmio_sel = periph_region && mem_addr[3];

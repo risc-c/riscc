@@ -199,8 +199,9 @@ help:
 	  '  trace                       trace PROFILE and WIDTH' \
 	  '  trace-nano                  trace Nano' \
 	  '  trace-rc32                  trace RC32 PROFILE and WIDTH' \
-	  '  bench                       run RC16 core benchmarks' \
-	  '  bench-fast32                run the RC32 copy/dot-product benchmark' \
+	  '  bench                       run matching RC16 and RC32 core benchmarks' \
+	  '  bench-rc16 / bench-rc32      run one architecture benchmark' \
+	  '  bench-fast32                run the RC32 kernels on Fast' \
 	  '  bench-cached                benchmark the Cached core' \
 	  '  bench-serial                run parameterized RC16 Full benchmarks' \
 	  '  check-regressions           enforce size/cycle/ECP5 PPA limits' \
@@ -212,7 +213,8 @@ help:
 	  '  compiler-smoke-matrix       smoke tests at O0, O2, and Os' \
 	  '  compiler-features           C and ABI feature tests' \
 	  '  compiler-features-rtl       feature tests on Nano RTL' \
-	  '  compiler-benchmarks         compiler benchmark programs' \
+	  '  compiler-benchmarks         C benchmarks in ISS (RISCC_XLEN=16/32)' \
+	  '  compiler-benchmarks-rtl     C benchmark cycles on Full/Fast/Cached' \
 	  '  compiler-float              floating-point compiler tests' \
 	  '  compiler-profiles           feature tests for every profile' \
 	  '  compiler-libc               libc tests' \

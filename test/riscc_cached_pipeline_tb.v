@@ -1,11 +1,11 @@
-// Focused cycle-level checks for riscc_fast.
+// Focused cycle-level checks for riscc_cached_pipe.
 //
 // This is deliberately self contained so it can be run without an image
-// builder.  The memory model accepts at most one request.  The default mode
-// presents a registered response during the following cycle; +WAIT adds a
-// deterministic delay, +STALL applies B4 request backpressure, +ZERO returns
-// an accepted read on the acceptance edge, and +MIX alternates early and
-// delayed responses while also stalling requests.
+// builder. Each memory port accepts one request per clock and returns a
+// registered response on the following clock. +WAIT delays replies; +STALL
+// applies B4 backpressure. For instruction fetches, +ZERO responds on the
+// acceptance edge and +MIX alternates early and delayed replies with stalls.
+// Data replies always take at least one clock, matching SRAM and cache hits.
 
 `default_nettype none
 
@@ -17,6 +17,9 @@ module riscc_cached_pipeline_tb #(
     localparam integer DATA_BYTE = 16'h0080;
     localparam integer RESULT_BYTE = 16'h00a0;
     localparam integer DONE_BYTE = 16'h00c0;
+    localparam integer STREAM_BYTE = 16'h0040;
+    localparam integer STREAM_WORD = STREAM_BYTE >> 2;
+    localparam integer STREAM_OPS = 8;
     localparam integer DATA_HALF = DATA_BYTE >> 1;
     localparam integer RESULT_HALF = RESULT_BYTE >> 1;
     localparam integer DONE_HALF = DONE_BYTE >> 1;
@@ -44,6 +47,7 @@ module riscc_cached_pipeline_tb #(
     wire [31:0] dmem_rdata;
     wire [31:0] dmem_wdata;
     wire [3:0] dmem_wmask;
+    wire [3:0] dmem_rsel;
     wire dmem_we;
     wire dmem_cyc;
     wire dmem_stb;
@@ -59,6 +63,7 @@ module riscc_cached_pipeline_tb #(
     reg d_response_pending_q;
     reg [XLEN-3:0] d_response_addr_q;
     reg [31:0] d_response_data_q;
+    reg [3:0] d_response_sel_q;
     reg [2:0] d_response_wait_q;
     reg [31:0] cycle_q;
     reg wait_mode;
@@ -67,7 +72,6 @@ module riscc_cached_pipeline_tb #(
     reg mix_mode;
     reg ack_high_mode;
     reg i_mix_early_q;
-    reg d_mix_early_q;
     reg [31:0] test_case;
 
     reg done_seen_q;
@@ -103,6 +107,9 @@ module riscc_cached_pipeline_tb #(
     integer i_response_drop_count;
     integer d_response_drop_count;
     integer ack_idle_count;
+    integer stream_data_accepts;
+    integer stream_data_gap_errors;
+    integer stream_last_accept_cycle;
     wire strict_timing = !wait_mode && !stall_mode && !zero_mode &&
                          !mix_mode && !ack_high_mode;
     integer irq_beat;
@@ -137,9 +144,12 @@ module riscc_cached_pipeline_tb #(
     reg [15:0] i_last_response_data_q;
     reg d_response_drop_q;
     reg [31:0] d_last_response_data_q;
+    reg irq_epc_pending_q;
+    reg [31:0] irq_epc_expected_q;
 
     riscc_cached_pipe #(.XLEN(XLEN), .RESET_PC(0),
-                        .FETCH_RESPONSE_HELD(REGISTER_FETCH ? 1 : 0),
+                        // Zero-wait replies change as soon as STB is offered.
+                        .FETCH_RESPONSE_HELD(0),
                         .REGISTER_FETCH(REGISTER_FETCH)) dut (
         .clk(clk), .rst(rst), .irq(irq),
         .imem_addr(imem_addr), .imem_rdata(imem_rdata),
@@ -147,8 +157,8 @@ module riscc_cached_pipeline_tb #(
         .imem_stall(imem_stall), .imem_ack(imem_ack),
         .dmem_addr(dmem_addr), .dmem_rdata(dmem_rdata),
         .dmem_wdata(dmem_wdata), .dmem_wmask(dmem_wmask),
-        // Execute retains this byte mask until the data response ACK.
-        .dmem_rsel(dmem_wmask),
+        // Retain the accepted byte mask until the data response ACK.
+        .dmem_rsel(dmem_rsel),
         .dmem_we(dmem_we), .dmem_cyc(dmem_cyc), .dmem_stb(dmem_stb),
         .dmem_stall(dmem_stall), .dmem_ack(dmem_ack)
     );
@@ -161,7 +171,8 @@ module riscc_cached_pipeline_tb #(
 
     function automatic [15:0] enc_mem(
         input store, input [2:0] rs, input [2:0] ra, input [7:0] disp);
-        enc_mem = {2'b01, rs, ra, disp[7:1], store};
+        enc_mem = XLEN == 32 ? {2'b01, rs, ra, disp[7:2], disp[7], store} :
+                              {2'b01, rs, ra, disp[7:1], store};
     endfunction
 
     function automatic [15:0] enc_r(
@@ -192,10 +203,21 @@ module riscc_cached_pipeline_tb #(
         input [2:0] ra, input integer disp);
         begin
             mem[address] = enc_mem(store, rs, ra, disp[7:0]);
-            // The split data port carries one complete native word, so both
-            // widths incur one response cycle for a load or store.
-            expected_gap[address] = 2;
+            // X completion is the accepted request. The response reaches W
+            // one edge later, so independent memory operations can commit on
+            // adjacent cycles; load-use consumers are marked below.
+            expected_gap[address] = 1;
             if (store) expected_writes = expected_writes + (XLEN == 32 ? 2 : 1);
+        end
+    endtask
+
+    task automatic put_mem_after_load(
+        input integer address, input store, input [2:0] rs,
+        input [2:0] ra, input integer disp);
+        begin
+            put_mem(address, store, rs, ra, disp);
+            // The following store consumes the preceding load's W value.
+            expected_gap[address] = 2;
         end
     endtask
 
@@ -211,9 +233,9 @@ module riscc_cached_pipeline_tb #(
 `else
                 expected_gap[address] = 4;
 `endif
-            end else if (func == 5'h08) expected_gap[address] = 2;
+            end else if (func == 5'h08) expected_gap[address] = 1;
             else if (func == 5'h0a || func == 5'h0b || func == 5'h0e)
-                expected_gap[address] = 2;
+                expected_gap[address] = 1;
         end
     endtask
 
@@ -240,6 +262,21 @@ module riscc_cached_pipeline_tb #(
             mem[DATA_HALF + 1] = 16'h1234;
             mem[DATA_HALF + 2] = 16'h0203;
             mem[DATA_HALF + 3] = 16'h0000;
+            // Four independent source words feed the unrolled load/store
+            // stream in CASE=0. Store destinations start with sentinels so
+            // every final value is checked after all timing modes.
+            mem[(STREAM_BYTE >> 1) + 0] = 16'h1111;
+            mem[(STREAM_BYTE >> 1) + 1] = 16'h2222;
+            mem[(STREAM_BYTE >> 1) + 2] = 16'h3333;
+            mem[(STREAM_BYTE >> 1) + 3] = 16'h4444;
+            mem[(STREAM_BYTE >> 1) + 16] = 16'hdead;
+            mem[(STREAM_BYTE >> 1) + 17] = 16'h0000;
+            mem[(STREAM_BYTE >> 1) + 18] = 16'hcafe;
+            mem[(STREAM_BYTE >> 1) + 19] = 16'h0000;
+            mem[(STREAM_BYTE >> 1) + 20] = 16'h0000;
+            mem[(STREAM_BYTE >> 1) + 21] = 16'h0000;
+            mem[(STREAM_BYTE >> 1) + 22] = 16'h0000;
+            mem[(STREAM_BYTE >> 1) + 23] = 16'h0000;
             pc = 0;
             if (test_case == 0) begin
                 // Independent operations: after fill, commits must remain
@@ -254,6 +291,25 @@ module riscc_cached_pipeline_tb #(
                 put_r(pc, 3'd6, 3'd1, 5'h05, 3'd2); pc = pc + 1; // OR
                 end
                 put_mem(pc, 1'b1, 3'd3, 3'd7, RESULT_BYTE-DATA_BYTE);
+                pc = pc + 1;
+                // Alternating independent loads and stores exercise one
+                // accepted data request per clock. The loads write dead
+                // destinations; stores use the already settled r3 value.
+                put_mem(pc, 1'b0, 3'd1, 3'd7, STREAM_BYTE-DATA_BYTE+0);
+                pc = pc + 1;
+                put_mem(pc, 1'b1, 3'd3, 3'd7, STREAM_BYTE-DATA_BYTE+32);
+                pc = pc + 1;
+                put_mem(pc, 1'b0, 3'd2, 3'd7, STREAM_BYTE-DATA_BYTE+4);
+                pc = pc + 1;
+                put_mem(pc, 1'b1, 3'd3, 3'd7, STREAM_BYTE-DATA_BYTE+36);
+                pc = pc + 1;
+                put_mem(pc, 1'b0, 3'd4, 3'd7, STREAM_BYTE-DATA_BYTE+8);
+                pc = pc + 1;
+                put_mem(pc, 1'b1, 3'd3, 3'd7, STREAM_BYTE-DATA_BYTE+40);
+                pc = pc + 1;
+                put_mem(pc, 1'b0, 3'd5, 3'd7, STREAM_BYTE-DATA_BYTE+12);
+                pc = pc + 1;
+                put_mem(pc, 1'b1, 3'd3, 3'd7, STREAM_BYTE-DATA_BYTE+44);
                 pc = pc + 1;
                 put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
@@ -436,17 +492,30 @@ module riscc_cached_pipeline_tb #(
                         RESULT_BYTE-DATA_BYTE+12); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd5, 3'd7,
                         RESULT_BYTE-DATA_BYTE+16); pc = pc + 1;
-                // A valid zero read must reach a dependent MUL unchanged,
-                // including a response returned on the acceptance edge.
+                // A valid zero read must reach a dependent MUL unchanged.
                 mem[DATA_HALF] = 16'h0000;
                 mem[DATA_HALF + 1] = 16'h0000;
                 put_mem(pc, 1'b0, 3'd5, 3'd7, 0); pc = pc + 1;
-                put_r(pc, 3'd5, 3'd5, 5'h07, 3'd1); pc = pc + 1;
+                put_r(pc, 3'd5, 3'd5, 5'h07, 3'd1);
+                // The dependent MUL starts after the load-use bubble, then
+                // retains the normal multiplier completion latency.
+`ifdef RISCC_FAST_SOFT_MUL
+                expected_gap[pc] = XLEN / 2 + 2;
+`else
+                expected_gap[pc] = 5;
+`endif
+                pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd5, 3'd7,
                         RESULT_BYTE-DATA_BYTE+20); pc = pc + 1;
                 put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd6, 3'd7,
                         DONE_BYTE-DATA_BYTE);
+                if (REGISTER_FETCH) begin
+                    // The raw fetch target needs a drain cycle when MUL
+                    // releases its held reply; it reaches X two issues later.
+                    expected_gap[12] = 2;
+                    expected_gap[20] = 2;
+                end
             end else if (test_case == 11) begin
                 // Raise IRQ during a soft MUL. The handler records the
                 // completed product, then RETI resumes at a dependent ALU
@@ -475,28 +544,28 @@ module riscc_cached_pipeline_tb #(
                 put_i(pc, 3'd6, 3'd0, DATA_BYTE + 1); pc = pc + 1;
                 put_i(pc, 3'd0, 3'd0, 8'd0); pc = pc + 1; // LDX rb
                 put_r(pc, 3'd1, 3'd7, 5'h0a, 3'd0); pc = pc + 1; // LDB
-                put_mem(pc, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_mem_after_load(pc, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
                 pc = pc + 1;
                 put_r(pc, 3'd2, 3'd7, 5'h0e, 3'd0); pc = pc + 1; // LDBS
-                put_mem(pc, 1'b1, 3'd2, 3'd7, RESULT_BYTE-DATA_BYTE+4);
+                put_mem_after_load(pc, 1'b1, 3'd2, 3'd7, RESULT_BYTE-DATA_BYTE+4);
                 pc = pc + 1;
                 put_r(pc, 3'd3, 3'd6, 5'h0a, 3'd0); pc = pc + 1; // odd LDB
-                put_mem(pc, 1'b1, 3'd3, 3'd7, RESULT_BYTE-DATA_BYTE+8);
+                put_mem_after_load(pc, 1'b1, 3'd3, 3'd7, RESULT_BYTE-DATA_BYTE+8);
                 pc = pc + 1;
                 put_r(pc, 3'd4, 3'd6, 5'h0e, 3'd0); pc = pc + 1; // odd LDBS
-                put_mem(pc, 1'b1, 3'd4, 3'd7, RESULT_BYTE-DATA_BYTE+12);
+                put_mem_after_load(pc, 1'b1, 3'd4, 3'd7, RESULT_BYTE-DATA_BYTE+12);
                 pc = pc + 1;
                 put_r(pc, 3'd1, 3'd6, 5'h0b, 3'd0); pc = pc + 1; // STB odd
                 put_mem(pc, 1'b0, 3'd5, 3'd7, 0); pc = pc + 1; // LD
                 put_r(pc, 3'd5, 3'd7, 5'h08, 3'd0); pc = pc + 1; // LDX
-                put_mem(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+16);
+                put_mem_after_load(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+16);
                 pc = pc + 1;
                 if (XLEN == 32) begin
                     put_r(pc, 3'd5, 3'd7, 5'h0a, 3'd2); pc = pc + 1; // LDH
-                    put_mem(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+24);
+                    put_mem_after_load(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+24);
                     pc = pc + 1; // native check of LDH
                     put_r(pc, 3'd5, 3'd7, 5'h0e, 3'd2); pc = pc + 1; // LDHS
-                    put_mem(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+28);
+                    put_mem_after_load(pc, 1'b1, 3'd5, 3'd7, RESULT_BYTE-DATA_BYTE+28);
                     pc = pc + 1;
                     // RC32 direct typed halfwords use bbb=010.  This
                     // writes the original data halfword once more.
@@ -505,6 +574,11 @@ module riscc_cached_pipeline_tb #(
                 // The marker is after all checks and is always native-width.
                 put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+                // This raw memory cannot replace a held fetch response in
+                // the same cycle. After the last load-use stall, draining it
+                // leaves one fetch bubble two instructions later.
+                if (REGISTER_FETCH)
+                    expected_gap[XLEN == 32 ? 20 : 16] = 2;
             end
         end
     endtask
@@ -518,12 +592,12 @@ module riscc_cached_pipeline_tb #(
                            (cycle_q[2:0] == 3'd6);
     wire i_accept = imem_cyc && imem_stb && !imem_stall;
     wire d_accept = dmem_cyc && dmem_stb && !dmem_stall;
+    wire stream_d_accept = d_accept &&
+                           dmem_addr >= STREAM_WORD &&
+                           dmem_addr < STREAM_WORD + 16;
     wire i_early_response = !i_response_pending_q && i_accept &&
                              (zero_mode || ack_high_mode ||
                               (mix_mode && i_mix_early_q));
-    wire d_early_response = !d_response_pending_q && d_accept &&
-                             (zero_mode || ack_high_mode ||
-                              (mix_mode && d_mix_early_q));
     wire i_live_read = i_early_response;
     wire [31:0] d_live_read;
     function automatic [31:0] read_word(input integer word_address);
@@ -547,17 +621,15 @@ module riscc_cached_pipeline_tb #(
                        (i_response_wait_q == 3'd1)) ||
                       i_early_response;
     assign dmem_ack = ack_high_mode ||
-                      (d_response_pending_q &&
-                       (d_response_wait_q == 3'd1)) ||
-                      d_early_response;
+                      (d_response_pending_q && (d_response_wait_q == 3'd1));
     // The registered-fetch core retains a fetched response while Decode or
     // Execute is occupied, so the memory model must keep its last response
     // value valid while the port is idle in that mode.
     assign imem_rdata = i_response_pending_q ? i_response_data_q :
                         i_live_read ? mem[imem_addr] :
                         REGISTER_FETCH ? i_response_data_q : 16'hdead;
-    assign dmem_rdata = d_response_pending_q ? d_response_data_q :
-                        d_early_response ? d_live_read : 32'hdead_beef;
+    assign dmem_rdata = d_response_pending_q ? d_response_data_q : 32'hdead_beef;
+    assign dmem_rsel = d_response_pending_q ? d_response_sel_q : dmem_wmask;
 
     // Instruction port model.
     always @(posedge clk) begin
@@ -610,6 +682,8 @@ module riscc_cached_pipeline_tb #(
             end
             if (i_early_response)
                 early_ack_count <= early_ack_count + 1;
+            if (dut.i_stalled_q && dut.i_pending_q)
+                fail("instruction stall state overlapped a pending response");
             if (i_response_pending_q && imem_ack && imem_stall &&
                 imem_cyc && imem_stb)
                 ack_stall_count <= ack_stall_count + 1;
@@ -654,8 +728,8 @@ module riscc_cached_pipeline_tb #(
             d_response_pending_q <= 1'b0;
             d_response_addr_q <= '0;
             d_response_data_q <= 32'h0;
+            d_response_sel_q <= 4'h0;
             d_response_wait_q <= 3'd0;
-            d_mix_early_q <= 1'b1;
             d_accepted_count <= 0;
             d_response_count <= 0;
             d_response_drop_count <= 0;
@@ -663,23 +737,20 @@ module riscc_cached_pipeline_tb #(
             d_response_drop_q <= 1'b0;
             d_last_response_data_q <= 32'hdead_beef;
             write_count <= 0;
+            stream_data_accepts <= 0;
+            stream_data_gap_errors <= 0;
+            stream_last_accept_cycle <= 0;
         end else begin
             if (d_accept) begin
                 d_accepted_count <= d_accepted_count + 1;
                 d_response_data_q <= d_live_read;
                 d_response_addr_q <= dmem_addr;
+                d_response_sel_q <= dmem_wmask;
                 if (d_response_pending_q && dmem_ack)
                     d_response_count <= d_response_count + 1;
-                if (d_early_response && !d_response_pending_q) begin
-                    d_response_pending_q <= 1'b0;
-                    d_response_wait_q <= 3'd0;
-                    d_response_count <= d_response_count + 1;
-                end else begin
-                    d_response_pending_q <= 1'b1;
-                    d_response_wait_q <= wait_mode ? 3'd2 : 3'd1;
-                end
-                if (mix_mode && !d_response_pending_q)
-                    d_mix_early_q <= ~d_mix_early_q;
+                // Cache and SRAM replies have a minimum latency of one clock.
+                d_response_pending_q <= 1'b1;
+                d_response_wait_q <= wait_mode ? 3'd2 : 3'd1;
                 if (dmem_we) begin
                     if (dmem_wmask[0]) mem[(dmem_addr << 1)][7:0] <= dmem_wdata[7:0];
                     if (dmem_wmask[1]) mem[(dmem_addr << 1)][15:8] <= dmem_wdata[15:8];
@@ -703,6 +774,13 @@ module riscc_cached_pipeline_tb #(
                 d_last_response_data_q <= d_response_data_q;
             end else if (d_response_pending_q && d_response_wait_q > 1) begin
                 d_response_wait_q <= d_response_wait_q - 1'b1;
+            end
+            if (stream_d_accept) begin
+                if (stream_data_accepts != 0 &&
+                    cycle_q != stream_last_accept_cycle + 1)
+                    stream_data_gap_errors <= stream_data_gap_errors + 1;
+                stream_data_accepts <= stream_data_accepts + 1;
+                stream_last_accept_cycle <= cycle_q;
             end
             if (d_stall_seen_q &&
                 (d_stall_addr_q != dmem_addr ||
@@ -769,12 +847,20 @@ module riscc_cached_pipeline_tb #(
             alias_irq_entry_errors <= 0;
             irq_raised_q <= 1'b0;
             irq_withdrawn_q <= 1'b0;
+            irq_epc_pending_q <= 1'b0;
+            irq_epc_expected_q <= 0;
             done_seen_q <= 1'b0;
             done_age_q <= 0;
         end else begin
             cycle_q <= cycle_q + 1'b1;
             if (done_seen_q && done_age_q != 4'hf)
                 done_age_q <= done_age_q + 1'b1;
+            if (irq_epc_pending_q) begin
+                if (!dut.rf_we || dut.rf_waddr !== 4'h8 ||
+                    dut.rf_wdata !== irq_epc_expected_q)
+                    irq_epc_errors <= irq_epc_errors + 1;
+                irq_epc_pending_q <= 1'b0;
+            end
             if ((test_case == 7 || test_case == 9) && dut.in_shift &&
                 dut.x_pc_q == 14 && !irq_raised_q) begin
                 irq_raised_q <= 1'b1;
@@ -805,7 +891,6 @@ module riscc_cached_pipeline_tb #(
                     irq <= 1'b1;
                 end
             end
-
             if (test_case == 5 && d_accept && !dmem_we) begin
                 data_beat_count <= data_beat_count + 1;
                 main_data_accepts <= main_data_accepts + 1;
@@ -824,16 +909,24 @@ module riscc_cached_pipeline_tb #(
                 if ((test_case == 5 || test_case == 8) && dut.data_pending)
                     fail("IRQ entered with a data request still pending");
                 if (test_case == 5 &&
-                    last_commit_pc != ((zero_mode || ack_high_mode) ?
-                                       IRQ_MAIN_RETURN_PC : IRQ_MAIN_LOAD_PC))
+                    last_commit_pc != IRQ_MAIN_RETURN_PC &&
+                    last_commit_pc != IRQ_MAIN_LOAD_PC)
                     fail("IRQ entered outside the completed load/store boundary");
+                if (test_case == 5 && dut.x_pc_q != last_commit_pc + 1)
+                    fail("load/store IRQ skipped or repeated an instruction");
                 if (test_case == 8 &&
-                    last_commit_pc != ((zero_mode || ack_high_mode) ?
-                                       IRQ_ALIAS_RETURN_PC : IRQ_ALIAS_RETURN_PC - 1))
-                    fail("aliased-load IRQ entered at the wrong instruction boundary");
-                if (!dut.rf_we || dut.rf_waddr !== 4'h8 ||
-                    dut.rf_wdata !== (dut.x_pc_q << 1))
-                    irq_epc_errors <= irq_epc_errors + 1;
+                    last_commit_pc != IRQ_ALIAS_RETURN_PC &&
+                    last_commit_pc != IRQ_ALIAS_RETURN_PC - 1)
+                    fail("aliased-load IRQ did not follow a completed load");
+                // With one-cycle replies the second independent load can
+                // issue before the sampled IRQ arrives. Either completed
+                // load is a legal boundary; EPC must name its successor.
+                if (test_case == 8 && dut.x_pc_q != last_commit_pc + 1)
+                    fail("aliased-load IRQ skipped or repeated an instruction");
+                // IRQ EPC writeback is the W-stage entry one edge after the
+                // interrupt redirect, while X metadata remains this entry.
+                irq_epc_pending_q <= 1'b1;
+                irq_epc_expected_q <= dut.x_pc_q << 1;
             end
         end
     end
@@ -955,6 +1048,20 @@ module riscc_cached_pipeline_tb #(
                     fail("independent ALU result mismatch");
                 if (simple_gap_errors != 0)
                     fail("independent ALU stream did not sustain one IPC");
+                if (stream_data_accepts != STREAM_OPS)
+                    fail("independent load/store stream request count mismatch");
+                if (!wait_mode && !stall_mode && !mix_mode &&
+                    stream_data_gap_errors != 0)
+                    fail("independent load/store stream did not sustain one request per cycle");
+                if (mem[(STREAM_BYTE >> 1) + 16] !== 16'h0033 ||
+                    mem[(STREAM_BYTE >> 1) + 17] !== 16'h0000 ||
+                    mem[(STREAM_BYTE >> 1) + 18] !== 16'h0033 ||
+                    mem[(STREAM_BYTE >> 1) + 19] !== 16'h0000 ||
+                    mem[(STREAM_BYTE >> 1) + 20] !== 16'h0033 ||
+                    mem[(STREAM_BYTE >> 1) + 21] !== 16'h0000 ||
+                    mem[(STREAM_BYTE >> 1) + 22] !== 16'h0033 ||
+                    mem[(STREAM_BYTE >> 1) + 23] !== 16'h0000)
+                    fail("independent load/store stream final values mismatch");
                 if (zero_mode && max_commit_run < 4)
                     fail("same-cycle ACK did not sustain simple-op IPC");
             end else if (test_case == 1) begin
@@ -1147,7 +1254,6 @@ module riscc_cached_pipeline_tb #(
         d_response_drop_count = 0;
         ack_idle_count = 0;
         i_mix_early_q = 1'b1;
-        d_mix_early_q = 1'b1;
         i_last_response_data_q = 16'hdead;
         d_last_response_data_q = 32'hdead_beef;
         repeat (5) @(posedge clk);

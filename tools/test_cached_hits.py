@@ -30,9 +30,10 @@ def run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedP
 
 
 def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
-                block_rf: bool, timeout: int) -> bool:
+                block_rf: bool, register_fetch: bool, timeout: int) -> bool:
     rf_name = "block" if block_rf else "distributed"
-    name = f"xlen{xlen}-dsp-{rf_name}"
+    fetch_name = "registered-fetch" if register_fetch else "compact-fetch"
+    name = f"xlen{xlen}-dsp-{rf_name}-{fetch_name}"
     mdir = build_root / name
     mdir.mkdir(parents=True, exist_ok=True)
     binary = mdir / "Vriscc_cached_hits_tb"
@@ -40,6 +41,7 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
     command = [
         verilator, "--binary", "--timing",
         "--top-module", "riscc_cached_hits_tb", f"-GXLEN={xlen}",
+        f"-GREGISTER_FETCH={int(register_fetch)}",
         "--Mdir", str(mdir), *defines,
         str(root / "rtl/riscc_fast.v"),
         str(root / "rtl/riscc_cached.v"),
@@ -76,10 +78,11 @@ def main() -> int:
     if not build_root.is_absolute():
         build_root = root / build_root
     ok = all(one_variant(root, args.verilator, build_root, xlen, block_rf,
-                         args.timeout)
-             for xlen in (16, 32) for block_rf in (False, True))
+                         register_fetch, args.timeout)
+             for xlen in (16, 32) for block_rf in (False, True)
+             for register_fetch in (False, True))
     if ok:
-        print("Cached cache-hit checks PASS (4 variants)")
+        print("Cached cache-hit checks PASS (8 variants)")
         return 0
     return 1
 

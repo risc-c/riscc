@@ -35,7 +35,7 @@ module riscc_sdram_cache_tb #(
     wire [DATA_BITS/8-1:0] sd_dqm;
     wire [DATA_BITS-1:0] sd_dq_i, sd_dq_o;
     riscc_cached_cache #(.ADDR_BITS(ADDR_BITS), .LINE_WORD_BITS(LINE_WORD_BITS)) cache (
-        .clk(clk), .rst(rst), .c_addr(c_addr), .c_wdata(c_wdata), .c_sel(c_sel),
+        .clk(clk), .rst(rst), .store_posted(), .c_addr(c_addr), .c_wdata(c_wdata), .c_sel(c_sel),
         .c_we(c_we), .c_cyc(c_cyc), .c_stb(c_stb), .c_rdata(c_rdata),
         .c_rsel(c_rsel), .c_ack(c_ack), .c_stall(c_stall),
         .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),

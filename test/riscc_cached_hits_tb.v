@@ -1,10 +1,13 @@
 // Focused cache-hit timing checks for the public riscc_cached wrapper.
-// The backing port returns ACK and read data one clock after acceptance.
+// The backing port returns ACK and read data one clock after acceptance. X
+// completion is the accepted request; architectural writeback is observed in
+// the following W edge.
 
 `default_nettype none
 
 module riscc_cached_hits_tb #(
-    parameter integer XLEN = 16
+    parameter integer XLEN = 16,
+    parameter integer REGISTER_FETCH = 0
 );
     localparam integer MEM_WORDS = 16384;
     localparam integer DATA_WORD = 32; // byte address 0x80
@@ -35,6 +38,8 @@ module riscc_cached_hits_tb #(
     reg second_pass_q;
     reg done_q;
     reg failed_q;
+    reg writeback_pending_q;
+    reg [31:0] writeback_pc_q;
     integer i;
 
     // A pending response may complete while a refill offers its next beat.
@@ -45,7 +50,7 @@ module riscc_cached_hits_tb #(
     assign mem_rdata = response_data_q;
     assign mem_stall = 1'b0;
 
-    riscc_cached #(.XLEN(XLEN)) dut (
+    riscc_cached #(.XLEN(XLEN), .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
         .clk(clk), .rst(rst), .irq(irq),
         .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata), .mem_wmask(mem_wmask), .mem_we(mem_we),
@@ -157,8 +162,9 @@ module riscc_cached_hits_tb #(
         end
     end
 
-    // Commit metadata is intentionally observed through the existing
-    // internal monitor signals.  This avoids depending on cache RAM layout.
+    // Commit metadata is intentionally observed through the existing internal
+    // monitor signals. X commit and W writeback are one edge apart, so the
+    // writeback checks use the preceding committed PC.
     integer previous_commit_cycle;
     integer previous_commit_pc;
     reg previous_commit_valid;
@@ -173,64 +179,93 @@ module riscc_cached_hits_tb #(
             done_q <= 1'b0;
             gap_errors <= 0;
             result_errors <= 0;
-        end else if (monitor_commit) begin
-            commit_count <= commit_count + 1;
-
-            if (monitor_pc == LAST_PC) begin
-                iteration_count <= iteration_count + 1;
-                if (iteration_count == 1)
-                    done_q <= 1'b1;
-                else if (iteration_count == 0)
-                    second_pass_q <= 1'b1;
-            end
-
-            if (second_pass_q && previous_commit_valid) begin
-                if (monitor_pc == 2 && previous_commit_pc == 1 &&
-                    cycle_q - previous_commit_cycle != 1)
-                    gap_errors <= gap_errors + 1;
-                if ((monitor_pc == 34 || monitor_pc == 35 ||
-                     monitor_pc == 38) &&
-                    cycle_q - previous_commit_cycle != 2)
-                    gap_errors <= gap_errors + 1;
-                if ((monitor_pc == 36 || monitor_pc == 39) &&
-                    cycle_q - previous_commit_cycle != 1)
-                    gap_errors <= gap_errors + 1;
-                if (monitor_pc >= 2 && monitor_pc <= 33 &&
-                    previous_commit_pc >= 2 && previous_commit_pc < 33 &&
-                    cycle_q - previous_commit_cycle != 1)
-                    gap_errors <= gap_errors + 1;
-            end
-
-            if (second_pass_q &&
-                ((monitor_pc >= 2 && monitor_pc <= 36) ||
-                 monitor_pc == 38 || monitor_pc == 39)) begin
-                if (!monitor_rf_we) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc >= 2 && monitor_pc <= 33 &&
-                             (monitor_waddr !== 0 ||
-                              monitor_wdata !== monitor_pc - 1)) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc == 34 &&
-                             (monitor_waddr !== 1 || monitor_wdata !== 32'd6)) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc == 35 &&
-                             (monitor_waddr !== 2 || monitor_wdata !== 32'd6)) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc == 36 &&
-                             (monitor_waddr !== 3 || monitor_wdata !== 32'd12)) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc == 38 &&
-                             (monitor_waddr !== 4 || monitor_wdata !== 32'd12)) begin
-                    result_errors <= result_errors + 1;
-                end else if (monitor_pc == 39 &&
-                             (monitor_waddr !== 5 || monitor_wdata !== 32'd18)) begin
-                    result_errors <= result_errors + 1;
+            writeback_pending_q <= 1'b0;
+            writeback_pc_q <= 0;
+        end else begin
+            // W may write back during the load-use bubble, when X has no
+            // completion pulse. Keep the expectation live until rf_we: a
+            // delayed load must not be hidden by a younger X completion.
+            if (writeback_pending_q) begin
+                if (monitor_rf_we) begin
+                    if (second_pass_q) begin
+                        if (writeback_pc_q >= 2 && writeback_pc_q <= 33) begin
+                            if (monitor_waddr !== 0 ||
+                                monitor_wdata !== writeback_pc_q - 1)
+                                result_errors <= result_errors + 1;
+                        end else if (writeback_pc_q == 34) begin
+                            if (monitor_waddr !== 1 || monitor_wdata !== 32'd6)
+                                result_errors <= result_errors + 1;
+                        end else if (writeback_pc_q == 35) begin
+                            if (monitor_waddr !== 2 || monitor_wdata !== 32'd6)
+                                result_errors <= result_errors + 1;
+                        end else if (writeback_pc_q == 36) begin
+                            if (monitor_waddr !== 3 || monitor_wdata !== 32'd12)
+                                result_errors <= result_errors + 1;
+                        end else if (writeback_pc_q == 38) begin
+                            if (monitor_waddr !== 4 || monitor_wdata !== 32'd12)
+                                result_errors <= result_errors + 1;
+                        end else if (writeback_pc_q == 39) begin
+                            if (monitor_waddr !== 5 || monitor_wdata !== 32'd18)
+                                result_errors <= result_errors + 1;
+                        end
+                    end
+                    writeback_pending_q <= 1'b0;
+                end else if (monitor_commit) begin
+                    fail("younger X commit overwrote pending W writeback");
                 end
             end
 
-            previous_commit_valid <= 1'b1;
-            previous_commit_cycle <= cycle_q;
-            previous_commit_pc <= monitor_pc;
+            if (monitor_commit) begin
+                commit_count <= commit_count + 1;
+
+                if (monitor_pc == LAST_PC) begin
+                    iteration_count <= iteration_count + 1;
+                    if (iteration_count == 1)
+                        done_q <= 1'b1;
+                    else if (iteration_count == 0)
+                        second_pass_q <= 1'b1;
+                end
+
+                if (second_pass_q && previous_commit_valid) begin
+                    if (monitor_pc == 2 && previous_commit_pc == 1 &&
+                        cycle_q - previous_commit_cycle != 1) begin
+                        gap_errors <= gap_errors + 1;
+                    end
+                    if ((monitor_pc == 34 || monitor_pc == 35 ||
+                         monitor_pc == 38) &&
+                        cycle_q - previous_commit_cycle != 1) begin
+                        gap_errors <= gap_errors + 1;
+                    end
+                    if (monitor_pc == 36 &&
+                        cycle_q - previous_commit_cycle != 2) begin
+                        gap_errors <= gap_errors + 1;
+                    end
+                    // The store-to-same-word cache hit performs a relookup
+                    // before its response, so its dependent ADD waits three
+                    // X-completion edges while the load response is checked.
+                    if (monitor_pc == 39 &&
+                        cycle_q - previous_commit_cycle != 3) begin
+                        gap_errors <= gap_errors + 1;
+                    end
+                    if (monitor_pc >= 2 && monitor_pc <= 33 &&
+                        previous_commit_pc >= 2 && previous_commit_pc < 33 &&
+                        cycle_q - previous_commit_cycle != 1) begin
+                        gap_errors <= gap_errors + 1;
+                    end
+                end
+
+                previous_commit_valid <= 1'b1;
+                previous_commit_cycle <= cycle_q;
+                previous_commit_pc <= monitor_pc;
+                // Stores and control transfers have no architectural W
+                // writeback expectation. Keep the prior expectation only
+                // until its actual rf_we pulse above.
+                if ((monitor_pc >= 2 && monitor_pc <= 36) ||
+                    monitor_pc == 38 || monitor_pc == 39) begin
+                    writeback_pending_q <= 1'b1;
+                    writeback_pc_q <= monitor_pc;
+                end
+            end
         end
     end
 

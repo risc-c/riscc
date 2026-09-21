@@ -197,28 +197,27 @@ fabric logic instead, taking `XLEN/2 + 1` clocks.
 
 ### Cached core with internal caches
 
-[`riscc_cached`](../rtl/riscc_cached.v) adds separate 2 KiB, direct-mapped
-instruction and data caches to the Fast pipeline. RC16 uses 32-byte lines;
+[`riscc_cached`](../rtl/riscc_cached.v) combines a pipeline with separate
+2 KiB, direct-mapped instruction and data caches. RC16 uses 32-byte lines;
 RC32 uses 64-byte lines. The backing port transfers 32-bit words.
 Compile `riscc_fast.v` alongside it for the shared register-file module.
 
-On a hit, the instruction cache feeds decode and the data cache supplies
-loads without accessing backing memory. On a miss, the requesting stage
-waits while the cache fills a complete line, then resumes the instruction.
-Instruction and data traffic share the backing port. Stores wait for the
-backing-memory acknowledgement even on a cache hit, because the data cache
-is write-through.
+The pipeline has four stages: fetch reads an instruction, decode reads its
+operands, execute computes a result or issues a memory request, and writeback
+updates the register file. ALU results and loads share one RF write port.
+Forwarding handles adjacent ALU dependencies; an instruction that immediately
+uses a loaded value waits one clock. Independent loads and stores can advance
+every clock on local SRAM or cache hits, provided the backing port accepts
+write-through traffic. A store followed by a load of the same cached word
+needs an extra RAM read clock.
 
-The pipeline stages have the same roles as Fast: fetch reads the instruction
-cache, decode reads the operands, and execute performs arithmetic or requests
-the data cache. Separate caches allow instruction fetch and data access to
-use different memory ports on hits. A cache miss holds the affected stage
-and stops younger instructions from advancing; a taken branch redirects
-fetch and discards instructions from the old path.
-
-Simple instructions sustain one instruction per clock on cache hits; native
-loads add one clock. DSP multiplication takes four Execute clocks, or
-`XLEN/2 + 1` with `RISCC_FAST_SOFT_MUL`.
+On a miss, the cache fetches a complete line and holds younger instructions.
+Stores update a cached copy if present and acknowledge once their payload is
+captured. The backing port retains accepted writes and completes them in
+order; no separate write-data FIFO is added. A read miss or uncached read
+waits for preceding writes to drain. Taken branches discard younger fetched
+instructions. DSP multiplication takes four Execute clocks, or `XLEN/2 + 1`
+with `RISCC_FAST_SOFT_MUL`.
 
 The data cache is write-through and does not allocate on a store miss.
 `DCACHE_UNCACHED_BIT` selects uncached data and MMIO; its default, `XLEN-1`,
@@ -235,7 +234,7 @@ external instruction-cache lookups take two clocks; data-cache hits take one.
 `REGISTER_FETCH` adds an instruction register before decode for higher CPU
 clock rates. Arithmetic still sustains one instruction per clock; taken
 branches have two bubbles instead of one. Branch targets go directly to the
-fetch port. Atum enables this option.
+fetch port. Both board demos enable this option.
 
 Reset clears cache validity in 64 clocks for RC16 or 32 for RC32. Stores
 invalidate the corresponding instruction-cache index; a taken jump discards
@@ -341,10 +340,10 @@ board images.
 | RC16 Fast soft | 567 | 592 | 567 | 246.5 |
 | RC32 Fast DSP | 882 | 968 | 899 | 438.0 |
 | RC32 Fast soft | 952 | 1045 | 952 | 426.6 |
-| RC16 Cached DSP | 1017 | 1058 | 1088 | 435.5 |
-| RC16 Cached soft | 1062 | 1110 | 1142 | 454.3 |
-| RC32 Cached DSP | 1571 | 1668 | 1691 | 660.6 |
-| RC32 Cached soft | 1639 | 1735 | 1792 | 677.7 |
+| RC16 Cached soft | 1232 | 1279 | 1331 | 529.4 |
+| RC16 Cached DSP | 1193 | 1240 | 1248 | 512.8 |
+| RC32 Cached soft | 1885 | 1988 | 2014 | 818.6 |
+| RC32 Cached DSP | 1850 | 1944 | 1908 | 789.7 |
 
 ECP5 Nano uses one RF EBR; Fast uses two at either width. ECP5 Fast DSP
 uses one DSP block at XLEN=16 and three at XLEN=32; Agilex uses one and two.
@@ -390,15 +389,17 @@ The timed-recipe area column is used for Fmax and efficiency comparisons.
 | RC16 Fast soft | 57.68 | 241.72 |
 | RC32 Fast DSP | 54.67 | 223.26 |
 | RC32 Fast soft | 54.65 | 216.68 |
-| RC16 Cached DSP | 57.04 | 219.01 |
-| RC16 Cached soft | 55.47 | 217.16 |
-| RC32 Cached DSP | 53.77 | 213.08 |
-| RC32 Cached soft | 53.06 | 206.31 |
+| RC16 Cached soft | 52.84 | 205.25 |
+| RC16 Cached DSP | 52.20 | 215.42 |
+| RC32 Cached soft | 50.55 | 197.16 |
+| RC32 Cached DSP | 51.06 | 213.27 |
 
 Fast ECP5 Fmax values are medians over seeds 1–32; Cached values use seed 1.
 
 ### RC16 benchmark throughput
 
+Both widths run byte copy, strlen, strcmp, CRC16, 32-bit arithmetic, software
+division, bubble sort, and FIR, with matching inputs and loop counts.
 `test_riscc_bench` retires 3238 instructions. Nano runs a software-multiply
 version with 8491 instructions. MIPS uses each version's instruction count;
 compare elapsed time when judging the same workload across those versions.
@@ -422,8 +423,8 @@ below. ECP5 uses the block RF. All cores have the same cycle count on both targe
 | Nano | 2.80 | 9.40 | 29.8 | 40.4 |
 | RC16 Fast DSP | 44.88 | 175.30 | 87.7 | 228.4 |
 | RC16 Fast soft | 39.10 | 163.85 | 69.0 | 225.3 |
-| RC16 Cached DSP | 36.97 | 141.94 | 34.0 | 110.5 |
-| RC16 Cached soft | 33.79 | 132.27 | 29.6 | 98.7 |
+| RC16 Cached soft | 35.39 | 137.48 | 26.6 | 88.0 |
+| RC16 Cached DSP | 37.44 | 154.53 | 30.0 | 102.1 |
 
 | Core | Cycles |
 |---|---:|
@@ -437,44 +438,81 @@ below. ECP5 uses the block RF. All cores have the same cycle count on both targe
 | Nano | 263691 |
 | RC16 Fast DSP | 4329 |
 | RC16 Fast soft | 4777 |
-| RC16 Cached DSP | 4996 |
-| RC16 Cached soft | 5316 |
+| RC16 Cached soft | 4834 |
+| RC16 Cached DSP | 4514 |
 
-### RC32 word-copy and dot-product benchmark
+### RC32 benchmark throughput
 
-`test_rc32_bench` copies 32 words, then computes 32 signed products from the
-copy and checks their sum. It retires 527 instructions. These rates describe
-this workload; they are not directly comparable with the RC16 benchmark.
-Cycle counts come from Verilator and match both RF mappings. Fast uses
-registered one-clock SRAM responses; Cached uses one-clock native 32-bit SRAM
-and includes cold-cache initialization and misses; Full retains its ready-memory
-fixture.
+`test_rc32_bench` runs the same eight kernels as RC16 and retires 3123
+instructions. Sort and FIR use native 32-bit words; the 32-bit arithmetic
+kernel needs fewer instructions than RC16's register pairs. Compare cycle
+counts and elapsed time for workload performance; MIPS also reflects these
+instruction-count differences. Memory fixtures match those described above.
 
 | Core | Cycles | ECP5 MIPS | Agilex MIPS | ECP5 MIPS/kLUT4 | Agilex MIPS/kLE |
 |---|---:|---:|---:|---:|---:|
-| RC32 Full /16 | 5882 | 6.09 | 19.49 | 14.2 | 29.5 |
-| RC32 Full /32 | 2619 | 14.56 | 43.02 | 28.7 | 58.0 |
-| RC32 Fast soft | 1378 | 20.90 | 82.87 | 22.0 | 65.8 |
-| RC32 Fast DSP | 898 | 32.08 | 131.02 | 35.7 | 101.4 |
-| RC32 Cached DSP | 1115 | 25.41 | 100.71 | 15.0 | 51.7 |
-| RC32 Cached soft | 1531 | 18.26 | 71.02 | 10.2 | 35.5 |
-
-Cached results include reset initialization and cold-cache misses.
+| RC32 Full /1 | 248336 | 0.95 | 3.36 | 4.7 | 8.7 |
+| RC32 Full /2 | 127864 | 1.98 | 7.12 | 9.0 | 16.8 |
+| RC32 Full /4 | 67628 | 3.30 | 12.35 | 12.7 | 27.9 |
+| RC32 Full /8 | 44978 | 4.43 | 16.94 | 14.6 | 33.5 |
+| RC32 Full /16 | 26185 | 8.11 | 25.94 | 18.9 | 39.3 |
+| RC32 Full /32 | 11191 | 20.20 | 59.66 | 39.8 | 80.5 |
+| RC32 Fast soft | 5775 | 29.55 | 117.18 | 31.0 | 93.1 |
+| RC32 Fast DSP | 4815 | 35.46 | 144.81 | 39.4 | 112.1 |
+| RC32 Cached soft | 5342 | 29.55 | 115.26 | 14.7 | 47.7 |
+| RC32 Cached DSP | 4510 | 35.36 | 147.68 | 18.5 | 63.4 |
 
 ### Compiler benchmark cycles
 
-The RC16 full-width variants below run the same Full `-O2` binaries.
-MulDiv's shifted ALU input also speeds up FSL1; these programs do not need
-to use DIVU to benefit from that path.
+Both widths compile the same C programs at `-O2` for the Full profile.
+The RC16 MulH/MulDiv columns reuse the Full binary; MulDiv also speeds up FSL1.
 
-| RC16 benchmark | Full /16 | Full + MulH /16 | Full + MulDiv /16 |
-|---|---:|---:|---:|
-| `int32` | 163018 | 163018 | 158318 |
-| `softfloat` | 386225 | 386225 | 381526 |
-| `libm32` | 30726 | 30726 | 30320 |
-| `matrix` | 197998 | 197998 | 195793 |
-| `structures` | 8102 | 8102 | 8102 |
-| Total | 786069 | 786069 | 774059 |
+| Benchmark | RC16 Full /16 | RC16 MulH /16 | RC16 MulDiv /16 | RC32 Full /32 |
+|---|---:|---:|---:|---:|
+| `int32` | 164528 | 164528 | 159828 | 109772 |
+| `softfloat` | 386225 | 386225 | 381526 | 722032 |
+| `libm32` | 30726 | 30726 | 30320 | 49922 |
+| `matrix` | 197998 | 197998 | 195793 | 332295 |
+| `structures` | 8102 | 8102 | 8102 | 12336 |
+| `memory_copy` | 1143392 | 1143392 | 1143392 | 284289 |
+| `memory_update` | 524080 | 524080 | 524080 | 233051 |
+| `memory_chase` | 1848547 | 1848547 | 1848547 | 626849 |
+| Total | 4303598 | 4303598 | 4291588 | 2370546 |
+
+Pipelined DSP cores with ECP5 block RF:
+
+| Benchmark | RC16 Fast | RC32 Fast | RC16 Cached | RC32 Cached |
+|---|---:|---:|---:|---:|
+| `int32` | 68486 | 47650 | 76988 | 45705 |
+| `softfloat` | 172690 | 343849 | 224328 | 440053 |
+| `libm32` | 13880 | 23912 | 21606 | 32298 |
+| `matrix` | 86683 | 157459 | 119124 | 150108 |
+| `structures` | 3653 | 5944 | 4256 | 7459 |
+| `memory_copy` | 455966 | 158007 | 496946 | 183109 |
+| `memory_update` | 236410 | 132634 | 186756 | 82509 |
+| `memory_chase` | 730229 | 308315 | 867359 | 482501 |
+| Total | 1767997 | 1177770 | 1997363 | 1423742 |
+
+The memory tests use volatile 32-bit data and unrolled loops on both widths.
+`memory_copy` makes eight round trips between two 4 KiB buffers;
+`memory_update` increments a 1 KiB array 64 times; `memory_chase` follows
+an 8 KiB chain of indices 16 times, updating each visited node. All verify
+every element. Cycle counts include startup, initialization, and verification.
+
+Cached uses the same native 32-bit backing SRAM as the assembly benchmarks:
+one-clock responses, accepting one word per clock. Fast uses its direct 16-bit
+SRAM port. Cached tests exercise the caches, not the boards' direct local SRAM
+or external SDRAM.
+
+```sh
+make bench bench-cached
+make RISCC_XLEN=16 compiler-benchmarks-rtl
+make RISCC_XLEN=32 compiler-benchmarks-rtl
+```
+
+The C target runs both `-O2` and `-Os`, with soft and DSP multipliers.
+Results are saved in `build/compiler/rc16/full/benchmarks/rtl-cycles.json`
+and the corresponding `rc32` directory.
 
 ### Reproducing measurements
 
@@ -638,12 +676,12 @@ Measured CPU throughput with video active (KiB/s):
 
 | Access | Icepi, CPU 55.56 MHz | Atum, CPU 200 MHz |
 |---|---:|---:|
-| Warm-cache read, 1 KiB | 93,353 | 321,514 |
-| Sequential read, 1 MiB | 39,481 | 114,176 |
-| Scattered read, 1 MiB | 2,797 | 7,340 |
-| Cached write-through, 1 KiB | 49,542 | 175,631 |
-| Sequential write, 1 MiB | 51,454 | 182,930 |
-| Scattered write, 1 MiB | 9,035 | 31,032 |
+| Warm-cache read, 1 KiB | 160,983 | 579,604 |
+| Sequential read, 1 MiB | 60,745 | 161,118 |
+| Scattered read, 1 MiB | 3,430 | 8,523 |
+| Cached write-through, 1 KiB | 129,306 | 303,799 |
+| Sequential write, 1 MiB | 141,981 | 322,588 |
+| Scattered write, 1 MiB | 9,859 | 35,224 |
 
 Both boards passed the full-memory pattern checks and benchmark verification.
 
@@ -656,10 +694,10 @@ The [Icepi demo](../boards/icepi_zero) runs RC32 Cached at 55.56 MHz and
 scales the 320×180 framebuffer 4× to 1280×720 DVI at 60 Hz. The video PLL
 produces 74.286 MHz pixels (60.03 frames/s). Dedicated four-bit I/O gearing
 serializes TMDS at 742.86 Mbit/s, with the fabric running at 185.714 MHz.
-The register file uses LUTRAM. The test-firmware build uses 3,736 LUT4 sites,
-1,772 registers, 12 EBRs, and three DSP blocks.
-Post-route Fmax is 56.66 MHz for the CPU, 173.64 MHz for SDRAM,
-95.41 MHz for pixels, and 221.04 MHz for the serializer fabric.
+The register file uses LUTRAM. The test-firmware build uses 4,008 LUT4 sites,
+1,986 registers, 12 EBRs, and three DSP blocks.
+Post-route Fmax is 57.75 MHz for the CPU, 181.16 MHz for SDRAM,
+93.18 MHz for pixels, and 255.30 MHz for the serializer fabric.
 
 ```sh
 make icepi-zero-demo-iss
@@ -716,10 +754,10 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-The Quartus Pro 26.1 test-firmware build uses 1,601 ALMs, 2,506 registers,
-16 RAM blocks, two DSP blocks, and two IOPLLs. Restricted Fmax is 200.32 MHz
-for the CPU, 172.29 MHz for SDRAM, and 304.04 MHz for video. Across timing
-corners, internal setup and hold slack are +0.008 ns and +0.004 ns.
+The Quartus Pro 26.1 test-firmware build uses 1,676 ALMs, 2,477 registers,
+16 RAM blocks, two DSP blocks, and two IOPLLs. Restricted Fmax is 200.56 MHz
+for the CPU, 167.70 MHz for SDRAM, and 315.06 MHz for video. Across timing
+corners, internal setup and hold slack are +0.014 ns and +0.050 ns.
 
 Persistent QSPI programming is outside the normal flow; see Terasic's
 [Atum A3 Nano documentation](https://www.terasic.com.tw/cgi-bin/page/archive.pl?CategoryNo=44&Language=English&No=1373&PartNo=4).

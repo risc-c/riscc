@@ -84,9 +84,10 @@ BENCH_NOINLINE static uint16_t bitops32(void)
         hash ^= value >> shift;
         hash += (uint32_t)((int32_t)value >> shift);
         hash ^= __builtin_bswap32(value);
-        hash += (uint16_t)__builtin_clz(value);
-        hash ^= (uint16_t)__builtin_ctz(value);
-        hash += (uint16_t)__builtin_popcount(value);
+        // unsigned long is 32 bits on both RC16 and RC32.
+        hash += (uint16_t)__builtin_clzl(value);
+        hash ^= (uint16_t)__builtin_ctzl(value);
+        hash += (uint16_t)__builtin_popcountl(value);
         hash -= value ^ UINT32_C(0x9e3779b9);
         value = (value ^ hash) * UINT32_C(0x10001);
         value |= 1;
@@ -159,5 +160,5 @@ int main(void)
     result ^= bitops32();
     result ^= memory32();
     result ^= divide32();
-    bench_finish(result, UINT16_C(0xd6cf));
+    bench_finish(result, UINT16_C(0x21bd));
 }
