@@ -6,7 +6,7 @@ ctx.createRectangularRegion('line_buffer', 12, 20, 25, 26)
 count = 0
 for name, cell in ctx.cells:
     if name.startswith('memory.controller.') and any(part in name for part in (
-        'head_hits', 'load_head', 'head_valid', 'lookup_valid', 'bank_safe',
+        'head_hit', 'load_head', 'head_valid', 'lookup_valid', 'bank_safe',
         'lookup_addr', 'rows_q', 'open_q', 'run_ready', 'recovered', 'state_q',
         'delay_q', 'delay_done', 'head_same_direction', 'count_q', 'full_q',
         'empty_q', 'accept', 'mem_stb', 'mem_stall', 'we_fifo')):
@@ -18,7 +18,7 @@ for name, cell in ctx.cells:
         ctx.constrainCellToRegion(name, 'line_buffer')
     elif name.startswith('video.scanout.') and any(part in name for part in (
         'address_q', 'word_q', 'fetch_row', 'fetch_bank', 'setup_q', 'busy_q',
-        'issued_q', 'issuing_q')):
+        'block_q', 'issuing_q')):
         ctx.constrainCellToRegion(name, 'command_payload')
     elif name.startswith('fabric.crossing.memory_rst') or name.startswith('memory_reset_sync'):
         ctx.constrainCellToRegion(name, 'command_queue')

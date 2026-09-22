@@ -37,11 +37,14 @@ module top #(
     );
 
     reg [7:0] reset_count_q = 8'h00;
+    // Hold the SoC in reset until both clocks are locked and the button is released.
     wire reset_request = !reset_count_q[7] || !pll_locked || !memory_locked || !button[0];
     (* ASYNC_REG = "TRUE" *) reg [1:0] cpu_reset_sync = 2'b11;
     always @(posedge cpu_clk or posedge reset_request) begin
-        if (reset_request) cpu_reset_sync <= 2'b11;
-        else cpu_reset_sync <= {cpu_reset_sync[0], 1'b0};
+        if (reset_request)
+            cpu_reset_sync <= 2'b11;
+        else
+            cpu_reset_sync <= {cpu_reset_sync[0], 1'b0};
     end
     wire soc_rst = cpu_reset_sync[1];
 
@@ -61,7 +64,9 @@ module top #(
         .TIMER_TICK_DIV(55556),
         .PIPELINE_MMIO_WRITES(1)
     ) soc (
-        .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
+        .palette_we(palette_we),
+        .palette_addr(palette_addr),
+        .palette_wdata(palette_wdata),
         .clk(cpu_clk),
 `ifdef ICEPI_VIDEO_TEST
         // The fixed-pattern test isolates video from CPU and SDRAM activity.
@@ -73,10 +78,19 @@ module top #(
         .button(button),
         .uart_tx(usb_tx),
         .led(led),
-        .fb_we(), .fb_addr(), .fb_wmask(), .fb_wdata(),
-        .sdram_addr(cpu_addr), .sdram_wdata(cpu_wdata), .sdram_wmask(cpu_wmask),
-        .sdram_we(cpu_we), .sdram_cyc(cpu_cyc), .sdram_stb(cpu_stb),
-        .sdram_stall(cpu_stall), .sdram_ack(cpu_ack), .sdram_rdata(cpu_rdata),
+        .fb_we(),
+        .fb_addr(),
+        .fb_wmask(),
+        .fb_wdata(),
+        .sdram_addr(cpu_addr),
+        .sdram_wdata(cpu_wdata),
+        .sdram_wmask(cpu_wmask),
+        .sdram_we(cpu_we),
+        .sdram_cyc(cpu_cyc),
+        .sdram_stb(cpu_stb),
+        .sdram_stall(cpu_stall),
+        .sdram_ack(cpu_ack),
+        .sdram_rdata(cpu_rdata),
         .dbg_fb_writes(),
         .dbg_uart_tx_count(),
         .dbg_uart_rx_count()
@@ -84,16 +98,23 @@ module top #(
 
     icepi_fb_dvi video (
         .cpu_clk(cpu_clk),
-        .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
+        .palette_we(palette_we),
+        .palette_addr(palette_addr),
+        .palette_wdata(palette_wdata),
         .memory_clk(memory_clk),
 `ifdef ICEPI_VIDEO_TEST
         .memory_rst(1'b1),
 `else
         .memory_rst(memory_rst),
 `endif
-        .memory_addr(video_addr), .memory_cyc(video_cyc), .memory_stb(video_stb),
-        .memory_stall(video_stall), .memory_ack(video_ack), .memory_rdata(video_rdata),
-        .memory_ready(memory_ready), .underrun(),
+        .memory_addr(video_addr),
+        .memory_cyc(video_cyc),
+        .memory_stb(video_stb),
+        .memory_stall(video_stall),
+        .memory_ack(video_ack),
+        .memory_rdata(video_rdata),
+        .memory_ready(memory_ready),
+        .underrun(),
         .pix_clk(clkp),
         .shift_clk(clk5x),
         .rst(video_reset_sync[1]),
@@ -102,47 +123,92 @@ module top #(
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] memory_reset_sync = 2'b11;
     always @(posedge memory_clk or posedge soc_rst) begin
-        if (soc_rst) memory_reset_sync <= 2'b11;
-        else memory_reset_sync <= {memory_reset_sync[0], 1'b0};
+        if (soc_rst)
+            memory_reset_sync <= 2'b11;
+        else
+            memory_reset_sync <= {memory_reset_sync[0], 1'b0};
     end
     wire memory_rst = memory_reset_sync[1];
 
     riscc_sdram_fabric fabric (
-        .cpu_clk(cpu_clk), .cpu_rst(soc_rst),
-        .memory_clk(memory_clk), .memory_rst(memory_rst),
-        .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_wmask(cpu_wmask),
-        .cpu_we(cpu_we), .cpu_cyc(cpu_cyc), .cpu_stb(cpu_stb),
-        .cpu_stall(cpu_stall), .cpu_ack(cpu_ack), .cpu_rdata(cpu_rdata), .cpu_ready(),
-        .video_addr(video_addr), .video_cyc(video_cyc), .video_stb(video_stb),
-        .video_stall(video_stall), .video_ack(video_ack), .video_rdata(video_rdata),
-        .memory_addr(memory_addr), .memory_wdata(memory_wdata), .memory_wmask(memory_wmask),
-        .memory_we(memory_we), .memory_cyc(memory_cyc), .memory_stb(memory_stb),
-        .memory_stall(memory_stall), .memory_ack(memory_ack), .memory_rdata(memory_rdata),
+        .cpu_clk(cpu_clk),
+        .cpu_rst(soc_rst),
+        .memory_clk(memory_clk),
+        .memory_rst(memory_rst),
+        .cpu_addr(cpu_addr),
+        .cpu_wdata(cpu_wdata),
+        .cpu_wmask(cpu_wmask),
+        .cpu_we(cpu_we),
+        .cpu_cyc(cpu_cyc),
+        .cpu_stb(cpu_stb),
+        .cpu_stall(cpu_stall),
+        .cpu_ack(cpu_ack),
+        .cpu_rdata(cpu_rdata),
+        .cpu_ready(),
+        .video_addr(video_addr),
+        .video_cyc(video_cyc),
+        .video_stb(video_stb),
+        .video_stall(video_stall),
+        .video_ack(video_ack),
+        .video_rdata(video_rdata),
+        .memory_addr(memory_addr),
+        .memory_wdata(memory_wdata),
+        .memory_wmask(memory_wmask),
+        .memory_we(memory_we),
+        .memory_cyc(memory_cyc),
+        .memory_stb(memory_stb),
+        .memory_stall(memory_stall),
+        .memory_ack(memory_ack),
+        .memory_rdata(memory_rdata),
         .memory_ready(memory_ready)
     );
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] video_reset_sync = 2'b11;
     always @(posedge clkp or posedge soc_rst) begin
-        if (soc_rst) video_reset_sync <= 2'b11;
-        else video_reset_sync <= {video_reset_sync[0], 1'b0};
+        if (soc_rst)
+            video_reset_sync <= 2'b11;
+        else
+            video_reset_sync <= {video_reset_sync[0], 1'b0};
     end
     icepi_sdram_pll memory_pll (
-        .refclk(clk), .rst(1'b0), .outclk(memory_clk),
-        .pinclk(memory_pin_clk), .cpu_clk(cpu_clk), .locked(memory_locked)
+        .refclk(clk),
+        .rst(1'b0),
+        .outclk(memory_clk),
+        .pinclk(memory_pin_clk),
+        .cpu_clk(cpu_clk),
+        .locked(memory_locked)
     );
-    icepi_sdram #(.CLK_MHZ(167), .READ_DELAY(1)) memory (
-        .clk(memory_clk), .pin_clk(memory_pin_clk),
+    icepi_sdram #(
+        .CLK_MHZ(167),
+        .READ_DELAY(1)
+    ) memory (
+        .clk(memory_clk),
+        .pin_clk(memory_pin_clk),
 `ifdef ICEPI_VIDEO_TEST
         .rst(1'b1),
 `else
         .rst(memory_rst),
 `endif
-        .mem_addr(memory_addr[22:0]), .mem_wdata(memory_wdata), .mem_wmask(memory_wmask),
-        .mem_we(memory_we), .mem_cyc(memory_cyc), .mem_stb(memory_stb),
-        .mem_stall(memory_stall), .mem_ack(memory_ack), .mem_rdata(memory_rdata), .ready(memory_ready),
-        .sd_clk(sdram_clk), .sd_cke(sdram_cke), .sd_cs_n(sdram_csn),
-        .sd_ras_n(sdram_rasn), .sd_cas_n(sdram_casn), .sd_we_n(sdram_wen),
-        .sd_addr(sdram_a), .sd_ba(sdram_ba), .sd_dqm(sdram_dqm), .sd_dq(sdram_dq)
+        .mem_addr(memory_addr[22:0]),
+        .mem_wdata(memory_wdata),
+        .mem_wmask(memory_wmask),
+        .mem_we(memory_we),
+        .mem_cyc(memory_cyc),
+        .mem_stb(memory_stb),
+        .mem_stall(memory_stall),
+        .mem_ack(memory_ack),
+        .mem_rdata(memory_rdata),
+        .ready(memory_ready),
+        .sd_clk(sdram_clk),
+        .sd_cke(sdram_cke),
+        .sd_cs_n(sdram_csn),
+        .sd_ras_n(sdram_rasn),
+        .sd_cas_n(sdram_casn),
+        .sd_we_n(sdram_wen),
+        .sd_addr(sdram_a),
+        .sd_ba(sdram_ba),
+        .sd_dqm(sdram_dqm),
+        .sd_dq(sdram_dq)
     );
 endmodule
 

@@ -79,4 +79,6 @@ if {$::TimeQuestInfo(nameofexecutable) eq "quartus_fit"} {
     set_false_path -from [get_ports {sd_dq[*]}]
     set_false_path -to [get_ports {sd_addr[*] sd_ba[*] sd_dqm[*] sd_dq[*] sd_cke sd_cs_n sd_ras_n sd_cas_n sd_we_n}]
     set_clock_uncertainty -setup 0.750 -from [get_clocks sdram_core] -to [get_clocks sdram_core]
+    # Leave routing margin for the 200 MHz CPU.
+    set_clock_uncertainty -setup 0.150 -from [get_clocks sys_clk] -to [get_clocks sys_clk]
 }

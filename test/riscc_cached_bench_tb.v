@@ -17,7 +17,6 @@ module riscc_cached_bench_tb #(
     wire we, cyc, stb;
     reg ack = 0;
     reg [31:0] rdata = 0;
-    reg [3:0] rsel = 0;
     wire commit, result_issued;
     reg result_issued_q = 0;
     wire [XLEN-2:0] i_addr;
@@ -27,7 +26,7 @@ module riscc_cached_bench_tb #(
     generate if (CACHED != 0) begin : cached
         riscc_cached #(.XLEN(XLEN)) dut (
             .clk(clk), .rst(rst), .irq(1'b0),
-            .mem_addr(addr), .mem_wdata(wdata), .mem_wmask(sel), .mem_we(we),
+            .mem_cacheable(), .mem_addr(addr), .mem_wdata(wdata), .mem_wmask(sel), .mem_we(we),
             .mem_rdata(rdata), .mem_cyc(cyc), .mem_stb(stb), .mem_stall(1'b0), .mem_ack(ack)
         );
         assign commit = dut.cpu.commit_valid;
@@ -42,7 +41,7 @@ module riscc_cached_bench_tb #(
             .clk(clk), .rst(rst), .irq(1'b0),
             .imem_addr(i_addr), .imem_rdata(i_rdata), .imem_cyc(i_cyc),
             .imem_stb(i_stb), .imem_stall(1'b0), .imem_ack(i_ack),
-            .dmem_addr(addr), .dmem_wdata(wdata), .dmem_wmask(sel), .dmem_rsel(rsel), .dmem_we(we),
+            .dmem_addr(addr), .dmem_wdata(wdata), .dmem_wmask(sel), .dmem_we(we),
             .dmem_rdata(rdata), .dmem_cyc(cyc), .dmem_stb(stb), .dmem_stall(1'b0), .dmem_ack(ack)
         );
         assign commit = dut.commit_valid;
@@ -70,7 +69,6 @@ module riscc_cached_bench_tb #(
         if (!rst && commit && !result_issued_q && !result_issued) commits <= commits + 1;
         if (!rst && i_cyc && i_stb) i_rdata <= memory[i_addr & 32767];
         if (!rst && cyc && stb) begin
-            rsel <= sel;
             rdata <= {memory[{addr[13:0], 1'b1}], memory[{addr[13:0], 1'b0}]};
             if (we) begin
                 writes <= writes + 1;

@@ -26,8 +26,8 @@ module riscc_cached_address_tb #(
     localparam [31:0] RC32_TARGET = 32'h0000_8000;
     localparam [31:0] RC32_COH_TARGET = 32'h0000_8080;
     localparam [31:0] RC32_DONE_CODE = 32'h8001_0100;
-    localparam [29:0] ICACHE_LINE_WORDS_ADDR = (XLEN == 32) ? 30'd16 : 30'd8;
-    localparam integer ICACHE_LINE_WORDS = (XLEN == 32) ? 16 : 8;
+    localparam [29:0] ICACHE_LINE_WORDS_ADDR = XLEN == 32 ? 30'd16 : 30'd8;
+    localparam integer ICACHE_LINE_WORDS = XLEN == 32 ? 16 : 8;
     localparam [29:0] RESULT_WORD = RESULT_BYTE[31:2];
     localparam [29:0] DONE_WORD = DONE_BYTE[31:2];
     localparam [29:0] RC16_TARGET_WORD = RC16_TARGET[31:2];
@@ -52,7 +52,7 @@ module riscc_cached_address_tb #(
         .DCACHE_UNCACHED_BIT(DCACHE_UNCACHED_BIT)
     ) dut (
         .clk(clk), .rst(rst), .irq(irq),
-        .mem_addr(mem_addr), .mem_rdata(mem_rdata),
+        .mem_cacheable(), .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata), .mem_wmask(mem_wmask), .mem_we(mem_we),
         .mem_cyc(mem_cyc), .mem_stb(mem_stb),
         .mem_stall(mem_stall), .mem_ack(mem_ack)

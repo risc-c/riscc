@@ -11,12 +11,12 @@ module icepi_tmds_encoder (
     input  wire       de,
     output reg  [9:0] out
 );
-    wire [3:0] data_ones = {3'b000, data[0]} + {3'b000, data[1]} +
-                            {3'b000, data[2]} + {3'b000, data[3]} +
-                            {3'b000, data[4]} + {3'b000, data[5]} +
-                            {3'b000, data[6]} + {3'b000, data[7]};
-    wire use_xnor = (data_ones > 4'd4) ||
-                    ((data_ones == 4'd4) && !data[0]);
+    // The TMDS tie-break on bit 0 reduces to a majority of bits 7:1.
+    wire [2:0] tail_ones = {2'b00, data[1]} + {2'b00, data[2]} +
+                           {2'b00, data[3]} + {2'b00, data[4]} +
+                           {2'b00, data[5]} + {2'b00, data[6]} +
+                           {2'b00, data[7]};
+    wire use_xnor = tail_ones[2];
     wire [7:0] q_m_data;
     reg [8:0] q_m;
     reg [3:0] balance;
@@ -41,6 +41,7 @@ module icepi_tmds_encoder (
                            {3'b000, q_m_data[5]} +
                            {3'b000, q_m_data[6]} +
                            {3'b000, q_m_data[7]};
+    // Register the transition-minimized word and the control inputs together.
     always @(posedge clk) begin
         q_m <= {~use_xnor, q_m_data};
         balance <= q_m_ones - 4'd4;
@@ -50,16 +51,19 @@ module icepi_tmds_encoder (
     wire balance_sign_eq = (balance[3] == disparity_q[3]);
     wire invert_q_m = (balance == 0 || disparity_q == 0) ?
                       ~q_m[8] : balance_sign_eq;
-    wire [3:0] disparity_step = balance -
-        (((q_m[8] ^ ~balance_sign_eq) &&
-          !(balance == 0 || disparity_q == 0)) ? 4'd1 : 4'd0);
-    wire [3:0] disparity_next = invert_q_m ?
-                                disparity_q - disparity_step :
-                                disparity_q + disparity_step;
+    // Complementing the balance lets both polarities share the same adder.
+    // Include the two's-complement carry and the TMDS polarity correction.
+    wire balanced = balance == 0 || disparity_q == 0;
+    wire [3:0] correction = balanced ? {3'b000, invert_q_m} :
+        invert_q_m ? (q_m[8] ? 4'd2 : 4'd1) :
+                     (q_m[8] ? 4'd0 : 4'hf);
+    wire [3:0] disparity_next = disparity_q +
+        (balance ^ {4{invert_q_m}}) + correction;
 
     initial
         disparity_q = 4'd0;
 
+    // Apply running-disparity correction during active video, or emit a control code.
     always @(posedge clk) begin
         if (de_q) begin
             out <= {invert_q_m, q_m[8], q_m[7:0] ^ {8{invert_q_m}}};

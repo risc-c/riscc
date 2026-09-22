@@ -71,8 +71,10 @@ module top (
         !memory_locked || !pix_pll_locked || !KEY[0];
     (* ASYNC_REG = "TRUE" *) reg [1:0] cpu_reset_sync = 2'b11;
     always @(posedge sys_clk or posedge reset_request) begin
-        if (reset_request) cpu_reset_sync <= 2'b11;
-        else cpu_reset_sync <= {cpu_reset_sync[0], 1'b0};
+        if (reset_request)
+            cpu_reset_sync <= 2'b11;
+        else
+            cpu_reset_sync <= {cpu_reset_sync[0], 1'b0};
     end
     wire soc_rst = cpu_reset_sync[1];
 
@@ -96,17 +98,28 @@ module top (
         .MEM_HEX("mem/demo.memh"),
         .UART_CLK_DIV(1736)
     ) soc (
-        .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
+        .palette_we(palette_we),
+        .palette_addr(palette_addr),
+        .palette_wdata(palette_wdata),
         .clk(sys_clk),
         .rst(soc_rst),
         .uart_rx(FPGA_UART_RX),
         .button(KEY),
         .uart_tx(FPGA_UART_TX),
         .led(led_raw),
-        .fb_we(), .fb_addr(), .fb_wmask(), .fb_wdata(),
-        .sdram_addr(cpu_addr), .sdram_wdata(cpu_wdata), .sdram_wmask(cpu_wmask),
-        .sdram_we(cpu_we), .sdram_cyc(cpu_cyc), .sdram_stb(cpu_stb),
-        .sdram_stall(cpu_stall), .sdram_ack(cpu_ack), .sdram_rdata(cpu_rdata),
+        .fb_we(),
+        .fb_addr(),
+        .fb_wmask(),
+        .fb_wdata(),
+        .sdram_addr(cpu_addr),
+        .sdram_wdata(cpu_wdata),
+        .sdram_wmask(cpu_wmask),
+        .sdram_we(cpu_we),
+        .sdram_cyc(cpu_cyc),
+        .sdram_stb(cpu_stb),
+        .sdram_stall(cpu_stall),
+        .sdram_ack(cpu_ack),
+        .sdram_rdata(cpu_rdata),
         .dbg_fb_writes(),
         .dbg_uart_tx_count(),
         .dbg_uart_rx_count()
@@ -114,11 +127,19 @@ module top (
 
     atum_fb_hdmi video (
         .cpu_clk(sys_clk),
-        .palette_we(palette_we), .palette_addr(palette_addr), .palette_wdata(palette_wdata),
-        .memory_clk(memory_clk), .memory_rst(memory_rst),
-        .memory_addr(video_addr), .memory_cyc(video_cyc), .memory_stb(video_stb),
-        .memory_stall(video_stall), .memory_ack(video_ack), .memory_rdata(video_rdata),
-        .memory_ready(memory_ready), .underrun(),
+        .palette_we(palette_we),
+        .palette_addr(palette_addr),
+        .palette_wdata(palette_wdata),
+        .memory_clk(memory_clk),
+        .memory_rst(memory_rst),
+        .memory_addr(video_addr),
+        .memory_cyc(video_cyc),
+        .memory_stb(video_stb),
+        .memory_stall(video_stall),
+        .memory_ack(video_ack),
+        .memory_rdata(video_rdata),
+        .memory_ready(memory_ready),
+        .underrun(),
         .pix_clk(pix_clk),
         .rst(video_rst_sync[1]),
         .pix_clk_out(HDMI_TX_CLK_p),
@@ -141,7 +162,7 @@ module top (
 
     assign HDMI_ISEL = 1'b1;
     assign HDMI_PD_n = 1'b1;
-    // The physical LEDs are active low. LED3 indicates transmitter setup.
+    // The physical LEDs are active low; LED3 indicates transmitter setup.
     assign LED = ~{tfp410_ready, led_raw[2:0]};
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] memory_reset_sync = 2'b11;
@@ -152,31 +173,75 @@ module top (
     wire memory_rst = memory_reset_sync[1];
 
     riscc_sdram_fabric fabric (
-        .cpu_clk(sys_clk), .cpu_rst(soc_rst),
-        .memory_clk(memory_clk), .memory_rst(memory_rst),
-        .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_wmask(cpu_wmask),
-        .cpu_we(cpu_we), .cpu_cyc(cpu_cyc), .cpu_stb(cpu_stb),
-        .cpu_stall(cpu_stall), .cpu_ack(cpu_ack), .cpu_rdata(cpu_rdata), .cpu_ready(),
-        .video_addr(video_addr), .video_cyc(video_cyc), .video_stb(video_stb),
-        .video_stall(video_stall), .video_ack(video_ack), .video_rdata(video_rdata),
-        .memory_addr(memory_addr), .memory_wdata(memory_wdata), .memory_wmask(memory_wmask),
-        .memory_we(memory_we), .memory_cyc(memory_cyc), .memory_stb(memory_stb),
-        .memory_stall(memory_stall), .memory_ack(memory_ack), .memory_rdata(memory_rdata),
+        .cpu_clk(sys_clk),
+        .cpu_rst(soc_rst),
+        .memory_clk(memory_clk),
+        .memory_rst(memory_rst),
+        .cpu_addr(cpu_addr),
+        .cpu_wdata(cpu_wdata),
+        .cpu_wmask(cpu_wmask),
+        .cpu_we(cpu_we),
+        .cpu_cyc(cpu_cyc),
+        .cpu_stb(cpu_stb),
+        .cpu_stall(cpu_stall),
+        .cpu_ack(cpu_ack),
+        .cpu_rdata(cpu_rdata),
+        .cpu_ready(),
+        .video_addr(video_addr),
+        .video_cyc(video_cyc),
+        .video_stb(video_stb),
+        .video_stall(video_stall),
+        .video_ack(video_ack),
+        .video_rdata(video_rdata),
+        .memory_addr(memory_addr),
+        .memory_wdata(memory_wdata),
+        .memory_wmask(memory_wmask),
+        .memory_we(memory_we),
+        .memory_cyc(memory_cyc),
+        .memory_stb(memory_stb),
+        .memory_stall(memory_stall),
+        .memory_ack(memory_ack),
+        .memory_rdata(memory_rdata),
         .memory_ready(memory_ready)
     );
 
     atum_sdram_pll memory_pll (
-        .refclk(CLOCK1_50), .rst(!configuration_ready), .outclk(memory_clk),
-        .forward_clk(memory_pin_clk), .cpu_outclk(sys_clk), .locked(memory_locked)
+        .refclk(CLOCK1_50),
+        .rst(!configuration_ready),
+        .outclk(memory_clk),
+        .forward_clk(memory_pin_clk),
+        .cpu_outclk(sys_clk),
+        .locked(memory_locked)
     );
-    atum_sdram #(.CLK_MHZ(167), .READ_DELAY(1), .IO_CAPTURE(1)) memory (
-        .clk(memory_clk), .rst(memory_rst), .capture_clk(memory_clk), .forward_clk(memory_pin_clk),
-        .mem_addr(memory_addr), .mem_wdata(memory_wdata), .mem_wmask(memory_wmask),
-        .mem_we(memory_we), .mem_cyc(memory_cyc), .mem_stb(memory_stb),
-        .mem_stall(memory_stall), .mem_ack(memory_ack), .mem_rdata(memory_rdata), .ready(memory_ready),
-        .sd_clk(sd_clk), .sd_cke(sd_cke), .sd_cs_n(sd_cs_n),
-        .sd_ras_n(sd_ras_n), .sd_cas_n(sd_cas_n), .sd_we_n(sd_we_n),
-        .sd_addr(sd_addr), .sd_ba(sd_ba), .sd_dqm(sd_dqm), .sd_dq(sd_dq)
+    atum_sdram #(
+        .CLK_MHZ(167),
+        .READ_DELAY(1),
+        .IO_CAPTURE(1)
+    ) memory (
+        .clk(memory_clk),
+        .rst(memory_rst),
+        .capture_clk(memory_clk),
+        .forward_clk(memory_pin_clk),
+        .mem_addr(memory_addr),
+        .mem_wdata(memory_wdata),
+        .mem_wmask(memory_wmask),
+        .mem_we(memory_we),
+        .mem_cyc(memory_cyc),
+        .mem_stb(memory_stb),
+        .mem_stall(memory_stall),
+        .mem_ack(memory_ack),
+        .mem_rdata(memory_rdata),
+        .ready(memory_ready),
+        .sd_clk(sd_clk),
+        .sd_cke(sd_cke),
+        .sd_cs_n(sd_cs_n),
+        .sd_ras_n(sd_ras_n),
+        .sd_cas_n(sd_cas_n),
+        .sd_we_n(sd_we_n),
+        .sd_addr(sd_addr),
+        .sd_ba(sd_ba),
+        .sd_dqm(sd_dqm),
+        .sd_dq(sd_dq)
     );
 endmodule
 

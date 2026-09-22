@@ -84,6 +84,11 @@ module cpu_memory_tb #(
     integer video_queue_head = 0, video_queue_tail = 0;
     integer video_queue_count = 0, video_max_pending = 0;
     integer video_pipelined = 0;
+    integer metadata_checks = 0;
+    wire backing_accept = dut.cpu.mem_cyc && dut.cpu.mem_stb &&
+                          !dut.cpu.mem_stall;
+    wire backing_is_sdram = DATA_BITS == 16 ?
+        dut.cpu.mem_addr[29:23] == 7'h08 : dut.cpu.mem_addr[29:24] == 6'h04;
     wire memory_accept = memory_cyc && memory_stb && !memory_stall;
     wire physical_read = !sd_cs_n && sd_ras_n && !sd_cas_n && sd_we_n;
     wire video_accept = video_cyc && video_stb && !video_stall;
@@ -227,8 +232,16 @@ module cpu_memory_tb #(
             cycles <= 0;
             reads = 0; writes = 0; phase = 0;
             waited_for_sdram = 0;
+            metadata_checks = 0;
         end else begin
             cycles <= cycles + 1;
+            if (backing_accept) begin
+                if (dut.cpu.mem_addr < 30'h1000)
+                    $fatal(1, "local SRAM request reached backing port");
+                if (dut.cpu.mem_cacheable !== backing_is_sdram)
+                    $fatal(1, "cache-region selection mismatch at %h", dut.cpu.mem_addr);
+                metadata_checks = metadata_checks + 1;
+            end
             if (cpu_cyc && cpu_stb && !cpu_ready) begin
                 if (!cpu_stall || cpu_ack) $fatal(1, "SDRAM access accepted before ready");
                 waited_for_sdram = 1;
@@ -243,10 +256,11 @@ module cpu_memory_tb #(
                     2: if (reads-phase_reads != 16) $fatal(1,"cold refill was not 64 bytes");
                     3: if (reads != phase_reads) $fatal(1,"warm cache reads reached SDRAM");
                     4: if (reads != phase_reads || writes-phase_writes != 2) $fatal(1,"masked store hit not write-through");
-                    5: if (reads-phase_reads != 32 || writes-phase_writes != 1) $fatal(1,"conflict refills missing");
+                    5: if (reads-phase_reads != 32 || writes-phase_writes != 1) $fatal(1,"conflict refills did not fetch two 64-byte lines");
                     14: $fatal(1,"CPU firmware data mismatch phase=%0d",phase);
                     15: begin
                         if (!waited_for_sdram) $fatal(1, "missing initialization stall coverage");
+                        if (metadata_checks == 0) $fatal(1, "missing cache-region checks");
                         if (video_reads < 40 || video_max_pending < 2 ||
                             video_pipelined == 0 || memory.refresh_count < 10)
                             $fatal(1,"missing video pipeline/refresh coverage video=%0d max=%0d pipelined=%0d",

@@ -36,9 +36,9 @@ module icepi_zero_soc #(
     output wire [31:0] dbg_uart_rx_count
 );
     localparam [3:0] LED_ADDR = 4'hc; // byte 0xfffffff0
-    localparam [1:0] READ_UNMAPPED   = 2'd1;
-    localparam [1:0] READ_MMIO = 2'd2;
-    localparam [1:0] READ_SDRAM = 2'd3;
+    localparam [1:0] READ_UNMAPPED = 2'd1;
+    localparam [1:0] READ_MMIO    = 2'd2;
+    localparam [1:0] READ_SDRAM   = 2'd3;
 
     // All bus addresses are 32-bit word indices; masks select byte lanes.
     wire [29:0] mem_addr;
@@ -57,9 +57,9 @@ module icepi_zero_soc #(
     reg [31:0] fb_writes_q;
 `endif
 
-    // SDRAM is a flat cached region; only high MMIO bypasses the cache.
+    // SDRAM request selection for the external memory fabric.
     wire periph_region = &mem_addr[29:4];
-    wire sdram_sel = mem_addr[29:23] == 7'h08;
+    wire sdram_sel;
     reg sdram_pending_q;
     assign mem_stall = (sdram_pending_q && !sdram_ack) ||
                        (sdram_sel && sdram_stall);
@@ -78,6 +78,7 @@ module icepi_zero_soc #(
     end
     wire mmio_sel = periph_region && mem_addr[3];
     wire mem_accept = mem_cyc && mem_stb && !mem_stall && !rst;
+    // Registered MMIO ACK and read data follow request acceptance by one cycle.
     wire cpu_write_commit = mem_accept && mem_we;
     // Palette entries are write-only 0x00RRGGBB words at 0xfffff800.
     assign palette_we = cpu_write_commit && (mem_addr[29:8] == 22'h3ffffe) &&
@@ -95,16 +96,18 @@ module icepi_zero_soc #(
 
     riscc_cached #(
         .XLEN(32),
+        .CACHE_ADDR_BITS(25),
+        .CACHE_BASE(32'h10000000),
         .SRAM_ADDR_BITS(14),
         .SRAM_HEX(MEM_HEX),
         .REGISTER_FETCH(1'b1),
-        // High MMIO is uncached; SDRAM uses the data cache.
         .RESET_PC(0)
     ) cpu (
         .clk(clk),
         .rst(rst),
         .irq(cpu_irq),
         .mem_addr(mem_addr),
+        .mem_cacheable(sdram_sel),
         .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata),
         .mem_wmask(mem_wmask),
@@ -115,9 +118,7 @@ module icepi_zero_soc #(
         .mem_ack(mem_ack_q || sdram_ack)
     );
 
-    // The MMIO read mux is synchronous. ACK is one cycle
-    // after request acceptance and may remain asserted for back-to-back
-    // accepted requests.
+    // Capture the selected source and MMIO read data for the response cycle.
     always @(posedge clk) begin
         if (rst)
             mem_ack_q <= 1'b0;

@@ -21,7 +21,8 @@ module riscc_video_palette (
             colors[i] = 24'h000000;
     end
     always @(posedge cpu_clk)
-        if (write_en) colors[write_addr] <= write_rgb;
+        if (write_en)
+            colors[write_addr] <= write_rgb;
     always @(posedge pix_clk)
         rgb <= colors[index];
 endmodule

@@ -5,6 +5,8 @@
 // Backend bus driver replacing only the CPU/cache instance for this test.
 module riscc_cached #(
     parameter integer XLEN = 32,
+    parameter integer CACHE_ADDR_BITS = XLEN,
+    parameter [XLEN-1:0] CACHE_BASE = 0,
     parameter integer SRAM_ADDR_BITS = 0,
     parameter REGISTER_FETCH = 1'b0,
     parameter SRAM_HEX = "",
@@ -15,9 +17,11 @@ module riscc_cached #(
     input wire [31:0] mem_rdata,
     output wire [31:0] mem_wdata,
     output wire [3:0] mem_wmask,
-    output wire mem_we, mem_cyc, mem_stb,
+    output wire mem_we, mem_cyc, mem_stb, mem_cacheable,
     input wire mem_stall, mem_ack
 );
+    assign mem_cacheable = (board_map_tb.addr >> CACHE_ADDR_BITS) ==
+                           (CACHE_BASE >> CACHE_ADDR_BITS);
     assign mem_addr = board_map_tb.addr[31:2];
     assign mem_wdata = board_map_tb.wdata;
     assign mem_wmask = board_map_tb.wmask;

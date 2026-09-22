@@ -30,20 +30,31 @@ module icepi_fb_dvi (
     wire vsync = v_count_q >= 10'd725 && v_count_q < 10'd730;
     wire [10:0] active_x = h_count_q;
     wire [9:0] active_y = v_count_q;
-    // Each framebuffer pixel occupies a 4x4 square in the 720p raster.
+    // Repeat each framebuffer pixel across a 4x4 square in the 720p raster.
     wire [8:0] sx = active_x[10:2];
     wire [9:0] fb_y = active_y;
     wire [7:0] sy = fb_y[9:2];
     wire [7:0] fb_index;
     wire fb_pixel_valid;
     riscc_sdram_scanout scanout (
-        .memory_clk(memory_clk), .memory_rst(memory_rst), .memory_ready(memory_ready),
-        .memory_addr(memory_addr), .memory_cyc(memory_cyc), .memory_stb(memory_stb),
-        .memory_stall(memory_stall), .memory_ack(memory_ack), .memory_rdata(memory_rdata),
-        .pix_clk(pix_clk), .rst(rst), .visible(active),
+        .memory_clk(memory_clk),
+        .memory_rst(memory_rst),
+        .memory_ready(memory_ready),
+        .memory_addr(memory_addr),
+        .memory_cyc(memory_cyc),
+        .memory_stb(memory_stb),
+        .memory_stall(memory_stall),
+        .memory_ack(memory_ack),
+        .memory_rdata(memory_rdata),
+        .pix_clk(pix_clk),
+        .rst(rst),
+        .visible(active),
         .line_start(active && active_x == 0 && fb_y[1:0] == 0),
-        .source_x(sx), .source_y(sy), .pixel(fb_index),
-        .pixel_valid(fb_pixel_valid), .underrun(underrun)
+        .source_x(sx),
+        .source_y(sy),
+        .pixel(fb_index),
+        .pixel_valid(fb_pixel_valid),
+        .underrun(underrun)
     );
 
     reg [10:0] active_x_q;
@@ -65,7 +76,8 @@ module icepi_fb_dvi (
         end else begin
             if (h_count_q == H_TOTAL - 10'd1) begin
                 h_count_q <= 11'd0;
-                v_count_q <= (v_count_q == V_TOTAL - 10'd1) ? 10'd0 : (v_count_q + 10'd1);
+                v_count_q <= (v_count_q == V_TOTAL - 10'd1) ?
+                             10'd0 : (v_count_q + 10'd1);
             end else begin
                 h_count_q <= h_count_q + 10'd1;
             end
@@ -80,12 +92,19 @@ module icepi_fb_dvi (
 
     wire [23:0] palette_rgb;
     riscc_video_palette palette (
-        .cpu_clk(cpu_clk), .write_en(palette_we),
-        .write_addr(palette_addr), .write_rgb(palette_wdata),
-        .pix_clk(pix_clk), .index(fb_index), .rgb(palette_rgb)
+        .cpu_clk(cpu_clk),
+        .write_en(palette_we),
+        .write_addr(palette_addr),
+        .write_rgb(palette_wdata),
+        .pix_clk(pix_clk),
+        .index(fb_index),
+        .rgb(palette_rgb)
     );
     // Palette block RAM adds one pixel clock after the line-buffer read.
-    reg active_d, hsync_d, vsync_d, valid_d;
+    reg active_d,
+        hsync_d,
+        vsync_d,
+        valid_d;
     always @(posedge pix_clk) begin
         if (rst) begin
             active_d <= 0;
@@ -125,7 +144,8 @@ module icepi_fb_dvi (
         ((active_x_q[5:0] == 6'd0) || (active_y_q[5:0] == 6'd0)) ? 24'h404040 :
         test_bars;
     reg [23:0] active_rgb;
-    always @(posedge pix_clk) active_rgb <= test_rgb;
+    always @(posedge pix_clk)
+        active_rgb <= test_rgb;
 `else
     wire [23:0] active_rgb = valid_d ? palette_rgb : 24'h000000;
 `endif

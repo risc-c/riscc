@@ -47,7 +47,7 @@ module riscc_cached_test_top #(
         .clk(clk),
         .rst(rst),
         .irq(irq),
-        .mem_addr(back_addr),
+        .mem_cacheable(), .mem_addr(back_addr),
         .mem_wdata(back_wdata),
         .mem_rdata(back_rdata),
         .mem_wmask(back_wmask),

@@ -38,7 +38,7 @@ module riscc_sdram_cache_tb #(
         .clk(clk), .rst(rst), .store_posted(), .c_addr(c_addr), .c_wdata(c_wdata), .c_sel(c_sel),
         .c_we(c_we), .c_cyc(c_cyc), .c_stb(c_stb), .c_rdata(c_rdata),
         .c_rsel(c_rsel), .c_ack(c_ack), .c_stall(c_stall),
-        .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),
+        .m_cacheable(), .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),
         .m_cyc(m_cyc), .m_stb(m_stb), .m_stall(m_stall), .m_ack(m_ack),
         .m_rdata(m_rdata), .inv_valid(inv_valid), .inv_addr(c_addr)
     );

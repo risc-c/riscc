@@ -28,13 +28,13 @@ module atum_fb_hdmi (
     localparam [11:0] H_SYNC = 12'd44;
     localparam [11:0] H_ACTIVE_START = 12'd192;
     localparam [11:0] H_ACTIVE_END = 12'd2112;
-    localparam [11:0] V_TOTAL = 12'd1125;
-    localparam [11:0] V_SYNC = 12'd5;
-    localparam [11:0] V_ACTIVE_START = 12'd41;
-    localparam [11:0] V_ACTIVE_END = 12'd1121;
+    localparam [10:0] V_TOTAL = 11'd1125;
+    localparam [10:0] V_SYNC = 11'd5;
+    localparam [10:0] V_ACTIVE_START = 11'd41;
+    localparam [10:0] V_ACTIVE_END = 11'd1121;
 
     reg [11:0] h_count;
-    reg [11:0] v_count;
+    reg [10:0] v_count;
     reg [8:0] source_x;
     reg [7:0] source_y;
     reg [2:0] h_repeat;
@@ -43,27 +43,37 @@ module atum_fb_hdmi (
                   (v_count >= V_ACTIVE_START) && (v_count < V_ACTIVE_END);
     wire hsync = h_count >= H_SYNC;
     wire vsync = v_count >= V_SYNC;
-    // Counters replace division by 6 in the 148.5 MHz pixel domain.
-    // source_x changes after each group of six pixels; source_y after six lines.
+    // Repeat counters advance source_x every six pixels and source_y every six lines.
     reg active_q;
     reg hsync_q;
     reg vsync_q;
     wire [7:0] fb_index;
     wire fb_pixel_valid;
     riscc_sdram_scanout scanout (
-        .memory_clk(memory_clk), .memory_rst(memory_rst), .memory_ready(memory_ready),
-        .memory_addr(memory_addr), .memory_cyc(memory_cyc), .memory_stb(memory_stb),
-        .memory_stall(memory_stall), .memory_ack(memory_ack), .memory_rdata(memory_rdata),
-        .pix_clk(pix_clk), .rst(rst), .visible(active),
+        .memory_clk(memory_clk),
+        .memory_rst(memory_rst),
+        .memory_ready(memory_ready),
+        .memory_addr(memory_addr),
+        .memory_cyc(memory_cyc),
+        .memory_stb(memory_stb),
+        .memory_stall(memory_stall),
+        .memory_ack(memory_ack),
+        .memory_rdata(memory_rdata),
+        .pix_clk(pix_clk),
+        .rst(rst),
+        .visible(active),
         .line_start(active && h_count == H_ACTIVE_START && v_repeat == 0),
-        .source_x(source_x), .source_y(source_y), .pixel(fb_index),
-        .pixel_valid(fb_pixel_valid), .underrun(underrun)
+        .source_x(source_x),
+        .source_y(source_y),
+        .pixel(fb_index),
+        .pixel_valid(fb_pixel_valid),
+        .underrun(underrun)
     );
 
     always @(posedge pix_clk) begin
         if (rst) begin
             h_count <= 12'd0;
-            v_count <= 12'd0;
+            v_count <= 11'd0;
             source_x <= 9'd0;
             source_y <= 8'd0;
             h_repeat <= 3'd0;
@@ -72,8 +82,8 @@ module atum_fb_hdmi (
             hsync_q <= 1'b0;
             vsync_q <= 1'b0;
         end else begin
-            // Prime the source coordinate one cycle before its active region
-            // starts, so the synchronous framebuffer read aligns with DE.
+            // Prime the source coordinate one cycle before active video so the
+            // synchronous framebuffer read aligns with DE.
             if (h_count == H_ACTIVE_START - 1'b1) begin
                 source_x <= 9'd0;
                 h_repeat <= 3'd0;
@@ -104,7 +114,8 @@ module atum_fb_hdmi (
 
             if (h_count == H_TOTAL - 1'b1) begin
                 h_count <= 12'd0;
-                v_count <= (v_count == V_TOTAL - 1'b1) ? 12'd0 : v_count + 1'b1;
+                v_count <= (v_count == V_TOTAL - 1'b1) ?
+                           11'd0 : v_count + 1'b1;
             end else begin
                 h_count <= h_count + 1'b1;
             end
@@ -116,12 +127,19 @@ module atum_fb_hdmi (
 
     wire [23:0] palette_rgb;
     riscc_video_palette palette (
-        .cpu_clk(cpu_clk), .write_en(palette_we),
-        .write_addr(palette_addr), .write_rgb(palette_wdata),
-        .pix_clk(pix_clk), .index(fb_index), .rgb(palette_rgb)
+        .cpu_clk(cpu_clk),
+        .write_en(palette_we),
+        .write_addr(palette_addr),
+        .write_rgb(palette_wdata),
+        .pix_clk(pix_clk),
+        .index(fb_index),
+        .rgb(palette_rgb)
     );
     // Palette block RAM adds one pixel clock after the line-buffer read.
-    reg active_d, hsync_d, vsync_d, valid_d;
+    reg active_d,
+        hsync_d,
+        vsync_d,
+        valid_d;
     always @(posedge pix_clk) begin
         if (rst) begin
             active_d <= 0;
@@ -136,7 +154,8 @@ module atum_fb_hdmi (
         end
     end
 
-    assign pix_clk_out = ~pix_clk; // TFP410 samples data on the opposite edge.
+    // The TFP410 samples data on the opposite edge of the pixel clock.
+    assign pix_clk_out = ~pix_clk;
     assign hdmi_hs = hsync_d;
     assign hdmi_vs = vsync_d;
     assign hdmi_de = active_d;

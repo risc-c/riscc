@@ -2,7 +2,7 @@
 
 `default_nettype none
 
-// Core divider settings from ecppll; CLKOS adds 292.5 degrees at the same rate.
+// CLKOP drives SDRAM, CLKOS supplies the phased pin clock, and CLKOS2 drives CPU.
 module icepi_sdram_pll (
     input wire refclk,
     input wire rst,
@@ -33,7 +33,7 @@ module icepi_sdram_pll (
         .CLKOP_DIV(4),
         .CLKOP_CPHASE(2),
         .CLKOP_FPHASE(0),
-        // 292.5 degrees: three VCO cycles plus two eighth-cycle steps.
+        // CLKOS leads capture by 292.5 degrees: three VCO cycles plus two eighth-cycle steps.
         .CLKOS_ENABLE("ENABLED"),
         .CLKOS_DIV(4),
         .CLKOS_CPHASE(5),

@@ -34,7 +34,7 @@ module riscc_fmax_top (
     end
     riscc_cached #(.XLEN(XLEN)) cpu (
         .clk(clk), .rst(rst), .irq(irq_q),
-        .mem_addr(addr), .mem_rdata(rdata_q), .mem_wdata(wdata),
+        .mem_cacheable(), .mem_addr(addr), .mem_rdata(rdata_q), .mem_wdata(wdata),
         .mem_wmask(sel), .mem_we(we), .mem_cyc(cyc), .mem_stb(stb),
         .mem_stall(1'b0), .mem_ack(ack_q)
     );

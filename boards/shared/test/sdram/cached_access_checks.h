@@ -17,6 +17,7 @@ static void test_cached_accesses(void)
     LED = 1;
     check(p[0], 0x12340000u);
     LED = 2;
+    /* Keep warm reads within the first 64-byte RC32 cache line. */
     for (u32 repeat = 0; repeat < 4; ++repeat)
         for (u32 i = 0; i < 16; ++i) check(p[i], 0x12340000u + i);
     LED = 3;

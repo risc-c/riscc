@@ -53,10 +53,17 @@ fuzz-sdram:
 DEMO_PROGRAM ?= boards/shared/sw/demo.cpp
 # Hardware tests use the normal SoC with separate firmware and build outputs.
 .PHONY: icepi-zero-test-bin icepi-zero-test-bit atum-a3-test-bin atum-a3-test
-icepi-zero-test-bin icepi-zero-test-bit:
+icepi-zero-test-bin:
 	+$(MAKE) ICEPI_BUILD=build/icepi_zero_test ICEPI_IMAGE=test \
 	  ICEPI_PROGRAM=boards/shared/test/sdram/hardware_test.cpp \
-	  $(subst -test-,-demo-,$@)
+	  icepi-zero-demo-bin
+
+# Replace only boot RAM so the test exercises the timing-verified demo circuit.
+icepi-zero-test-bit: icepi-zero-demo-bit icepi-zero-test-bin tools/update_ecp5_bootram.py
+	$(PYTHON) tools/update_ecp5_bootram.py $(ICEPI_CONFIG) build/icepi_zero_test/test.config \
+	  --from-hex $(ICEPI_MEMH) --to-hex build/icepi_zero_test/test.memh
+	$(ECPPACK) --compress build/icepi_zero_test/test.config build/icepi_zero_test/test.bit
+	@printf 'Icepi test bitstream: %s\n' 'build/icepi_zero_test/test.bit'
 
 atum-a3-test-bin:
 	+$(MAKE) ATUM_BUILD=build/atum_a3_nano_test \

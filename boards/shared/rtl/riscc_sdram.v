@@ -46,7 +46,6 @@ module riscc_sdram #(
 );
     localparam integer HALF = (DATA_BITS == 16 ? 1 : 0);
     localparam integer DEPTH = 1 << FIFO_BITS;
-    localparam [FIFO_BITS:0] FIFO_FULL = {1'b1, {FIFO_BITS{1'b0}}};
     localparam [12:0] MODE_VALUE = {3'b000, 1'b0, 2'b00, CAS[2:0], 1'b0, 2'b00, HALF[0]};
     localparam [3:0] NOP = 4'b0111, ACTIVE = 4'b0011,
         READ = 4'b0101, WRITE = 4'b0100, PRE = 4'b0010,
@@ -56,11 +55,13 @@ module riscc_sdram #(
         ROW_PRE = 8, ROW_ACTIVE = 9;
     reg [3:0] state_q, command_q;
     reg [2:0] init_refresh_q;
-    localparam integer DELAY_BITS = $clog2(TRFC + TRCD + TRP + 4);
+    localparam integer ROW_DELAY = TRCD > TRP ? TRCD : TRP;
+    localparam integer MAX_DELAY = TRFC > ROW_DELAY ? TRFC : ROW_DELAY;
+    localparam integer DELAY_BITS = $clog2(MAX_DELAY > 3 ? MAX_DELAY : 3);
     localparam integer INIT_BITS = $clog2(INIT_CYCLES + 1);
     localparam integer REFRESH_BITS = $clog2(REFRESH_CYCLES + 1);
     localparam integer RECOVERY_BITS = $clog2(TWR + CAS + HALF + PIN_PIPELINE + READ_DELAY + 5);
-    localparam integer ACTIVE_BITS = $clog2(TRAS + 1);
+    localparam integer ACTIVE_BITS = TRAS > 1 ? $clog2(TRAS) : 1;
     localparam integer INIT_WAIT = INIT_CYCLES - 1, REFRESH_WAIT = REFRESH_CYCLES - 1;
     localparam integer RP_WAIT = TRP - 1, RFC_WAIT = TRFC - 1, RCD_WAIT = TRCD - 1;
     localparam integer RAS_WAIT = TRAS - 1;
@@ -68,37 +69,37 @@ module riscc_sdram #(
         READ_WAIT = CAS + HALF + PIN_PIPELINE + READ_DELAY + 3;
     reg [DELAY_BITS-1:0] delay_q;
     reg delay_done_q, init_done_q;
-    reg [INIT_BITS-1:0] init_count_q;
-    reg [REFRESH_BITS-1:0] refresh_q;
+    localparam integer TIMER_BITS = INIT_BITS > REFRESH_BITS ? INIT_BITS : REFRESH_BITS;
+    // This timer covers power-up delay first, then periodic refresh.
+    reg [TIMER_BITS-1:0] timer_q;
+    wire [TIMER_BITS-1:0] timer_next = timer_q - 1'b1;
+    wire [REFRESH_BITS-1:0] refresh_q = timer_q[REFRESH_BITS-1:0];
     reg refresh_due_q;
     reg [RECOVERY_BITS-1:0] recovery_q;
     reg [ACTIVE_BITS-1:0] active_age_q;
     reg [3:0] open_q;
+    (* ram_style = "distributed", ramstyle = "MLAB" *)
     reg [ROW_BITS-1:0] rows_q [0:3];
-    reg [ADDR_BITS-1:0] addr_fifo [0:DEPTH-1];
-    reg [31:0] data_fifo [0:DEPTH-1];
-    reg [3:0] mask_fifo [0:DEPTH-1];
-    reg we_fifo [0:DEPTH-1];
-    reg [FIFO_BITS-1:0] rd_q, wr_q;
-    reg [FIFO_BITS:0] count_q;
+    // Keep commands in RAM until lookup or issue needs them. Address and
+    // payload readers advance independently in acceptance order.
+    // Capacity covers DEPTH queued commands, two admission slots, lookup,
+    // and the active head. Rounding up leaves room for unread payloads.
+    localparam integer PAYLOAD_BITS = $clog2(DEPTH + 4);
+    reg [35:0] payload [0:(1 << PAYLOAD_BITS)-1];
+    reg [PAYLOAD_BITS-1:0] payload_wr_q;
+    reg [PAYLOAD_BITS-1:0] payload_head_q;
+    reg [ADDR_BITS:0] request_mem [0:(1 << PAYLOAD_BITS)-1];
+    reg [PAYLOAD_BITS-1:0] request_lookup_q;
+    reg [FIFO_BITS-1:0] rd_q;
+    wire [FIFO_BITS-1:0] wr_q = payload_wr_q[FIFO_BITS-1:0];
     reg full_q, empty_q;
-    // Two prefetch slots absorb a cycle of backpressure without routing
-    // command issue back through the request FIFO's occupancy counter.
-    reg [ADDR_BITS-1:0] pref_addr [0:1];
-    reg [31:0] pref_data [0:1];
-    reg [3:0] pref_mask [0:1];
-    reg pref_we [0:1];
-    reg pref_rd_q, pref_wr_q;
+    // Two admission credits absorb a cycle of backpressure without routing
+    // command issue back through the request FIFO's full/empty logic.
+    // Payloads stay in RAM; these credits carry no copied address or data.
     reg [1:0] pref_count_q;
     wire pref_valid_q = pref_count_q != 0;
-    wire [ADDR_BITS-1:0] pref_addr_q = pref_addr[pref_rd_q];
-    wire [31:0] pref_data_q = pref_data[pref_rd_q];
-    wire [3:0] pref_mask_q = pref_mask[pref_rd_q];
-    wire pref_we_q = pref_we[pref_rd_q];
     reg lookup_valid_q;
     reg [ADDR_BITS-1:0] lookup_addr_q;
-    reg [31:0] lookup_data_q;
-    reg [3:0] lookup_mask_q;
     reg lookup_we_q;
     reg head_valid_q;
     reg [ADDR_BITS-1:0] head_addr_q;
@@ -124,17 +125,29 @@ module riscc_sdram #(
     wire [1:0] bank = physical_addr[COL_BITS +: 2];
     wire [ROW_BITS-1:0] row = physical_addr[COL_BITS+2 +: ROW_BITS];
     wire writing = head_we_q;
-    reg [3:0] head_hits_q;
-    wire row_hit = |head_hits_q;
+    localparam integer ROW_SLICE_BITS = 3;
+    localparam integer ROW_PARTS = (ROW_BITS + ROW_SLICE_BITS - 1) / ROW_SLICE_BITS;
+    reg [ROW_PARTS-1:0] head_hit_q;
+    // ACTIVATE satisfies this head without rewriting the saved comparisons.
+    reg head_open_q, head_activated_q;
+    wire row_hit = head_valid_q &&
+                   (head_activated_q || (head_open_q && (&head_hit_q)));
     wire [ADDR_BITS+HALF-1:0] next_physical = {lookup_addr_q, {HALF{1'b0}}};
     wire [1:0] next_bank = next_physical[COL_BITS +: 2];
     wire [ROW_BITS-1:0] next_row = next_physical[COL_BITS+2 +: ROW_BITS];
-    wire [3:0] next_hits;
-    genvar row_bank;
-    generate for (row_bank = 0; row_bank < 4; row_bank = row_bank + 1) begin : g_row_hit
-        assign next_hits[row_bank] = open_q[row_bank] && (next_bank == row_bank[1:0]) &&
-                                    (rows_q[row_bank] == next_row);
-    end endgenerate
+    wire [ROW_BITS-1:0] next_open_row = rows_q[next_bank];
+    // Compare short row slices in parallel at the existing head boundary.
+    // This keeps the RAM lookup off the full-row compare's critical path.
+    wire [ROW_PARTS-1:0] next_hit;
+    genvar part;
+    generate
+        for (part = 0; part < ROW_PARTS; part = part + 1) begin : g_row_hit
+            localparam integer OFFSET = part * ROW_SLICE_BITS;
+            localparam integer BITS = ROW_BITS - OFFSET < ROW_SLICE_BITS ?
+                                      ROW_BITS - OFFSET : ROW_SLICE_BITS;
+            assign next_hit[part] = next_open_row[OFFSET +: BITS] == next_row[OFFSET +: BITS];
+        end
+    endgenerate
     wire direction_ok = head_same_direction_q || recovered_q;
     wire issue = run_ready_q && row_hit && direction_ok;
     wire load_head = (!head_valid_q || issue) && lookup_valid_q;
@@ -142,20 +155,19 @@ module riscc_sdram #(
     wire pop = !pref_count_q[1] && !empty_q;
     wire write_first = issue && writing;
     wire accept = mem_cyc && mem_stb && !mem_stall;
-    // Predecode occupancy carries independently of command acceptance.
-    wire [FIFO_BITS:0] count_toggle;
-    assign count_toggle[0] = accept ^ pop;
-    genvar count_bit;
-    generate for (count_bit = 1; count_bit <= FIFO_BITS; count_bit = count_bit + 1) begin : g_count
-        assign count_toggle[count_bit] =
-            (accept && !pop && (&count_q[count_bit-1:0])) ||
-            (pop && !accept && !(|count_q[count_bit-1:0]));
-    end endgenerate
+    // FIFO credits count accepted commands not yet promoted to lookup.
+    // Full and empty flags distinguish equal pointers after wraparound.
+    wire [FIFO_BITS-1:0] next_wr = wr_q + 1'b1;
+    wire [FIFO_BITS-1:0] next_rd = rd_q + 1'b1;
+    wire last_free = next_wr == rd_q;
+    wire last_used = next_rd == wr_q;
     reg blocked_q;
     assign mem_stall = blocked_q;
     always @(posedge clk) begin
+        // With one slot left, a ready controller accepts the offered command.
+        // Keep STALL feedback out of the fullness prediction.
         blocked_q <= !ready || (!pop &&
-            (full_q || (accept && count_q == FIFO_FULL - 1'b1)));
+            (full_q || (mem_cyc && mem_stb && last_free)));
         if (rst) blocked_q <= 1;
     end
     assign sd_cke = 1'b1;
@@ -172,15 +184,12 @@ module riscc_sdram #(
 
     always @(posedge clk) begin
         command_q <= NOP;
-        // Register the long state/timer eligibility decode. Recovery is long
-        // enough to include every read/write pipeline stage, so a separate
-        // reduction of those pipelines is unnecessary on the issue path.
+        // Track when timing, refresh, and direction permit a new command.
         run_ready_q <= state_q == RUN && !(|(delay_q >> 1)) && (|(refresh_q >> 1)) &&
                        !(issue && HALF != 0);
         recovered_q <= !(|(recovery_q >> 1));
         bank_safe_q <= !(|(recovery_q >> 1)) && !(|(active_age_q >> 1));
-        // DQ is meaningful only while OE is asserted. Keep its pipeline
-        // unconditional instead of routing command eligibility through data enables.
+        // DQ updates continuously; only sd_dq_oe enables its output drivers.
         sd_dq_oe <= write_first || burst_q;
         sd_dq_o <= burst_q ? {{(DATA_BITS-16){1'b0}}, write_high_q} :
                               head_data_q[DATA_BITS-1:0];
@@ -194,71 +203,63 @@ module riscc_sdram #(
         write_pipe_q <= write_pipe_q << 1;
         burst_q <= 1'b0;
         if (!init_done_q) begin
-            init_count_q <= init_count_q - 1'b1;
-            init_done_q <= !(|(init_count_q >> 1));
+            timer_q <= timer_next;
+            init_done_q <= !(|(timer_q >> 1));
+            if (!(|(timer_q >> 1))) timer_q <= REFRESH_WAIT[TIMER_BITS-1:0];
         end
         delay_done_q <= !(|(delay_q >> 1));
         if (delay_q != 0) delay_q <= delay_q - 1'b1;
         if (recovery_q != 0) recovery_q <= recovery_q - 1'b1;
         if (active_age_q != 0) active_age_q <= active_age_q - 1'b1;
         if (ready) refresh_due_q <= !(|(refresh_q >> 1));
-        if (ready && !refresh_due_q) refresh_q <= refresh_q - 1'b1;
+        if (ready && !refresh_due_q) timer_q <= timer_next;
 
-        // The unoccupied tail may sample speculatively. Only acceptance
-        // advances the pointer and makes that payload visible to the reader.
+        // Sample the free tail speculatively; only acceptance advances it.
         if (!full_q) begin
-            addr_fifo[wr_q] <= mem_addr;
-            data_fifo[wr_q] <= mem_wdata;
-            mask_fifo[wr_q] <= mem_wmask;
-            we_fifo[wr_q] <= mem_we;
+            request_mem[payload_wr_q] <= {mem_we, mem_addr};
+            payload[payload_wr_q] <= {mem_wmask, mem_wdata};
         end
-        if (accept) wr_q <= wr_q + 1'b1;
+        if (accept) payload_wr_q <= payload_wr_q + 1'b1;
         if (pop) begin
-            pref_addr[pref_wr_q] <= addr_fifo[rd_q];
-            pref_data[pref_wr_q] <= data_fifo[rd_q];
-            pref_mask[pref_wr_q] <= mask_fifo[rd_q];
-            pref_we[pref_wr_q] <= we_fifo[rd_q];
-            pref_wr_q <= !pref_wr_q;
-            rd_q <= rd_q + 1'b1;
+            rd_q <= next_rd;
         end
-        if (load_lookup) pref_rd_q <= !pref_rd_q;
+        if (load_lookup) request_lookup_q <= request_lookup_q + 1'b1;
         pref_count_q[0] <= pref_count_q[0] ^ pop ^ load_lookup;
         pref_count_q[1] <= !load_lookup && (pref_count_q[1] || (pref_count_q[0] && pop));
         if (!lookup_valid_q || !head_valid_q || issue) begin
-            lookup_addr_q <= pref_addr_q;
-            lookup_data_q <= pref_data_q;
-            lookup_mask_q <= pref_mask_q;
-            lookup_we_q <= pref_we_q;
+            {lookup_we_q, lookup_addr_q} <= request_mem[request_lookup_q];
         end
         lookup_valid_q <= pref_valid_q || (lookup_valid_q && head_valid_q && !issue);
-        // Head hits also encode validity, so command issue needs no separate
-        // head-valid decode. A vacant head tracks the next prefetched row.
-        head_hits_q <= (head_hits_q & {4{!(run_ready_q && direction_ok)}}) |
-                       (next_hits & {4{load_head}});
+        if (load_head) begin
+            head_hit_q <= next_hit;
+            head_open_q <= open_q[next_bank];
+            head_activated_q <= 0;
+        end
         if (!head_valid_q || issue) begin
             head_addr_q <= lookup_addr_q;
-            head_data_q <= lookup_data_q;
-            head_mask_q <= lookup_mask_q;
+            {head_mask_q, head_data_q} <= payload[payload_head_q];
         end
         if (load_head) begin
+            payload_head_q <= payload_head_q + 1'b1;
             head_we_q <= lookup_we_q;
             head_same_direction_q <= lookup_we_q == head_we_q;
         end
         head_valid_q <= lookup_valid_q || (head_valid_q && !issue);
-        // Explicit next-state flags avoid a serial pop/accept clock-enable
-        // mux on the FIFO-to-command backpressure path.
-        full_q <= !pop && (full_q || (accept && count_q == FIFO_FULL - 1'b1));
-        empty_q <= !accept && (empty_q || (pop && count_q == 1));
-        count_q <= count_q ^ count_toggle;
+        // Advance FIFO flags after acceptance and promotion.
+        full_q <= !pop && (full_q || (accept && last_free));
+        empty_q <= !accept && (empty_q || (pop && last_used));
 
         // SDR data launches CAS-1 edges after READ and is captured at the
         // following device edge (CAS). Assemble on the next fabric edge.
-        if (HALF != 0 && read_pipe_q[CAS+PIN_PIPELINE+READ_DELAY]) read_low_q <= dq_sample_q[15:0];
+        if (HALF != 0 && read_pipe_q[CAS+PIN_PIPELINE+READ_DELAY])
+            read_low_q <= dq_sample_q[15:0];
         if (read_pipe_q[CAS+HALF+PIN_PIPELINE+READ_DELAY]) begin
-            mem_rdata <= HALF != 0 ? {dq_sample_q[15:0], read_low_q} : {{(32-DATA_BITS){1'b0}}, dq_sample_q};
+            mem_rdata <= HALF != 0 ? {dq_sample_q[15:0], read_low_q} :
+                         {{(32-DATA_BITS){1'b0}}, dq_sample_q};
             mem_ack <= 1'b1;
         end
-        if (write_pipe_q[HALF+PIN_PIPELINE]) mem_ack <= 1'b1;
+        if (write_pipe_q[HALF+PIN_PIPELINE])
+            mem_ack <= 1'b1;
 
         if (issue) begin
             recovered_q <= 0;
@@ -325,7 +326,7 @@ module riscc_sdram #(
                     sd_ba <= bank;
                     sd_addr <= {{(13-ROW_BITS){1'b0}}, row};
                     open_q[bank] <= 1;
-                    head_hits_q <= 4'b1111;
+                    head_activated_q <= 1;
                     rows_q[bank] <= row;
                     bank_safe_q <= 0;
                     run_ready_q <= (TRCD == 1) && (|(refresh_q >> 1));
@@ -338,7 +339,8 @@ module riscc_sdram #(
                     command_q <= PRE;
                     sd_addr <= 13'h400;
                     open_q <= 0;
-                    head_hits_q <= 0;
+                    head_open_q <= 1'b0;
+                    head_activated_q <= 0;
                     delay_q <= RP_WAIT[DELAY_BITS-1:0];
                     delay_done_q <= RP_WAIT == 0;
                     state_q <= REF_CMD;
@@ -347,7 +349,7 @@ module riscc_sdram #(
                     command_q <= REFRESH;
                     delay_q <= RFC_WAIT[DELAY_BITS-1:0];
                     delay_done_q <= RFC_WAIT == 0;
-                    refresh_q <= REFRESH_WAIT[REFRESH_BITS-1:0];
+                    timer_q <= REFRESH_WAIT[TIMER_BITS-1:0];
                     refresh_due_q <= REFRESH_WAIT == 0;
                     state_q <= RUN;
                 end
@@ -361,29 +363,32 @@ module riscc_sdram #(
             init_refresh_q <= 0;
             delay_q <= 0;
             delay_done_q <= 1;
-            init_count_q <= INIT_WAIT[INIT_BITS-1:0];
             init_done_q <= INIT_WAIT == 0;
-            refresh_q <= REFRESH_WAIT[REFRESH_BITS-1:0];
-                    refresh_due_q <= REFRESH_WAIT == 0;
+            timer_q <= INIT_WAIT == 0 ? REFRESH_WAIT[TIMER_BITS-1:0] : INIT_WAIT[TIMER_BITS-1:0];
+            refresh_due_q <= REFRESH_WAIT == 0;
             recovery_q <= 0;
             active_age_q <= 0;
             open_q <= 0;
             ready <= 1'b0;
             rd_q <= 0;
-            wr_q <= 0;
-            count_q <= 0;
-            full_q <= 0; empty_q <= 1;
+            payload_wr_q <= 0;
+            payload_head_q <= 0;
+            full_q <= 0;
+            empty_q <= 1;
             run_ready_q <= 0;
             recovered_q <= 1;
             bank_safe_q <= 1;
             head_valid_q <= 0;
             lookup_valid_q <= 0;
-            pref_count_q <= 0; pref_rd_q <= 0; pref_wr_q <= 0;
-            head_hits_q <= 0;
+            pref_count_q <= 0;
+            request_lookup_q <= 0;
+            head_open_q <= 1'b0;
+            head_activated_q <= 0;
             read_pipe_q <= 0;
             write_pipe_q <= 0;
             burst_q <= 0;
-            head_same_direction_q <= 1; head_we_q <= 0;
+            head_same_direction_q <= 1;
+            head_we_q <= 0;
             sd_dqm <= {DATA_BITS/8{1'b1}};
             sd_dq_oe <= 0;
             mem_ack <= 0;

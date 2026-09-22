@@ -4,11 +4,16 @@ module riscc_cache_tb #(
     parameter integer CACHE_READ_ONLY = 0,
     parameter integer CPU_BITS = 32,
     parameter integer UNCACHED_BIT = 13,
-    parameter integer LINE_WORD_BITS = 3
+    parameter integer LINE_WORD_BITS = 3,
+    parameter integer REGION_TEST = 0,
+    parameter integer REGISTER_LOOKUP = 0
 );
     localparam integer ADDR_BITS = 30;
     localparam integer MEM_WORDS = 16384;
     localparam integer LINE_WORDS = 1 << LINE_WORD_BITS;
+    localparam integer CACHE_TAG_ADDR_BITS = (REGION_TEST != 0) ? 12 : ADDR_BITS;
+    localparam [ADDR_BITS-1:0] CACHE_BASE_WORD =
+        (REGION_TEST != 0) ? 30'h04000000 : 30'd0;
     localparam [29:0] LAST_WORD_ADDR = (30'd1 << LINE_WORD_BITS) - 30'd1;
     localparam [31:0] LAST_WORD_VALUE =
         32'h10000000 + {2'b0, LAST_WORD_ADDR};
@@ -59,7 +64,7 @@ module riscc_cache_tb #(
     reg immediate_mode;
     reg rdata_hold_valid;
     reg [CPU_BITS-1:0] rdata_hold;
-    reg uncached_check_pending;
+    reg [1:0] uncached_check_delay;
     reg [ADDR_BITS-1:0] uncached_check_addr;
     reg [3:0] uncached_check_sel;
     reg uncached_check_we;
@@ -67,13 +72,16 @@ module riscc_cache_tb #(
 
     riscc_cached_cache #(.ADDR_BITS(ADDR_BITS),
                          .LINE_WORD_BITS(LINE_WORD_BITS),
+                         .TAG_ADDR_BITS(CACHE_TAG_ADDR_BITS),
+                         .CACHE_BASE(CACHE_BASE_WORD),
                          .UNCACHED_BIT(UNCACHED_BIT),
-                         .READ_ONLY(CACHE_READ_ONLY), .CPU_BITS(CPU_BITS)) dut (
+                         .READ_ONLY(CACHE_READ_ONLY), .CPU_BITS(CPU_BITS),
+                         .REGISTER_LOOKUP(REGISTER_LOOKUP != 0)) dut (
         .clk(clk), .rst(rst),
         .c_addr(c_addr), .c_wdata(c_wdata), .c_sel(c_sel), .c_we(c_we),
         .c_cyc(c_cyc), .c_stb(c_stb), .c_rdata(c_rdata),
         .c_rsel(c_rsel), .c_stall(c_stall), .c_ack(c_ack),
-        .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),
+        .m_cacheable(), .m_addr(m_addr), .m_wdata(m_wdata), .m_sel(m_sel), .m_we(m_we),
         .m_cyc(m_cyc), .m_stb(m_stb), .m_rdata(m_rdata),
         .m_stall(m_stall), .m_ack(m_ack),
         .inv_valid(inv_valid), .inv_addr(inv_addr), .store_posted()
@@ -105,6 +113,9 @@ module riscc_cache_tb #(
     end
     wire c_uncached = (CACHE_READ_ONLY == 0) && (UNCACHED_BIT >= 0) &&
                       c_addr[UNCACHED_BIT];
+    wire c_outside_region = (REGION_TEST != 0) &&
+        ((c_addr >> CACHE_TAG_ADDR_BITS) !=
+         (CACHE_BASE_WORD >> CACHE_TAG_ADDR_BITS));
     localparam [ADDR_BITS-1:0] POLICY_UNCACHED_ADDR =
         (UNCACHED_BIT >= 0) ? (30'd1 << UNCACHED_BIT) : 30'h00002000;
     localparam [ADDR_BITS-1:0] POLICY_CACHED_ADDR =
@@ -122,6 +133,11 @@ module riscc_cache_tb #(
         {{(CPU_BITS-8){1'b0}}, 8'h22};
     localparam [CPU_BITS-1:0] POSTED_DATA2 =
         {{(CPU_BITS-8){1'b0}}, 8'h33};
+    localparam [ADDR_BITS-1:0] REGION_IN_ADDR = CACHE_BASE_WORD + 30'd3;
+    localparam [ADDR_BITS-1:0] REGION_OUTSIDE_BIT12 =
+        (CACHE_BASE_WORD ^ (30'd1 << 12)) + 30'd3;
+    localparam [ADDR_BITS-1:0] REGION_OUTSIDE_BIT28 =
+        (CACHE_BASE_WORD ^ (30'd1 << 28)) + 30'd3;
 
     function automatic [31:0] backend_word(input [ADDR_BITS-1:0] address);
         begin
@@ -157,22 +173,26 @@ module riscc_cache_tb #(
         // during the immediately following clock, even if the target stalls.
         // Capture the CPU command before generic-mode masters change their
         // payload after acceptance; read payloads are intentionally ignored.
+        // REGISTER_LOOKUP spends one extra clock reading the tag before the
+        // pass-through command is published.
         if (rst) begin
-            uncached_check_pending <= 1'b0;
+            uncached_check_delay <= 2'd0;
         end else begin
-            if (uncached_check_pending) begin
+            if (uncached_check_delay == 2'd1) begin
                 if (!m_cyc || !m_stb || m_addr !== uncached_check_addr ||
                     m_sel !== uncached_check_sel ||
                     m_we !== uncached_check_we ||
                     (uncached_check_we && (CACHE_READ_ONLY == 0) &&
                      m_wdata !== uncached_check_wdata))
                     $fatal(1, "uncached backend offer mismatch");
-                uncached_check_pending <= 1'b0;
+                uncached_check_delay <= 2'd0;
+            end else if (uncached_check_delay != 2'd0) begin
+                uncached_check_delay <= uncached_check_delay - 1'b1;
             end
             if (c_cyc && c_stb && !c_stall &&
-                (c_uncached ||
+                (c_uncached || c_outside_region ||
                  (CACHE_READ_ONLY != 0 && c_we))) begin
-                uncached_check_pending <= 1'b1;
+                uncached_check_delay <= (REGISTER_LOOKUP != 0) ? 2'd2 : 2'd1;
                 uncached_check_addr <= c_addr;
                 uncached_check_sel <= c_sel;
                 uncached_check_we <= c_we;
@@ -413,7 +433,7 @@ module riscc_cache_tb #(
             c_we = 0; c_cyc = 1; c_stb = 1;
             accepted = 0; responses = 0; timeout = 0;
             burst_edges = 0; done = 0;
-            max_edges = 9;
+            max_edges = (REGISTER_LOOKUP != 0) ? 17 : 9;
             while (!done) begin
                 accept_now = (accepted < 8) && c_stb && !c_stall;
                 ack_now = (responses < 8) && c_ack;
@@ -423,17 +443,31 @@ module riscc_cache_tb #(
                 burst_edges = burst_edges + 1;
                 if (burst_edges > max_edges)
                     $fatal(1, "hit burst exceeded %0d edges", max_edges);
-                // Both cache variants accept the next hit on the same edge
-                // that returns the preceding word.  The first edge only
-                // accepts the first command; the ninth only returns word 7.
-                if (burst_edges <= 8 && !accept_now)
-                    $fatal(1, "hit burst acceptance gap at edge %0d", burst_edges);
-                if (burst_edges >= 2 && !ack_now)
-                    $fatal(1, "hit burst response gap at edge %0d", burst_edges);
-                if (burst_edges == 1 && ack_now)
-                    $fatal(1, "hit burst responded before first acceptance");
-                if (burst_edges == 9 && accept_now)
-                    $fatal(1, "hit burst accepted after eighth command");
+                // The unregistered lookup accepts word 0 at edge 1, then
+                // accepts and returns one word per edge through edge 8; edge
+                // 9 only returns word 7. REGISTER_LOOKUP performs a complete
+                // two-clock lookup for every request: accepts are on odd
+                // edges 1..15, responses on odd edges 3..17.
+                if (REGISTER_LOOKUP != 0) begin
+                    if ((burst_edges <= 15 && (burst_edges % 2) == 1) &&
+                        !accept_now)
+                        $fatal(1, "registered hit burst acceptance gap at edge %0d", burst_edges);
+                    if ((burst_edges > 15 || (burst_edges % 2) == 0) && accept_now)
+                        $fatal(1, "registered hit burst accepted outside lookup schedule");
+                    if ((burst_edges >= 3 && (burst_edges % 2) == 1) && !ack_now)
+                        $fatal(1, "registered hit burst response gap at edge %0d", burst_edges);
+                    if ((burst_edges < 3 || (burst_edges % 2) == 0) && ack_now)
+                        $fatal(1, "registered hit burst responded before lookup completed");
+                end else begin
+                    if (burst_edges <= 8 && !accept_now)
+                        $fatal(1, "hit burst acceptance gap at edge %0d", burst_edges);
+                    if (burst_edges >= 2 && !ack_now)
+                        $fatal(1, "hit burst response gap at edge %0d", burst_edges);
+                    if (burst_edges == 1 && ack_now)
+                        $fatal(1, "hit burst responded before first acceptance");
+                    if (burst_edges == 9 && accept_now)
+                        $fatal(1, "hit burst accepted after eighth command");
+                end
                 if (accept_now) begin
                     accepted = accepted + 1;
                     if (accepted < 8) begin
@@ -514,6 +548,53 @@ module riscc_cache_tb #(
         end
     endtask
 
+    task automatic check_cacheable_region;
+        integer prior_accepts;
+        begin
+            // The region starts at CACHE_BASE_WORD and is 2^12 words wide.
+            // The first read fills one line; its repeat must be a hit.
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_IN_ADDR);
+            if (backend_accepts != prior_accepts + LINE_WORDS)
+                $fatal(1, "region cold read did not fill");
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_IN_ADDR);
+            if (backend_accepts != prior_accepts)
+                $fatal(1, "region repeat read missed");
+
+            // Each address outside the region must bypass exactly one word,
+            // even when its low index and line offset match the cached line.
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_OUTSIDE_BIT12);
+            if (backend_accepts != prior_accepts + 1)
+                $fatal(1, "bit12 outside read was cached");
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_OUTSIDE_BIT12);
+            if (backend_accepts != prior_accepts + 1)
+                $fatal(1, "bit12 outside repeat was cached");
+
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_OUTSIDE_BIT28);
+            if (backend_accepts != prior_accepts + 1)
+                $fatal(1, "bit28 outside read was cached");
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_OUTSIDE_BIT28);
+            if (backend_accepts != prior_accepts + 1)
+                $fatal(1, "bit28 outside repeat was cached");
+
+            // The uncached replies invalidate the active tag.  Returning to
+            // the region must refill once, then hit on the following read.
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_IN_ADDR);
+            if (backend_accepts != prior_accepts + LINE_WORDS)
+                $fatal(1, "region return did not refill after bypass");
+            prior_accepts = backend_accepts;
+            cpu_read_backend(REGION_IN_ADDR);
+            if (backend_accepts != prior_accepts)
+                $fatal(1, "region return did not hit");
+        end
+    endtask
+
     task automatic check_address_policy;
         integer prior_accepts;
         begin
@@ -590,7 +671,7 @@ module riscc_cache_tb #(
         cycle_count = 0; stall_count = 0; ack_stall_count = 0;
         stall_release_count = 0; stalled_last = 0;
         rdata_hold_valid = 0; rdata_hold = 0;
-        uncached_check_pending = 0; uncached_check_addr = 0;
+        uncached_check_delay = 0; uncached_check_addr = 0;
         uncached_check_sel = 0; uncached_check_we = 0;
         uncached_check_wdata = 0;
         immediate_mode = $test$plusargs("IMMEDIATE");
@@ -598,7 +679,9 @@ module riscc_cache_tb #(
         // Both halves contain distinct values for 16-bit read checks.
         repeat (3) @(posedge clk);
         rst = 0;
-        if (CPU_BITS == 16) begin
+        if (REGION_TEST != 0) begin
+            check_cacheable_region();
+        end else if (CPU_BITS == 16) begin
             // The instruction-cache specialization returns either half of a
             // 32-bit backing word, selected by the Wishbone byte lanes.
             cpu_read_half(30'd0, 0, 32'h00000000);
@@ -732,7 +815,8 @@ module riscc_cache_tb #(
             end
 
         end
-        check_address_policy();
+        if (REGION_TEST == 0)
+            check_address_policy();
         if (stall_count == 0) $fatal(1, "no delayed backend stalls exercised");
         if (!immediate_mode && ack_stall_count == 0)
             $fatal(1, "registered backend never produced ACK+STALL");

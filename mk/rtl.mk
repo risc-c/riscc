@@ -33,9 +33,22 @@ $(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
 	  --top-module riscc_peripherals_top --prefix Vriscc_peripherals_top \
 	  -GTICK_DIV=4 -Mdir $(@D) -CFLAGS "$(TB_CXXFLAGS)" -o tb \
 	  $(abspath $(PERIPHERAL_RTL)) $(abspath test/peripheral_tb.cpp)
-
-.PHONY: test-peripherals
-test-peripherals: $(PERIPHERAL_TB)
+.PHONY: test-uart-mmio test-peripherals
+test-uart-mmio:
+	@set -e; \
+	for div in 16 482 1736; do \
+	  for pipeline in 0 1; do \
+	    output=build/test/uart-mmio/div$${div}-pipeline$${pipeline}; \
+	    mkdir -p "$${output}"; \
+	    iverilog -g2012 -DVERILATOR -s uart_mmio_tb \
+	      -P uart_mmio_tb.CLK_DIV=$${div} \
+	      -P uart_mmio_tb.PIPELINE_WRITES=$${pipeline} \
+	      -o "$${output}/uart_mmio_tb.vvp" \
+	      boards/shared/rtl/riscc_uart_mmio.v test/uart_mmio_tb.v; \
+	    vvp "$${output}/uart_mmio_tb.vvp"; \
+	  done; \
+	done
+test-peripherals: $(PERIPHERAL_TB) test-uart-mmio
 	$<
 
 # Assembler and ISS

@@ -20,7 +20,6 @@ module riscc_cached_pipe #(
     input wire imem_stall, imem_ack,
     output wire [XLEN-3:0] dmem_addr,
     input wire [31:0] dmem_rdata,
-    input wire [3:0] dmem_rsel,
     output wire [31:0] dmem_wdata,
     output wire [3:0] dmem_wmask,
     output wire dmem_we, dmem_cyc, dmem_stb,
@@ -64,7 +63,6 @@ module riscc_cached_sram_tb #(
     wire i_stall = dut.i_stall;
     wire i_ack = dut.i_ack;
     wire [31:0] d_rdata = dut.d_rdata;
-    wire [3:0] d_rsel = dut.d_rsel;
     wire d_stall = dut.d_stall;
     wire d_ack = dut.d_ack;
 
@@ -77,7 +75,7 @@ module riscc_cached_sram_tb #(
         .RESET_PC(0)
     ) dut (
         .clk(clk), .rst(rst), .irq(1'b0),
-        .mem_addr(mem_addr), .mem_rdata(mem_rdata),
+        .mem_cacheable(), .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata), .mem_wmask(mem_wmask), .mem_we(mem_we),
         .mem_cyc(mem_cyc), .mem_stb(mem_stb), .mem_stall(mem_stall),
         .mem_ack(mem_ack)
@@ -225,8 +223,6 @@ module riscc_cached_sram_tb #(
             end
             if (!write && d_rdata !== expected)
                 fail("data word mismatch");
-            if (d_rsel !== mask)
-                fail("data response mask mismatch");
             @(negedge clk);
             d_cyc_q = 1'b0;
             d_we_q = 1'b0;
@@ -270,8 +266,6 @@ module riscc_cached_sram_tb #(
                     got_d = 1;
                     if (!d_write && d_rdata !== expected_d)
                         fail("concurrent D data mismatch");
-                    if (d_rsel !== d_mask)
-                        fail("concurrent D response mask mismatch");
                 end
                 guard = guard + 1;
                 wait_guard(guard);
@@ -289,8 +283,6 @@ module riscc_cached_sram_tb #(
                     got_d = 1;
                     if (!d_write && d_rdata !== expected_d)
                         fail("concurrent D data mismatch");
-                    if (d_rsel !== d_mask)
-                        fail("concurrent D response mask mismatch");
                 end
                 guard = guard + 1;
                 wait_guard(guard);
@@ -364,7 +356,7 @@ module riscc_cached_sram_tb #(
         // Both requests are accepted at this edge. The data response is
         // immediate, while the colliding instruction response is suppressed.
         @(posedge clk); #1;
-        if (!d_ack || d_rsel !== 4'h3 || i_ack)
+        if (!d_ack || i_ack)
             fail("collision did not suppress the stale instruction response");
         if (!i_stall)
             fail("collision did not retain the instruction retry");
@@ -377,7 +369,7 @@ module riscc_cached_sram_tb #(
         if (!i_stall || d_stall)
             fail("repeated collision did not retain retry state");
         @(posedge clk); #1;
-        if (!d_ack || d_rsel !== 4'h3 || i_ack)
+        if (!d_ack || i_ack)
             fail("repeated collision produced an early instruction response");
         @(negedge clk);
         d_stb_q = 1'b0;

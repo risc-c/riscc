@@ -52,7 +52,7 @@ module riscc_cached_hits_tb #(
 
     riscc_cached #(.XLEN(XLEN), .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
         .clk(clk), .rst(rst), .irq(irq),
-        .mem_addr(mem_addr), .mem_rdata(mem_rdata),
+        .mem_cacheable(), .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata), .mem_wmask(mem_wmask), .mem_we(mem_we),
         .mem_cyc(mem_cyc), .mem_stb(mem_stb), .mem_stall(mem_stall),
         .mem_ack(mem_ack)

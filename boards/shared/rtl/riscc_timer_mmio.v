@@ -33,40 +33,29 @@ module riscc_timer_mmio #(
     reg [DIV_BITS-1:0] div_q;
     reg [15:0] ticks_q;
     wire timer_sel = cpu_addr == TIMER_W;
-    wire write_fire;
-    wire [3:0] write_addr;
+    wire count_write;
     wire [15:0] write_data;
     generate
         if (PIPELINE_WRITES != 0) begin : g_pipeline_writes
             reg write_q;
-            reg [3:0] write_addr_q;
             reg [15:0] write_data_q;
             always @(posedge clk) begin
-                if (rst) begin
-                    write_q <= 1'b0;
-                    write_addr_q <= 4'h0;
-                    write_data_q <= 16'h0000;
-                end else begin
-                    write_q <= cpu_we;
-                    write_addr_q <= cpu_addr;
-                    write_data_q <= cpu_wdata[15:0];
-                end
+                write_q <= !rst && cpu_we && timer_sel;
+                write_data_q <= cpu_wdata[15:0];
             end
-            assign write_fire = write_q;
-            assign write_addr = write_addr_q;
+            assign count_write = write_q;
             assign write_data = write_data_q;
         end else begin : g_direct_writes
-            assign write_fire = cpu_we;
-            assign write_addr = cpu_addr;
+            assign count_write = cpu_we && timer_sel;
             assign write_data = cpu_wdata[15:0];
         end
     endgenerate
-    wire count_write = write_fire && (write_addr == TIMER_W);
     wire tick_pulse = (TICK_DIV <= 1) || (div_q == {DIV_BITS{1'b0}});
     wire count_active = |count_q;
     wire count_last = count_q[0] && !(|count_q[15:1]);
 
-    assign cpu_rdata = timer_sel ? {{(DATA_WIDTH-16){1'b0}}, ticks_q} : {DATA_WIDTH{1'b0}};
+    assign cpu_rdata = timer_sel ? {{(DATA_WIDTH-16){1'b0}}, ticks_q} :
+                       {DATA_WIDTH{1'b0}};
     assign irq = pending_q;
 
     always @(posedge clk) begin

@@ -68,8 +68,10 @@ module riscc_sdram_scanout (
                 if (done_sync_q[next_bank] == request_q[next_bank]) begin
                     request_q[next_bank] <= ~request_q[next_bank];
                     requested_q[next_bank] <= 1'b1;
-                    if (next_bank) row1_q <= next_row;
-                    else row0_q <= next_row;
+                    if (next_bank)
+                        row1_q <= next_row;
+                    else
+                        row0_q <= next_row;
                 end
             end
         end
@@ -79,7 +81,8 @@ module riscc_sdram_scanout (
     (* async_reg = "true" *) reg [1:0] request_meta_q, request_sync_q;
     reg busy_q, issuing_q, fetch_bank_q, setup_q;
     reg [7:0] fetch_row_q;
-    reg [6:0] issued_q, word_q;
+    reg [6:0] word_q;
+    reg [2:0] block_q;
     reg [13:0] address_q;
     wire [7:0] fetch_row = (request_sync_q[0] != done_q[0]) ? row0_q : row1_q;
     assign memory_addr = {10'd0, address_q};
@@ -92,7 +95,7 @@ module riscc_sdram_scanout (
             done_q <= 0;
             busy_q <= 0;
             issuing_q <= 0;
-            issued_q <= 0;
+            block_q <= 0;
             fetch_bank_q <= 0;
             setup_q <= 0;
             fetch_row_q <= 0;
@@ -106,18 +109,22 @@ module riscc_sdram_scanout (
                 fetch_row_q <= fetch_row;
                 setup_q <= 1;
                 word_q <= 0;
-                issued_q <= 0;
+                block_q <= 0;
                 busy_q <= 1;
             end
-            // Separate mailbox selection from the row-address arithmetic.
+            // Begin the fetch after selecting the requested mailbox row.
             if (setup_q) begin
                 address_q <= ({6'd0, fetch_row_q} << 6) + ({6'd0, fetch_row_q} << 4);
                 setup_q <= 0;
                 issuing_q <= 1;
             end
             if (memory_stb && !memory_stall) begin
-                issued_q <= issued_q + 1'b1;
-                if (issued_q == 7'd79) issuing_q <= 0;
+                // The address already counts words within each 16-word block.
+                if (&address_q[3:0]) begin
+                    block_q <= block_q + 1'b1;
+                    if (block_q == 3'd4)
+                        issuing_q <= 0;
+                end
                 address_q <= address_q + 1'b1;
             end
             if (busy_q && memory_ack) begin

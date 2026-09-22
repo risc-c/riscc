@@ -34,8 +34,8 @@ module atum_a3_nano_soc #(
 );
     localparam [3:0] LED_W = 4'hc;  // byte 0xfffffff0
     localparam [1:0] RSEL_UNMAPPED = 2'd1;
-    localparam [1:0] RSEL_MMIO     = 2'd2;
-    localparam [1:0] RSEL_SDRAM    = 2'd3;
+    localparam [1:0] RSEL_MMIO    = 2'd2;
+    localparam [1:0] RSEL_SDRAM   = 2'd3;
 
     // All bus addresses are 32-bit word indices; masks select byte lanes.
     wire [29:0] mem_addr;
@@ -53,9 +53,9 @@ module atum_a3_nano_soc #(
     reg [31:0] fb_writes_q;
 `endif
 
-    // SDRAM is a flat cached region; only high MMIO bypasses the cache.
+    // SDRAM request selection for the external memory fabric.
     wire periph_region = &mem_addr[29:4];
-    wire sdram_sel = mem_addr[29:24] == 6'h04;
+    wire sdram_sel;
     reg sdram_pending_q;
     assign mem_stall = (sdram_pending_q && !sdram_ack) ||
                        (sdram_sel && sdram_stall);
@@ -74,9 +74,8 @@ module atum_a3_nano_soc #(
     end
     wire mmio_sel = periph_region && mem_addr[3];
     wire mem_accept = mem_cyc && mem_stb && !mem_stall && !rst;
-    // A request is accepted once, at the clock edge where CYC/STB are
-    // asserted.  The registered ACK and read data are consumed by the CPU
-    // on the following cycle.
+    // CYC/STB acceptance is sampled on the clock edge; registered MMIO ACK
+    // and read data are consumed by the CPU on the following cycle.
     wire cpu_write_commit = mem_accept && mem_we;
     // Palette entries are write-only 0x00RRGGBB words at 0xfffff800.
     assign palette_we = cpu_write_commit && (mem_addr[29:8] == 22'h3ffffe) &&
@@ -93,16 +92,18 @@ module atum_a3_nano_soc #(
 
     riscc_cached #(
         .XLEN(32),
+        .CACHE_ADDR_BITS(26),
+        .CACHE_BASE(32'h10000000),
         .SRAM_ADDR_BITS(14),
         .REGISTER_FETCH(1'b1),
         .SRAM_HEX(MEM_HEX),
-        // High MMIO is uncached; SDRAM uses the data cache.
         .RESET_PC(0)
     ) cpu (
         .clk(clk),
         .rst(rst),
         .irq(cpu_irq),
         .mem_addr(mem_addr),
+        .mem_cacheable(sdram_sel),
         .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata),
         .mem_wmask(mem_wmask),
@@ -113,9 +114,7 @@ module atum_a3_nano_soc #(
         .mem_ack(mem_ack_q || sdram_ack)
     );
 
-    // The MMIO read mux is synchronous. ACK is one cycle
-    // after request acceptance and may remain asserted for back-to-back
-    // accepted requests.
+    // Capture the selected source and MMIO read data for the response cycle.
     always @(posedge clk) begin
         if (rst)
             mem_ack_q <= 1'b0;

@@ -2,10 +2,10 @@
 //
 // This is deliberately self contained so it can be run without an image
 // builder. Each memory port accepts one request per clock and returns a
-// registered response on the following clock. +WAIT delays replies; +STALL
-// applies B4 backpressure. For instruction fetches, +ZERO responds on the
-// acceptance edge and +MIX alternates early and delayed replies with stalls.
-// Data replies always take at least one clock, matching SRAM and cache hits.
+// registered response at least one clock later. +WAIT delays replies; +STALL
+// applies request backpressure; +MIX alternates one-cycle and two-cycle replies
+// with stalls. A request may change while STALL is asserted, but the accepted
+// request and its ordered response must remain associated.
 
 `default_nettype none
 
@@ -47,7 +47,6 @@ module riscc_cached_pipeline_tb #(
     wire [31:0] dmem_rdata;
     wire [31:0] dmem_wdata;
     wire [3:0] dmem_wmask;
-    wire [3:0] dmem_rsel;
     wire dmem_we;
     wire dmem_cyc;
     wire dmem_stb;
@@ -63,15 +62,12 @@ module riscc_cached_pipeline_tb #(
     reg d_response_pending_q;
     reg [XLEN-3:0] d_response_addr_q;
     reg [31:0] d_response_data_q;
-    reg [3:0] d_response_sel_q;
     reg [2:0] d_response_wait_q;
     reg [31:0] cycle_q;
     reg wait_mode;
     reg stall_mode;
-    reg zero_mode;
     reg mix_mode;
-    reg ack_high_mode;
-    reg i_mix_early_q;
+    reg i_mix_fast_q;
     reg [31:0] test_case;
 
     reg done_seen_q;
@@ -100,18 +96,18 @@ module riscc_cached_pipeline_tb #(
     integer negative_not_taken;
     integer negative_taken;
     integer wanted_gap;
-    integer early_ack_count;
+    integer fast_response_count;
     integer ack_stall_count;
     integer stalled_count;
-    integer stable_stall_count;
+    integer data_stalled_count;
+    integer i_response_order_checks;
+    integer d_response_order_checks;
     integer i_response_drop_count;
     integer d_response_drop_count;
-    integer ack_idle_count;
     integer stream_data_accepts;
     integer stream_data_gap_errors;
     integer stream_last_accept_cycle;
-    wire strict_timing = !wait_mode && !stall_mode && !zero_mode &&
-                         !mix_mode && !ack_high_mode;
+    wire strict_timing = !wait_mode && !stall_mode && !mix_mode;
     integer irq_beat;
     integer data_beat_count;
     integer irq_take_count;
@@ -129,17 +125,6 @@ module riscc_cached_pipeline_tb #(
     localparam integer IRQ_MAIN_RETURN_PC = 12;
     localparam integer IRQ_SHIFT_RETURN_PC = 15;
     localparam integer IRQ_ALIAS_RETURN_PC = 16;
-    reg i_stall_seen_q;
-    reg [XLEN-2:0] i_stall_addr_q;
-    reg i_stall_cyc_q;
-    reg i_stall_stb_q;
-    reg d_stall_seen_q;
-    reg [XLEN-3:0] d_stall_addr_q;
-    reg [31:0] d_stall_wdata_q;
-    reg [3:0] d_stall_wmask_q;
-    reg d_stall_we_q;
-    reg d_stall_cyc_q;
-    reg d_stall_stb_q;
     reg i_response_drop_q;
     reg [15:0] i_last_response_data_q;
     reg d_response_drop_q;
@@ -157,8 +142,6 @@ module riscc_cached_pipeline_tb #(
         .imem_stall(imem_stall), .imem_ack(imem_ack),
         .dmem_addr(dmem_addr), .dmem_rdata(dmem_rdata),
         .dmem_wdata(dmem_wdata), .dmem_wmask(dmem_wmask),
-        // Retain the accepted byte mask until the data response ACK.
-        .dmem_rsel(dmem_rsel),
         .dmem_we(dmem_we), .dmem_cyc(dmem_cyc), .dmem_stb(dmem_stb),
         .dmem_stall(dmem_stall), .dmem_ack(dmem_ack)
     );
@@ -583,7 +566,7 @@ module riscc_cached_pipeline_tb #(
         end
     endtask
 
-    // Each Wishbone-style port is independently pipelined.  A command is
+    // Each private port is independently pipelined.  A command is
     // accepted only when STB and STALL permit it; a delayed response remains
     // associated with the one accepted command until ACK.
     wire i_stall_pattern = (cycle_q[2:0] == 3'd2) ||
@@ -595,10 +578,6 @@ module riscc_cached_pipeline_tb #(
     wire stream_d_accept = d_accept &&
                            dmem_addr >= STREAM_WORD &&
                            dmem_addr < STREAM_WORD + 16;
-    wire i_early_response = !i_response_pending_q && i_accept &&
-                             (zero_mode || ack_high_mode ||
-                              (mix_mode && i_mix_early_q));
-    wire i_live_read = i_early_response;
     wire [31:0] d_live_read;
     function automatic [31:0] read_word(input integer word_address);
         begin
@@ -616,20 +595,16 @@ module riscc_cached_pipeline_tb #(
                         ((d_response_pending_q &&
                           (d_response_wait_q == 3'd1)) ||
                          d_stall_pattern);
-    assign imem_ack = ack_high_mode ||
-                      (i_response_pending_q &&
-                       (i_response_wait_q == 3'd1)) ||
-                      i_early_response;
-    assign dmem_ack = ack_high_mode ||
-                      (d_response_pending_q && (d_response_wait_q == 3'd1));
+    assign imem_ack = i_response_pending_q &&
+                      (i_response_wait_q == 3'd1);
+    assign dmem_ack = d_response_pending_q &&
+                      (d_response_wait_q == 3'd1);
     // The registered-fetch core retains a fetched response while Decode or
     // Execute is occupied, so the memory model must keep its last response
     // value valid while the port is idle in that mode.
     assign imem_rdata = i_response_pending_q ? i_response_data_q :
-                        i_live_read ? mem[imem_addr] :
                         REGISTER_FETCH ? i_response_data_q : 16'hdead;
     assign dmem_rdata = d_response_pending_q ? d_response_data_q : 32'hdead_beef;
-    assign dmem_rsel = d_response_pending_q ? d_response_sel_q : dmem_wmask;
 
     // Instruction port model.
     always @(posedge clk) begin
@@ -638,17 +613,15 @@ module riscc_cached_pipeline_tb #(
             i_response_addr_q <= '0;
             i_response_data_q <= 16'h0;
             i_response_wait_q <= 3'd0;
-            i_mix_early_q <= 1'b1;
+            i_mix_fast_q <= 1'b1;
             i_accepted_count <= 0;
             i_response_count <= 0;
             i_response_drop_count <= 0;
-            early_ack_count <= 0;
+            fast_response_count <= 0;
             ack_stall_count <= 0;
             stalled_count <= 0;
-            stable_stall_count <= 0;
-            ack_idle_count <= 0;
+            i_response_order_checks <= 0;
             literal_reads <= 0;
-            i_stall_seen_q <= 1'b0;
             i_response_drop_q <= 1'b0;
             i_last_response_data_q <= 16'hdead;
         end else begin
@@ -660,16 +633,12 @@ module riscc_cached_pipeline_tb #(
                 i_response_addr_q <= imem_addr;
                 if (i_response_pending_q && imem_ack)
                     i_response_count <= i_response_count + 1;
-                if (i_early_response && !i_response_pending_q) begin
-                    i_response_pending_q <= 1'b0;
-                    i_response_wait_q <= 3'd0;
-                    i_response_count <= i_response_count + 1;
-                end else begin
-                    i_response_pending_q <= 1'b1;
-                    i_response_wait_q <= wait_mode ? 3'd2 : 3'd1;
-                end
+                i_response_pending_q <= 1'b1;
+                i_response_wait_q <= wait_mode ? 3'd2 :
+                                     mix_mode ? (i_mix_fast_q ? 3'd1 : 3'd2) :
+                                     3'd1;
                 if (mix_mode && !i_response_pending_q)
-                    i_mix_early_q <= ~i_mix_early_q;
+                    i_mix_fast_q <= ~i_mix_fast_q;
             end else if (i_response_pending_q && imem_ack) begin
                 i_response_pending_q <= 1'b0;
                 i_response_wait_q <= 3'd0;
@@ -680,34 +649,22 @@ module riscc_cached_pipeline_tb #(
             end else if (i_response_pending_q && i_response_wait_q > 1) begin
                 i_response_wait_q <= i_response_wait_q - 1'b1;
             end
-            if (i_early_response)
-                early_ack_count <= early_ack_count + 1;
-            if (dut.i_stalled_q && dut.i_pending_q)
-                fail("instruction stall state overlapped a pending response");
+            if (i_response_pending_q && imem_ack &&
+                i_response_wait_q == 3'd1)
+                fast_response_count <= fast_response_count + 1;
             if (i_response_pending_q && imem_ack && imem_stall &&
                 imem_cyc && imem_stb)
                 ack_stall_count <= ack_stall_count + 1;
             if (imem_stall && imem_cyc && imem_stb) begin
                 stalled_count <= stalled_count + 1;
-                if (i_stall_seen_q)
-                    stable_stall_count <= stable_stall_count + 1;
-                i_stall_seen_q <= 1'b1;
-                i_stall_addr_q <= imem_addr;
-            end else begin
-                i_stall_seen_q <= 1'b0;
             end
-            if (i_stall_seen_q &&
-                (i_stall_addr_q != imem_addr ||
-                 !imem_cyc || !imem_stb))
-                fail("instruction command changed before acceptance");
-            if (ack_high_mode && imem_ack && (!imem_cyc || !imem_stb))
-                ack_idle_count <= ack_idle_count + 1;
-            if (!ack_high_mode && imem_ack && !i_response_pending_q &&
-                !i_early_response)
+            if (imem_ack && !i_response_pending_q)
                 fail("instruction ACK without an accepted request");
-            if (!ack_high_mode && imem_ack && !i_response_pending_q &&
-                !i_accept)
-                fail("instruction early ACK without request acceptance");
+            if (i_response_pending_q && imem_ack) begin
+                if (imem_rdata !== i_response_data_q)
+                    fail("instruction response data changed after acceptance");
+                i_response_order_checks <= i_response_order_checks + 1;
+            end
             if (i_response_pending_q && !imem_cyc)
                 fail("instruction CYC dropped before response");
             if (i_accept && i_response_pending_q && !imem_ack)
@@ -728,12 +685,12 @@ module riscc_cached_pipeline_tb #(
             d_response_pending_q <= 1'b0;
             d_response_addr_q <= '0;
             d_response_data_q <= 32'h0;
-            d_response_sel_q <= 4'h0;
             d_response_wait_q <= 3'd0;
             d_accepted_count <= 0;
             d_response_count <= 0;
             d_response_drop_count <= 0;
-            d_stall_seen_q <= 1'b0;
+            d_response_order_checks <= 0;
+            data_stalled_count <= 0;
             d_response_drop_q <= 1'b0;
             d_last_response_data_q <= 32'hdead_beef;
             write_count <= 0;
@@ -745,7 +702,6 @@ module riscc_cached_pipeline_tb #(
                 d_accepted_count <= d_accepted_count + 1;
                 d_response_data_q <= d_live_read;
                 d_response_addr_q <= dmem_addr;
-                d_response_sel_q <= dmem_wmask;
                 if (d_response_pending_q && dmem_ack)
                     d_response_count <= d_response_count + 1;
                 // Cache and SRAM replies have a minimum latency of one clock.
@@ -782,21 +738,12 @@ module riscc_cached_pipeline_tb #(
                 stream_data_accepts <= stream_data_accepts + 1;
                 stream_last_accept_cycle <= cycle_q;
             end
-            if (d_stall_seen_q &&
-                (d_stall_addr_q != dmem_addr ||
-                 d_stall_wdata_q != dmem_wdata ||
-                 d_stall_wmask_q != dmem_wmask ||
-                 d_stall_we_q != dmem_we ||
-                 !dmem_cyc || !dmem_stb))
-                fail("data command changed before acceptance");
-            if (dmem_stall && dmem_cyc && dmem_stb) begin
-                d_stall_seen_q <= 1'b1;
-                d_stall_addr_q <= dmem_addr;
-                d_stall_wdata_q <= dmem_wdata;
-                d_stall_wmask_q <= dmem_wmask;
-                d_stall_we_q <= dmem_we;
-            end else begin
-                d_stall_seen_q <= 1'b0;
+            if (dmem_stall && dmem_cyc && dmem_stb)
+                data_stalled_count <= data_stalled_count + 1;
+            if (d_response_pending_q && dmem_ack) begin
+                if (dmem_rdata !== d_response_data_q)
+                    fail("data response changed after acceptance");
+                d_response_order_checks <= d_response_order_checks + 1;
             end
             if (d_response_pending_q && !dmem_cyc)
                 fail("data CYC dropped before response");
@@ -1062,15 +1009,11 @@ module riscc_cached_pipeline_tb #(
                     mem[(STREAM_BYTE >> 1) + 22] !== 16'h0033 ||
                     mem[(STREAM_BYTE >> 1) + 23] !== 16'h0000)
                     fail("independent load/store stream final values mismatch");
-                if (zero_mode && max_commit_run < 4)
-                    fail("same-cycle ACK did not sustain simple-op IPC");
             end else if (test_case == 1) begin
                 if (mem[RESULT_HALF] !== 16'h0022)
                     fail("dependent ALU forwarding result mismatch");
                 if (simple_gap_errors != 0)
                     fail("dependent ALU stream did not sustain one IPC");
-                if (zero_mode && max_commit_run < 4)
-                    fail("same-cycle ACK did not sustain dependent-op IPC");
             end else if (test_case == 3) begin
                 if (mem[RESULT_HALF] !== 16'h0008 ||
                     (XLEN == 32 && mem[RESULT_HALF + 1] !== 16'h0000))
@@ -1107,8 +1050,6 @@ module riscc_cached_pipeline_tb #(
                 if (mem[RESULT_HALF] !== 16'h0040 ||
                     mem[RESULT_HALF + 2] !== 16'h0008)
                     fail("shift or multiply result mismatch");
-                if (test_case == 6 && ack_high_mode && !ack_idle_count)
-                    fail("ACK_HIGH did not remain asserted while idle");
             end else if (test_case == 7 || test_case == 9) begin
                 if (mem[RESULT_HALF] !== 16'h0002 ||
                     mem[RESULT_HALF + 2] !== 16'h0001)
@@ -1191,13 +1132,13 @@ module riscc_cached_pipeline_tb #(
                 if (memory_gap_errors != 0)
                     fail("memory transaction latency did not match the contract");
             end
-            $display("PASS CASE %0d XLEN=%0d cycles=%0d commits=%0d max_ipc_run=%0d accepts=%0d responses=%0d early_acks=%0d ack_stalls=%0d stalls=%0d stable_stalls=%0d response_drops=%0d ack_idle=%0d",
+            $display("PASS CASE %0d XLEN=%0d cycles=%0d commits=%0d max_ipc_run=%0d accepts=%0d responses=%0d fast_responses=%0d ack_stalls=%0d stalls=%0d response_order=%0d response_drops=%0d",
                      test_case, XLEN, cycle_q, commit_count, max_commit_run,
                      i_accepted_count + d_accepted_count,
-                     i_response_count + d_response_count, early_ack_count,
-                     ack_stall_count, stalled_count, stable_stall_count,
-                     i_response_drop_count + d_response_drop_count,
-                     ack_idle_count);
+                     i_response_count + d_response_count, fast_response_count,
+                     ack_stall_count, stalled_count + data_stalled_count,
+                     i_response_order_checks + d_response_order_checks,
+                     i_response_drop_count + d_response_drop_count);
             $finish(0);
         end
     endtask
@@ -1208,9 +1149,7 @@ module riscc_cached_pipeline_tb #(
         irq = 1'b0;
         wait_mode = $test$plusargs("WAIT");
         mix_mode = $test$plusargs("MIX");
-        ack_high_mode = $test$plusargs("ACK_HIGH");
         stall_mode = $test$plusargs("STALL") || mix_mode;
-        zero_mode = $test$plusargs("ZERO");
         if (!$value$plusargs("CASE=%d", test_case))
             test_case = 0;
         for (i = 0; i < MEM_WORDS; i = i + 1) begin
@@ -1242,18 +1181,16 @@ module riscc_cached_pipeline_tb #(
             irq_beat = 1;
         if (irq_beat != 1)
             fail("IRQ_BEAT must be 1 for the native-word data port");
-        i_stall_seen_q = 1'b0;
-        d_stall_seen_q = 1'b0;
         i_response_drop_q = 1'b0;
         d_response_drop_q = 1'b0;
-        early_ack_count = 0;
+        fast_response_count = 0;
         ack_stall_count = 0;
         stalled_count = 0;
-        stable_stall_count = 0;
+        i_response_order_checks = 0;
+        d_response_order_checks = 0;
         i_response_drop_count = 0;
         d_response_drop_count = 0;
-        ack_idle_count = 0;
-        i_mix_early_q = 1'b1;
+        i_mix_fast_q = 1'b1;
         i_last_response_data_q = 16'hdead;
         d_last_response_data_q = 32'hdead_beef;
         repeat (5) @(posedge clk);

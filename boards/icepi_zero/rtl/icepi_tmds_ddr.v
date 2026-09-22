@@ -17,7 +17,7 @@ module icepi_tmds_ddr (
     reg [23:0] rgb_q;
     reg hsync_q, vsync_q, de_q;
     always @(posedge pix_clk) begin
-        rgb_q <= {r,g,b};
+        rgb_q <= {r, g, b};
         hsync_q <= hsync;
         vsync_q <= vsync;
         de_q <= de;
@@ -50,8 +50,8 @@ module icepi_tmds_ddr (
         .out(red_code)
     );
 
-    // Two pixels form twenty serial bits: five four-bit transfers to the
-    // I/O gearing cells. Only those cells run at the 5x pixel edge clock.
+    // Two pixels form twenty serial bits: five four-bit transfers feed the
+    // I/O gearing cells, which run at the 5x pixel edge clock.
     wire serial_clk;
     wire edge_clk;
 `ifdef VERILATOR
@@ -88,7 +88,9 @@ module icepi_tmds_ddr (
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] pair_sync_q = 0;
     reg pair_seen_q = 0;
-    reg [19:0] red_shift_q = 0, green_shift_q = 0, blue_shift_q = 0;
+    reg [19:0] red_shift_q = 0,
+               green_shift_q = 0,
+               blue_shift_q = 0;
     reg [19:0] clock_shift_q = 20'b00000111110000011111;
     always @(posedge serial_clk) begin
         pair_sync_q <= {pair_sync_q[0], pair_toggle_q};
