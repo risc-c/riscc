@@ -51,11 +51,30 @@ module ODDRX2F (
 endmodule
 
 module tmds_serializer_tb #(
-    parameter real PHASE_NS = 0.0
+    parameter real PHASE_NS = 0.0,
+    parameter real PIXEL_JITTER_NS = 0.0
 );
     reg pix_clk = 1'b0;
     reg shift_clk = 1'b0;
-    always #5 pix_clk = ~pix_clk;
+    generate if (PIXEL_JITTER_NS == 0.0) begin : g_fixed_pixel
+        always #5 pix_clk = ~pix_clk;
+    end else begin : g_jittered_pixel
+        integer edge_number;
+        real previous_time, next_time;
+        initial begin
+            previous_time = 0.0;
+            for (edge_number = 0; edge_number < 10000;
+                 edge_number = edge_number + 1) begin
+                // Alternate the pair edge around a serial-clock sampling
+                // edge without changing the average pixel/serial ratio.
+                next_time = 4.0 + 10.0 * edge_number +
+                    ((edge_number % 4 < 2) ? PIXEL_JITTER_NS : -PIXEL_JITTER_NS);
+                #(next_time - previous_time) pix_clk = 1;
+                #4 pix_clk = 0;
+                previous_time = next_time + 4.0;
+            end
+        end
+    end endgenerate
     // Five edge-clock cycles per pixel. CLKDIVF creates the 2.5x serial clk.
     initial begin
         shift_clk = 1'b0;
@@ -72,6 +91,20 @@ module tmds_serializer_tb #(
         .r(r), .g(g), .b(b), .hsync(hsync), .vsync(vsync), .de(de),
         .tmds(tmds)
     );
+
+    reg [19:0] previous_clock;
+    integer clock_checks = 0;
+    always @(negedge dut.serial_clk or posedge rst) begin
+        if (rst) begin
+            clock_checks = 0;
+        end else begin
+            if (clock_checks > 50 && dut.clock_shift_q !==
+                    {previous_clock[3:0], previous_clock[19:4]})
+                $fatal(1, "forwarded TMDS clock changed cadence");
+            previous_clock = dut.clock_shift_q;
+            clock_checks = clock_checks + 1;
+        end
+    end
 
     function integer signed4(input integer value);
         integer reduced;
@@ -181,7 +214,7 @@ module tmds_serializer_tb #(
         end
     endfunction
 
-    integer start, offset, group;
+    integer start, offset, group, attempt;
     reg found;
     initial begin
         seed = 32'h13579bdf;
@@ -195,54 +228,58 @@ module tmds_serializer_tb #(
             reference_encode(input_g[i], expected_g[i], dg);
             reference_encode(input_b[i], expected_b[i], db);
         end
-        repeat (8) @(posedge pix_clk);
-        rst = 1'b0;
-        fork
-            feed_pixels();
-            capture_serial();
-        join
+        // Reacquire the pair phase after reset as well as at startup.
+        for (attempt = 0; attempt < 2; attempt = attempt + 1) begin
+            rst = 1'b1;
+            repeat (8) @(negedge pix_clk);
+            rst = 1'b0;
+            fork
+                feed_pixels();
+                capture_serial();
+            join
 
-        // Clock is the forwarded 20-bit pattern. Locate three complete
-        // transfers, then compare eight changing RGB word pairs.
-        found = 1'b0;
-        for (start = 20; start < SERIAL_CYCLES - 50 && !found; start = start + 1) begin
-            if (make_word(start, 3) == 20'b00000111110000011111 &&
-                make_word(start + 5, 3) == 20'b00000111110000011111 &&
-                make_word(start + 10, 3) == 20'b00000111110000011111) begin
-                for (offset = 0; offset < PIXELS - 18 && !found;
-                     offset = offset + 1) begin
-                    found = 1'b1;
-                    for (group = 0; group < 8; group = group + 1) begin
-                        if (make_word(start + group * 5, 0) !=
-                                {expected_r[offset + group * 2 + 1],
-                                 expected_r[offset + group * 2]} ||
-                            make_word(start + group * 5, 1) !=
-                                {expected_g[offset + group * 2 + 1],
-                                 expected_g[offset + group * 2]} ||
-                            make_word(start + group * 5, 2) !=
-                                {expected_b[offset + group * 2 + 1],
-                                 expected_b[offset + group * 2]})
-                            found = 1'b0;
+            // Clock is the forwarded 20-bit pattern. Locate three complete
+            // transfers, then compare eight changing RGB word pairs.
+            found = 1'b0;
+            for (start = 20; start < SERIAL_CYCLES - 50 && !found; start = start + 1) begin
+                if (make_word(start, 3) == 20'b00000111110000011111 &&
+                    make_word(start + 5, 3) == 20'b00000111110000011111 &&
+                    make_word(start + 10, 3) == 20'b00000111110000011111) begin
+                    for (offset = 0; offset < PIXELS - 18 && !found;
+                         offset = offset + 1) begin
+                        found = 1'b1;
+                        for (group = 0; group < 8; group = group + 1) begin
+                            if (make_word(start + group * 5, 0) !=
+                                    {expected_r[offset + group * 2 + 1],
+                                     expected_r[offset + group * 2]} ||
+                                make_word(start + group * 5, 1) !=
+                                    {expected_g[offset + group * 2 + 1],
+                                     expected_g[offset + group * 2]} ||
+                                make_word(start + group * 5, 2) !=
+                                    {expected_b[offset + group * 2 + 1],
+                                     expected_b[offset + group * 2]})
+                                found = 1'b0;
+                        end
                     end
                 end
             end
+            if (!found) begin
+                $display("expected pairs:");
+                for (i = 0; i < 8; i = i + 1)
+                    $display("e%0d r=%b g=%b b=%b", i,
+                             {expected_r[i * 2 + 1], expected_r[i * 2]},
+                             {expected_g[i * 2 + 1], expected_g[i * 2]},
+                             {expected_b[i * 2 + 1], expected_b[i * 2]});
+                for (i = 20; i < 30; i = i + 1)
+                    $display("serial %0d clock %b red %b", i, make_word(i, 3),
+                             make_word(i, 0));
+                $display("raw23 red %h %h %h %h %h", captured_r[23],
+                         captured_r[24], captured_r[25], captured_r[26],
+                         captured_r[27]);
+                $fatal(1, "could not reconstruct aligned 20-bit TMDS transfers");
+            end
+            $display("PASS TMDS serializer: 20-bit DDR words, forwarded clock alignment, changing RGB pairs");
         end
-        if (!found) begin
-            $display("expected pairs:");
-            for (i = 0; i < 8; i = i + 1)
-                $display("e%0d r=%b g=%b b=%b", i,
-                         {expected_r[i * 2 + 1], expected_r[i * 2]},
-                         {expected_g[i * 2 + 1], expected_g[i * 2]},
-                         {expected_b[i * 2 + 1], expected_b[i * 2]});
-            for (i = 20; i < 30; i = i + 1)
-                $display("serial %0d clock %b red %b", i, make_word(i, 3),
-                         make_word(i, 0));
-            $display("raw23 red %h %h %h %h %h", captured_r[23],
-                     captured_r[24], captured_r[25], captured_r[26],
-                     captured_r[27]);
-            $fatal(1, "could not reconstruct aligned 20-bit TMDS transfers");
-        end
-        $display("PASS TMDS serializer: 20-bit DDR words, forwarded clock alignment, changing RGB pairs");
         $finish;
     end
 

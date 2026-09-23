@@ -3,9 +3,24 @@ ctx.createRectangularRegion('command_queue', 12, 1, 23, 12)
 ctx.createRectangularRegion('command_payload', 12, 1, 25, 18)
 # EBRs occupy rows 25 and 37; keep the line buffer on the controller side.
 ctx.createRectangularRegion('line_buffer', 12, 20, 25, 26)
+# Keep load-result state alongside the boot RAM bank.
+ctx.createRectangularRegion('cpu_load', 12, 20, 33, 30)
+boot_bels = [f'X{x}/Y25/EBR{z}' for x, z in
+             ((15, 1), (17, 2), (19, 3), (22, 0), (24, 1), (26, 2), (28, 3), (33, 0))]
+cells = {name: cell for name, cell in ctx.cells}
+for index, bel in enumerate(boot_bels):
+    name = f'soc.cpu.g_sram.ram.0.{index}'
+    if name in cells:
+        ctx.bindBel(bel, cells[name], STRENGTH_USER)
 count = 0
 for name, cell in ctx.cells:
-    if name.startswith('memory.controller.') and any(part in name for part in (
+    # Anchor state and distributed RAM; let their combinational cones follow.
+    if cell.type == 'TRELLIS_COMB' and not any(
+            key == 'MODE' and str(value) == 'DPRAM' for key, value in cell.params):
+        continue
+    if name.startswith(('soc.cpu.cpu.regs.', 'soc.cpu.cpu.r0_zero_q')):
+        ctx.constrainCellToRegion(name, 'cpu_load')
+    elif name.startswith('memory.controller.') and any(part in name for part in (
         'head_hit', 'load_head', 'head_valid', 'lookup_valid', 'bank_safe',
         'lookup_addr', 'rows_q', 'open_q', 'run_ready', 'recovered', 'state_q',
         'delay_q', 'delay_done', 'head_same_direction', 'count_q', 'full_q',

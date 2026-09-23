@@ -826,6 +826,9 @@ module riscc_cached_pipe #(
         load_native ? dmem_rdata[31:16] : {16{load_sign}},
         load_byte ? {8{load_sign}} : load_half[15:8], accepted_load_byte};
     wire [XLEN-1:0] accepted_load_value = extended_load[XLEN-1:0];
+    // Zero depends only on the selected payload, not its sign extension.
+    wire load_zero = (XLEN == 32 && load_native) ? !(|dmem_rdata) :
+        load_byte ? !(|accepted_load_byte) : !(|load_half);
 `ifdef RISCC_FAST_SOFT_MUL
     wire [XLEN-1:0] mul_write_data = mul_step;
 `endif
@@ -894,7 +897,7 @@ module riscc_cached_pipe #(
     always @(posedge clk) begin
         if (rf_we && data_pending_q && !(|rf_waddr)) begin
             r0_negative_q <= accepted_load_value[XLEN-1];
-            r0_zero_q <= !(|accepted_load_value);
+            r0_zero_q <= load_zero;
         end
         if (flags_from_execute) begin
             r0_negative_q <= x_result[XLEN-1];

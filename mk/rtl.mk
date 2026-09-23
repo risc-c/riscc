@@ -36,7 +36,7 @@ $(PERIPHERAL_TB): test/peripheral_tb.cpp $(PERIPHERAL_RTL)
 .PHONY: test-uart-mmio test-peripherals
 test-uart-mmio:
 	@set -e; \
-	for div in 16 482 1736; do \
+	for div in 16 579 1736; do \
 	  for pipeline in 0 1; do \
 	    output=build/test/uart-mmio/div$${div}-pipeline$${pipeline}; \
 	    mkdir -p "$${output}"; \

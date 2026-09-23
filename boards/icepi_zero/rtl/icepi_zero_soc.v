@@ -5,8 +5,8 @@
 
 module icepi_zero_soc #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
-    parameter integer UART_CLK_DIV = 482,
-    parameter integer TIMER_TICK_DIV = 55556,
+    parameter integer UART_CLK_DIV = 579,
+    parameter integer TIMER_TICK_DIV = 66667,
     parameter integer PIPELINE_MMIO_WRITES = 0
 ) (
     input  wire        clk,

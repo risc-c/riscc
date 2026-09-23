@@ -1,4 +1,4 @@
-// IcePi clocks: 166 2/3 MHz SDRAM and 55 5/9 MHz CPU from 50 MHz.
+// IcePi clocks: 166 2/3 MHz SDRAM and 66 2/3 MHz CPU from 50 MHz.
 
 `default_nettype none
 
@@ -14,7 +14,7 @@ module icepi_sdram_pll (
     (* FREQUENCY_PIN_CLKI="50" *)
     (* FREQUENCY_PIN_CLKOP="166.667" *)
     (* FREQUENCY_PIN_CLKOS="166.667" *)
-    (* FREQUENCY_PIN_CLKOS2="55.555556" *)
+    (* FREQUENCY_PIN_CLKOS2="66.666667" *)
     (* ICP_CURRENT="12" *)
     (* LPF_RESISTOR="8" *)
     (* MFG_ENABLE_FILTEROPAMP="1" *)
@@ -39,7 +39,7 @@ module icepi_sdram_pll (
         .CLKOS_CPHASE(5),
         .CLKOS_FPHASE(2),
         .CLKOS2_ENABLE("ENABLED"),
-        .CLKOS2_DIV(12),
+        .CLKOS2_DIV(10),
         .CLKOS2_CPHASE(2),
         .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("CLKOP"),

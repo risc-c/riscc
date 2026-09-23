@@ -6,7 +6,7 @@
 module icepi_zero_soc_sim #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
     parameter integer UART_CLK_DIV = 8,
-    parameter integer TIMER_TICK_DIV = 55556
+    parameter integer TIMER_TICK_DIV = 66667
 ) (
     input  wire       clk,
     input  wire       pix_clk,

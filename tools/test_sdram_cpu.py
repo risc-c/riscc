@@ -35,7 +35,7 @@ def main():
     binary = (build / 'test.bin').read_bytes()
     binary += bytes((-len(binary)) % 4)
     (build / 'test.memh').write_text(''.join(f'{int.from_bytes(binary[i:i+4], "little"):08x}\n' for i in range(0, len(binary), 4)))
-    for board, width, led, period in [('icepi_zero', 16, 5, 18),
+    for board, width, led, period in [('icepi_zero', 16, 5, 15),
                                       ('atum_a3_nano', 32, 4, 5),
                                       ('atum_a3_nano', 32, 4, 7)]:
         name = board + ('-async' if period == 7 else '')

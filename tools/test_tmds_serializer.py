@@ -28,13 +28,17 @@ def main() -> int:
         str(root / "test/tmds_serializer_tb.v"),
     ]
     # Exercise distinct phase relationships between the 5x edge clock and
-    # pixel clock, including the nominal phase and two fractional offsets.
-    for phase in (0.0, 0.35, 0.8):
-        tag = f"phase-{phase:.2f}"
+    # pixel clock, including fractional offsets and jitter across a sampling edge.
+    cases = [(phase, 0.0) for phase in
+             (0.0, 0.35, 0.8, 1.35, 1.8, 2.35, 2.8, 3.35, 3.8)]
+    cases.append((0.0, 0.1))
+    for phase, jitter in cases:
+        tag = f"phase-{phase:.2f}-jitter-{jitter:.2f}"
         vvp_file = build_dir / f"{tag}.vvp"
         compile_log = build_dir / f"{tag}-iverilog.log"
         command = [args.iverilog, "-g2012", "-s", "tmds_serializer_tb",
                    "-P", f"tmds_serializer_tb.PHASE_NS={phase}",
+                   "-P", f"tmds_serializer_tb.PIXEL_JITTER_NS={jitter}",
                    "-o", str(vvp_file)] + sources
         result = subprocess.run(command, cwd=root, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -55,7 +59,7 @@ def main() -> int:
             print(f"TMDS serializer {tag} test failed; see {run_log}",
                   file=sys.stderr)
             return 1
-    print("PASS TMDS serializer: all phase offsets")
+    print("PASS TMDS serializer: phase offsets and pixel-clock jitter")
     return 0
 
 

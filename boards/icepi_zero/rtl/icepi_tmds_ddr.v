@@ -88,23 +88,46 @@ module icepi_tmds_ddr (
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] pair_sync_q = 0;
     reg pair_seen_q = 0;
+    // Both clocks come from one PLL. Use the synchronized notification only
+    // to acquire the pair phase: resynchronizing every pair can shorten or
+    // lengthen the forwarded clock when an edge straddles the sampling clock.
+    // The forwarded clock ring also identifies the fifth quartet, avoiding
+    // a separate phase counter. Only that phase has both bits 0 and 2 low.
+    reg serial_started_q = 0;
     reg [19:0] red_shift_q = 0,
                green_shift_q = 0,
                blue_shift_q = 0;
     reg [19:0] clock_shift_q = 20'b00000111110000011111;
+    wire load_pair = (!serial_started_q && pair_sync_q[1] != pair_seen_q) ||
+                     (serial_started_q && !clock_shift_q[0] && !clock_shift_q[2]);
+    // Reset the phase even while CLKDIVF holds serial_clk stopped. The RGB
+    // shifts need no reset: the first load replaces all their bits together.
+    always @(posedge serial_clk or posedge rst) begin
+        if (rst) begin
+            pair_sync_q <= 0;
+            pair_seen_q <= 0;
+            serial_started_q <= 0;
+            clock_shift_q <= 20'b00000111110000011111;
+        end else begin
+            pair_sync_q <= {pair_sync_q[0], pair_toggle_q};
+            pair_seen_q <= pair_sync_q[1];
+            if (load_pair) begin
+                serial_started_q <= 1;
+                clock_shift_q <= 20'b00000111110000011111;
+            end else begin
+                clock_shift_q <= {clock_shift_q[3:0], clock_shift_q[19:4]};
+            end
+        end
+    end
     always @(posedge serial_clk) begin
-        pair_sync_q <= {pair_sync_q[0], pair_toggle_q};
-        pair_seen_q <= pair_sync_q[1];
-        if (pair_sync_q[1] != pair_seen_q) begin
+        if (load_pair) begin
             red_shift_q <= pair_q[59:40];
             green_shift_q <= pair_q[39:20];
             blue_shift_q <= pair_q[19:0];
-            clock_shift_q <= 20'b00000111110000011111;
         end else begin
             red_shift_q <= {red_shift_q[3:0], red_shift_q[19:4]};
             green_shift_q <= {green_shift_q[3:0], green_shift_q[19:4]};
             blue_shift_q <= {blue_shift_q[3:0], blue_shift_q[19:4]};
-            clock_shift_q <= {clock_shift_q[3:0], clock_shift_q[19:4]};
         end
     end
 

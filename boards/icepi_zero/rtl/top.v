@@ -60,8 +60,8 @@ module top #(
     wire [23:0] palette_wdata;
     icepi_zero_soc #(
         .MEM_HEX(MEM_HEX),
-        .UART_CLK_DIV(482),
-        .TIMER_TICK_DIV(55556),
+        .UART_CLK_DIV(579),
+        .TIMER_TICK_DIV(66667),
         .PIPELINE_MMIO_WRITES(1)
     ) soc (
         .palette_we(palette_we),

@@ -182,7 +182,7 @@ $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 icepi-zero-demo-bin: $(ICEPI_BIN) $(ICEPI_MEMH)
 
 icepi-zero-demo-iss: $(ICEPI_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-icepi --fb-window --mhz 55.555556 --max-insns 0
+	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-icepi --fb-window --mhz 66.666667 --max-insns 0
 
 icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@mkdir -p build/icepi_zero
