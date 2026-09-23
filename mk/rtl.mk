@@ -553,18 +553,21 @@ bench-rc32: bench-fast32 $(foreach width,$(WIDTHS),build/test/rc32/full/$(width)
 cached_family = $(if $(filter 32,$(1)),cached32,cached)
 
 # Native 32-bit backing SRAM, shared with the assembly benchmark runner.
-cached_bench_tb = build/split-cache/bench/$(1)-$(2)-$(3)-cache/Vriscc_cached_bench_tb
+cached_bench_tb = build/split-cache/bench/$(1)-$(2)-$(3)-$(if $(4),$(4),cache)/Vriscc_cached_bench_tb
 define CACHED_BENCH
-$(call cached_bench_tb,$(1),$(2),$(3)): rtl/riscc_fast.v rtl/riscc_cached.v \
+$(call cached_bench_tb,$(1),$(2),$(3),$(4)): rtl/riscc_fast.v rtl/riscc_cached.v \
 		test/riscc_cached_bench_tb.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) --binary --timing $$(VERILATOR_MAKEFLAGS_ARG) \
-	  --top-module riscc_cached_bench_tb -GXLEN=$(1) -GCACHED=1 --Mdir $$(@D) \
+	  --top-module riscc_cached_bench_tb -GXLEN=$(1) \
+	  -GCACHED=$(if $(filter sram,$(4)),0,1) \
+	  -GREGISTER_FETCH=$(if $(filter sram,$(4)),1,0) --Mdir $$(@D) \
 	  $$(FAST_MEMORY_DEFINES_$(3)) $$(FAST_DEFINES_$(2)) \
 	  rtl/riscc_fast.v rtl/riscc_cached.v test/riscc_cached_bench_tb.v
 endef
 $(foreach xlen,16 32,$(foreach multiplier,$(MULTIPLIERS),$(foreach memory,$(FAST_MEMORIES), \
-	$(eval $(call CACHED_BENCH,$(xlen),$(multiplier),$(memory))))))
+	$(foreach source,cache sram, \
+	  $(eval $(call CACHED_BENCH,$(xlen),$(multiplier),$(memory),$(source)))))))
 
 define CACHED_TEST
 build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v rtl/riscc_cached.v rtl/test/riscc_cached_test_top.v $(RTL_RULES)

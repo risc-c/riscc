@@ -47,14 +47,14 @@ long double copysignl(long double magnitude, long double sign)
 
 static uint32_t trunc_float_bits(riscc_float_shape shape)
 {
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t unbiased;
-    uint16_t shift;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int unbiased;
+    unsigned int shift;
     uint32_t mask;
 
     if (exponent == 0xff)
         return shape.bits;
-    unbiased = (int16_t)exponent - 127;
+    unbiased = (int)exponent - 127;
     if (unbiased < 0)
     {
         shape.word[0] = 0;
@@ -68,12 +68,12 @@ static uint32_t trunc_float_bits(riscc_float_shape shape)
     return shape.bits & ~mask;
 }
 
-static int16_t truncate_double(riscc_double_shape *shape)
+static int truncate_double(riscc_double_shape *shape)
 {
-    uint16_t exponent = (shape->word[3] >> 4) & 0x7ff;
-    int16_t remaining = (int16_t)exponent - 1023;
-    int16_t changed = 0;
-    int16_t index;
+    unsigned int exponent = (shape->word[3] >> 4) & 0x7ff;
+    int remaining = (int)exponent - 1023;
+    int changed = 0;
+    int index;
 
     if (exponent == 0x7ff)
         return 0;
@@ -132,9 +132,9 @@ static int16_t truncate_double(riscc_double_shape *shape)
     return changed;
 }
 
-static void increment_double(riscc_double_shape *shape, uint16_t bit)
+static void increment_double(riscc_double_shape *shape, unsigned int bit)
 {
-    uint16_t index = bit / 16;
+    unsigned int index = bit / 16;
     uint16_t addend = UINT16_C(1) << (bit % 16);
     uint16_t previous = shape->word[index];
 
@@ -169,8 +169,8 @@ float floorf(float value)
 {
     riscc_float_shape shape = {value};
     uint32_t integral = trunc_float_bits(shape);
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t unbiased = (int16_t)exponent - 127;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int unbiased = (int)exponent - 127;
 
     if (exponent == 0xff || integral == shape.bits)
         return value;
@@ -189,8 +189,8 @@ float floorf(float value)
 double floor(double value)
 {
     riscc_double_shape shape = {value};
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
-    int16_t unbiased = (int16_t)exponent - 1023;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
+    int unbiased = (int)exponent - 1023;
 
     if (!truncate_double(&shape))
         return value;
@@ -217,8 +217,8 @@ float ceilf(float value)
 {
     riscc_float_shape shape = {value};
     uint32_t integral = trunc_float_bits(shape);
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t unbiased = (int16_t)exponent - 127;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int unbiased = (int)exponent - 127;
 
     if (exponent == 0xff || integral == shape.bits)
         return value;
@@ -237,8 +237,8 @@ float ceilf(float value)
 double ceil(double value)
 {
     riscc_double_shape shape = {value};
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
-    int16_t unbiased = (int16_t)exponent - 1023;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
+    int unbiased = (int)exponent - 1023;
 
     if (!truncate_double(&shape))
         return value;
@@ -266,9 +266,9 @@ float roundf(float value)
     riscc_float_shape shape = {value};
     uint16_t sign = shape.word[1] & UINT16_C(0x8000);
     uint32_t magnitude = shape.bits & UINT32_C(0x7fffffff);
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t unbiased = (int16_t)exponent - 127;
-    uint16_t shift;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int unbiased = (int)exponent - 127;
+    unsigned int shift;
     uint32_t mask;
 
     if (exponent == 0xff || unbiased >= 23)
@@ -299,10 +299,10 @@ double round(double value)
 {
     riscc_double_shape shape = {value};
     uint16_t sign = shape.word[3] & UINT16_C(0x8000);
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
-    int16_t unbiased = (int16_t)exponent - 1023;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
+    int unbiased = (int)exponent - 1023;
     uint16_t round_bit;
-    int16_t round_up;
+    int round_up;
 
     if (exponent == 0x7ff || unbiased >= 52)
         return value;

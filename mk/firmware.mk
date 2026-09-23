@@ -1,5 +1,13 @@
 FIRMWARE_RULES := Makefile mk/firmware.mk
 
+# Keep library variants separate so changing optimization cannot reuse stale
+# archives. The default retains the established compact-runtime paths.
+RISCC_LIB_OPT ?= -Oz
+ifeq ($(filter $(RISCC_LIB_OPT),-O0 -O1 -O2 -O3 -Os -Oz),)
+$(error RISCC_LIB_OPT must be -O0, -O1, -O2, -O3, -Os or -Oz)
+endif
+RISCC_RUNTIME_SUFFIX := $(if $(filter -Oz,$(RISCC_LIB_OPT)),,$(RISCC_LIB_OPT))
+
 RISCC_XLEN ?= 16
 ifeq ($(filter $(RISCC_XLEN),16 32),)
 $(error RISCC_XLEN must be 16 or 32)
@@ -8,7 +16,7 @@ ifeq ($(RISCC_XLEN),32)
 ifeq ($(PROFILE),nano)
 $(error RC32 has no Nano profile)
 endif
-RISCC_FIRMWARE_BUILD ?= build/firmware/rc32/$(PROFILE)
+RISCC_FIRMWARE_BUILD ?= build/firmware/rc32/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RISCC_ARCH := rc32
 RISCC_XLEN_FLAGS := -mrc32
 RISCC_SIM_XLEN_FLAGS := $(if $(filter full,$(PROFILE)),--rc32-full,\
@@ -18,11 +26,11 @@ RISCC_ARCH := rc16
 RISCC_XLEN_FLAGS :=
 RISCC_SIM_XLEN_FLAGS :=
 ifeq ($(PROFILE),nano)
-RISCC_FIRMWARE_BUILD ?= build/firmware/nano
+RISCC_FIRMWARE_BUILD ?= build/firmware/nano$(RISCC_RUNTIME_SUFFIX)
 RISCC_STARTUP_ARCH := nano
 RISCC_LINKER_SCRIPT := firmware/nano/unified.ld
 else
-RISCC_FIRMWARE_BUILD ?= build/firmware/rc16/$(PROFILE)
+RISCC_FIRMWARE_BUILD ?= build/firmware/rc16/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RISCC_STARTUP_ARCH := rc16
 RISCC_LINKER_SCRIPT := firmware/rc16/unified.ld
 endif
@@ -38,13 +46,14 @@ SIM_PROFILE_FLAGS := $(SIM_FLAGS_$(PROFILE)) \
 	$(RISCC_SIM_XLEN_FLAGS) \
 	$(patsubst mdu,--mdu,$(filter mdu,$(RISCC_TARGET_FEATURES)))
 RISCC_ASFLAGS ?= -ffreestanding
-RISCC_CFLAGS ?= -Os -ffreestanding -fno-builtin -fno-pic -fno-pie \
+RISCC_CFLAGS ?= $(if $(filter nano min,$(PROFILE)),-Oz,-Os) -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections
 RISCC_CXXFLAGS ?= $(RISCC_CFLAGS) -std=c++17 -fno-exceptions -fno-rtti \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -nostdinc++
-# Runtime archives are size-biased; applications keep their chosen level.
-LIB_CFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) -Oz
+# Prevent library calls from becoming recursive builtins. Library optimization
+# is explicit and independent of the application's optimization level.
+LIB_CFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) $(RISCC_LIB_OPT) -ffreestanding -fno-builtin
 # Discard unused sections from extracted archive members.
 RISCC_LDFLAGS ?= -Wl,--gc-sections
 
@@ -159,9 +168,9 @@ $(IRQ_OBJS): $(RISCC_FIRMWARE_BUILD)/irq/%.o: \
 
 $(INTEGER_C_OBJS): \
 		$(RISCC_FIRMWARE_BUILD)/builtins/%.o: \
-		$(INTEGER_SOURCE_DIR)/%.c $(RISCC_CLANG)
+		$(INTEGER_SOURCE_DIR)/%.c $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_CFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_CFLAGS) -c $< -o $@
 
 $(INTEGER_ASM_OBJS): \
 		$(RISCC_FIRMWARE_BUILD)/builtins/%.o: \
@@ -219,6 +228,8 @@ $(LIBM_ARCH_ASM_OBJS): \
 		firmware/$(RISCC_ARCH)/%.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+
+$(addprefix $(RISCC_FIRMWARE_BUILD)/libc/,memory.o string.o): firmware/libc/word.h
 
 $(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o: firmware/libc/heap.S \
 		$(FIRMWARE_RULES) $(RISCC_CLANG)

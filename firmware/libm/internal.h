@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-#define RISCC_MATH_WORDS 4
+#define RISCC_MATH_WORDS (8 / sizeof(unsigned int))
+#define RISCC_MATH_FLOAT_WORDS (4 / sizeof(unsigned int))
 
 typedef union
 {
@@ -16,24 +17,25 @@ typedef union
 {
     double value;
     uint64_t bits;
-    uint16_t word[RISCC_MATH_WORDS];
+    uint16_t word[4];
 } riscc_double_shape;
 
-typedef struct
+typedef union
 {
-    /* Little-endian limbs: word[0] is the least-significant 16 bits. */
-    uint16_t word[RISCC_MATH_WORDS];
+    /* Fixed 16-bit views for IEEE fields; native limbs for arithmetic. */
+    uint16_t word[4];
+    unsigned int limb[RISCC_MATH_WORDS];
 } riscc_math_uint;
 
-int16_t __riscc_math_compare(const riscc_math_uint *left,
-    const riscc_math_uint *right, uint16_t words);
-int16_t __riscc_math_is_zero(
-    const riscc_math_uint *value, uint16_t words);
-void __riscc_math_increment(riscc_math_uint *value, uint16_t words);
-void __riscc_math_shift_left_one(riscc_math_uint *value, uint16_t words);
-void __riscc_math_shift_left_two(riscc_math_uint *value, uint16_t words);
-void __riscc_math_shift_right_one(riscc_math_uint *value, uint16_t words);
+int __riscc_math_compare(const riscc_math_uint *left,
+    const riscc_math_uint *right, unsigned int words);
+int __riscc_math_is_zero(
+    const riscc_math_uint *value, unsigned int words);
+void __riscc_math_increment(riscc_math_uint *value, unsigned int words);
+void __riscc_math_shift_left_one(riscc_math_uint *value, unsigned int words);
+void __riscc_math_shift_left_two(riscc_math_uint *value, unsigned int words);
+void __riscc_math_shift_right_one(riscc_math_uint *value, unsigned int words);
 void __riscc_math_subtract(
-    riscc_math_uint *left, const riscc_math_uint *right, uint16_t words);
+    riscc_math_uint *left, const riscc_math_uint *right, unsigned int words);
 
 #endif

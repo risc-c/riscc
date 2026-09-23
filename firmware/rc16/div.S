@@ -1,10 +1,8 @@
 /*
  * Hot RC16 unsigned integer divide and remainder entry points.
  *
- * The C implementation's branchless selection is compact at source level but
- * spills several live values around every quotient bit.  These leaf loops keep
- * the complete divide in registers.  Mainline uses FSL1 to feed the numerator
- * into the remainder; Nano expands that operation locally.
+ * Native division aligns the divisor and visits only useful quotient bits.
+ * Wider restoring loops use FSL1; Nano expands that operation locally.
  */
 
 #ifdef __RISCC_NANO__
@@ -125,18 +123,87 @@
 #endif
         .endm
 
-        .macro FUNCTION name
+        .macro FUNCTION name, native=0
         .section .text.\name,"ax",@progbits
         .p2align 1
         .global \name
         .hidden \name
         .type \name,@function
 \name:
+        .if \native
+#ifndef __RISCC_MDU__
+#ifdef __RISCC_NANO__
+        NANO_SAVE
+        SAVE_R5
+#else
+        MTS     s2, r4
+        MTS     s3, r5
+#endif
+#endif
+        .else
 #ifdef __RISCC_NANO__
         NANO_SAVE
 #else
         ABI_SAVE
 #endif
+        .endif
+        .endm
+
+        // Native helpers need only two preserved GPRs; wider helpers retain
+        // their existing scratch frame. Hardware division uses neither GPR.
+        .macro NATIVE_RETURN
+#ifndef __RISCC_MDU__
+#ifdef __RISCC_NANO__
+        RESTORE_R5
+        NANO_RETURN
+#else
+        MFS     r4, s2
+        MFS     r5, s3
+        RET     s7
+#endif
+#else
+        RET     s7
+#endif
+        .endm
+
+        // Inputs: r1 numerator, r2 divisor. Outputs: r4 quotient, r1 remainder.
+        // Testing divisor <= numerator/2 before doubling prevents overflow,
+        // including divisors with their top bit set. Zero division returns
+        // quotient zero and the original numerator as remainder.
+        .macro DIVIDE_NATIVE
+        LDI     r4, 0
+        MOV     r0, r2
+        BEQZ    .Lnative_done\@
+        SLTU    r0, r1, r2
+        BNEZ    .Lnative_done\@
+        LDI     r0, 1
+        SUB     r0, r2, r0
+        BEQZ    .Lnative_one\@
+        MOV     r3, r1
+        SRLI    r3, r3, 1
+        LDI     r5, 1
+        SLTU    r0, r3, r2
+        BNEZ    .Lnative_loop\@
+.Lnative_align\@:
+        ADD     r2, r2, r2
+        ADD     r5, r5, r5
+        SLTU    r0, r3, r2
+        BEQZ    .Lnative_align\@
+.Lnative_loop\@:
+        SLTU    r0, r1, r2
+        BNEZ    .Lnative_keep\@
+        SUB     r1, r1, r2
+        OR      r4, r4, r5
+.Lnative_keep\@:
+        SRLI    r5, r5, 1
+        SRLI    r2, r2, 1
+        MOV     r0, r5
+        BNEZ    .Lnative_loop\@
+        JMP8    .Lnative_done\@
+.Lnative_one\@:
+        MOV     r4, r1
+        LDI     r1, 0
+.Lnative_done\@:
         .endm
 
         .macro SIGN_BIT source
@@ -150,58 +217,23 @@
 #endif
         .endm
 
-        FUNCTION __udivhi3
+        FUNCTION __udivhi3, 1
 #ifdef __RISCC_MDU__
-        /* DIVU takes remainder:quotient in r3:r1 and leaves r1 as quotient. */
         MOV     r0, r2
         BEQZ    .Ludiv_mdu_zero
         LDI     r3, 0
         DIVU    r3, r1, r2
-        DIV_RETURN
+        NATIVE_RETURN
 .Ludiv_mdu_zero:
         LDI     r1, 0
-        DIV_RETURN
 #else
-        SAVE_R5
-        LDI     r4, 0                  /* quotient */
-        MOV     r0, r2
-        BEQZ    .Ludiv_done
-        LDI     r3, 0                  /* remainder */
-        LDI     r5, 16
-.Ludiv_loop:
-#ifdef __RISCC_NANO__
-        SIGN_BIT r1
-        ADD     r3, r3, r3
-        OR      r3, r3, r0
-        ADD     r1, r1, r1
-#else
-        FSL1    r3, r1
-        ADD     r1, r1, r1
-#endif
-        /*
-         * Before the final input bit, the partial numerator is at most
-         * 0x7fff, so remainder << 1 cannot overflow a 16-bit register.
-         */
-        MOV     r0, r3
-        SLTU    r0, r0, r2
-        BNEZ    .Ludiv_keep
-.Ludiv_subtract:
-        SUB     r3, r3, r2
-        ADDI    r4, 1
-.Ludiv_keep:
-        ADDI    r5, -1
-        MOV     r0, r5
-        BEQZ    .Ludiv_done
-        ADD     r4, r4, r4
-        JMP8    .Ludiv_loop
-.Ludiv_done:
+        DIVIDE_NATIVE
         MOV     r1, r4
-        RESTORE_R5
-        DIV_RETURN
 #endif
+        NATIVE_RETURN
         .size __udivhi3, . - __udivhi3
 
-        FUNCTION __umodhi3
+        FUNCTION __umodhi3, 1
 #ifdef __RISCC_MDU__
         MOV     r0, r2
         BEQZ    .Lumod_mdu_done
@@ -209,43 +241,19 @@
         DIVU    r3, r1, r2
         MOV     r1, r3
 .Lumod_mdu_done:
-        DIV_RETURN
 #else
-        SAVE_R5
-        MOV     r0, r2
-        BEQZ    .Lumod_done
-        LDI     r3, 0                  /* remainder */
-        LDI     r5, 16
-.Lumod_loop:
-#ifdef __RISCC_NANO__
-        SIGN_BIT r1
-        ADD     r3, r3, r3
-        OR      r3, r3, r0
-        ADD     r1, r1, r1
-#else
-        FSL1    r3, r1
-        ADD     r1, r1, r1
+        DIVIDE_NATIVE
 #endif
-        MOV     r0, r3
-        SLTU    r0, r0, r2
-        BNEZ    .Lumod_keep
-.Lumod_subtract:
-        SUB     r3, r3, r2
-.Lumod_keep:
-        ADDI    r5, -1
-        MOV     r0, r5
-        BNEZ    .Lumod_loop
-        MOV     r1, r3
-.Lumod_done:
-        RESTORE_R5
-        DIV_RETURN
-#endif
+        NATIVE_RETURN
         .size __umodhi3, . - __umodhi3
 
-        FUNCTION __udivmodhi4
-#ifdef __RISCC_MDU__
-        /* Preserve the ABI remainder pointer while r3 becomes DIVU's rr. */
+        FUNCTION __udivmodhi4, 1
+#ifdef __RISCC_NANO__
+        ST      r3, [r7 - 4]
+#else
         MTS     s4, r3
+#endif
+#ifdef __RISCC_MDU__
         MOV     r0, r2
         BEQZ    .Ludivmodhi_mdu_zero
         LDI     r3, 0
@@ -257,57 +265,21 @@
 .Ludivmodhi_mdu_store:
         MFS     r0, s4
         BEQZ    .Ludivmodhi_mdu_done
-        ST     r3, [r0 + 0]
+        ST      r3, [r0 + 0]
 .Ludivmodhi_mdu_done:
-        DIV_RETURN
 #else
-        SAVE_R5
+        DIVIDE_NATIVE
 #ifdef __RISCC_NANO__
-        ST     r3, [r7 - 4]
-#else
-        MTS     s4, r3
-#endif
-        LDI     r4, 0                   /* quotient */
-        MOV     r0, r2
-        BEQZ    .Ludivmodhi_zero
-        LDI     r3, 0                   /* remainder */
-        LDI     r5, 16
-.Ludivmodhi_loop:
-#ifdef __RISCC_NANO__
-        SIGN_BIT r1
-        ADD     r3, r3, r3
-        OR      r3, r3, r0
-        ADD     r1, r1, r1
-#else
-        FSL1    r3, r1
-        ADD     r1, r1, r1
-#endif
-        MOV     r0, r3
-        SLTU    r0, r0, r2
-        BNEZ    .Ludivmodhi_keep
-        SUB     r3, r3, r2
-        ADDI    r4, 1
-.Ludivmodhi_keep:
-        ADDI    r5, -1
-        MOV     r0, r5
-        BEQZ    .Ludivmodhi_store
-        ADD     r4, r4, r4
-        JMP8    .Ludivmodhi_loop
-.Ludivmodhi_zero:
-        MOV     r3, r1
-.Ludivmodhi_store:
-#ifdef __RISCC_NANO__
-        LD     r0, [r7 - 4]
+        LD      r0, [r7 - 4]
 #else
         MFS     r0, s4
 #endif
         BEQZ    .Ludivmodhi_no_store
-        ST     r3, [r0 + 0]
+        ST      r1, [r0 + 0]
 .Ludivmodhi_no_store:
         MOV     r1, r4
-        RESTORE_R5
-        DIV_RETURN
 #endif
+        NATIVE_RETURN
         .size __udivmodhi4, . - __udivmodhi4
 
 /*

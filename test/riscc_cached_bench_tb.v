@@ -2,7 +2,8 @@
 `default_nettype none
 module riscc_cached_bench_tb #(
     parameter integer XLEN = 16,
-    parameter integer CACHED = 1
+    parameter integer CACHED = 1,
+    parameter integer REGISTER_FETCH = 0
 );
     reg clk = 0;
     always #5 clk = !clk;
@@ -10,7 +11,10 @@ module riscc_cached_bench_tb #(
     reg [15:0] memory [0:32767];
     string image_path;
     integer n, cycles = 0, commits = 0, reads = 0, writes = 0;
+    integer i_refills = 0, d_refills = 0;
+    wire i_refill, d_refill;
     integer max_cycles;
+    integer report_write;
     wire [XLEN-3:0] addr;
     wire [31:0] wdata;
     wire [3:0] sel;
@@ -24,7 +28,7 @@ module riscc_cached_bench_tb #(
     reg i_ack = 0;
     reg [15:0] i_rdata = 0;
     generate if (CACHED != 0) begin : cached
-        riscc_cached #(.XLEN(XLEN)) dut (
+        riscc_cached #(.XLEN(XLEN), .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
             .clk(clk), .rst(rst), .irq(1'b0),
             .mem_cacheable(), .mem_addr(addr), .mem_wdata(wdata), .mem_wmask(sel), .mem_we(we),
             .mem_rdata(rdata), .mem_cyc(cyc), .mem_stb(stb), .mem_stall(1'b0), .mem_ack(ack)
@@ -36,8 +40,12 @@ module riscc_cached_bench_tb #(
         assign i_addr = 0;
         assign i_cyc = 0;
         assign i_stb = 0;
+        assign i_refill = dut.icache.refill_accept && dut.icache.refill_addr_beat == 0;
+        assign d_refill = dut.dcache.refill_accept && dut.dcache.refill_addr_beat == 0;
     end else begin : direct
-        riscc_cached_pipe #(.XLEN(XLEN)) dut (
+        // Direct SRAM has the same held, one-clock replies as the board SRAM.
+        riscc_cached_pipe #(.XLEN(XLEN), .FETCH_RESPONSE_HELD(1),
+                            .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
             .clk(clk), .rst(rst), .irq(1'b0),
             .imem_addr(i_addr), .imem_rdata(i_rdata), .imem_cyc(i_cyc),
             .imem_stb(i_stb), .imem_stall(1'b0), .imem_ack(i_ack),
@@ -47,12 +55,15 @@ module riscc_cached_bench_tb #(
         assign commit = dut.commit_valid;
         assign result_issued = cyc && stb && we && addr[13:0] == 14'h3fff &&
             (&sel[3:2]);
+        assign i_refill = 1'b0;
+        assign d_refill = 1'b0;
     end endgenerate
     initial begin
         for (n=0; n<32768; n=n+1) memory[n] = 0;
         if (!$value$plusargs("IMAGE=%s", image_path)) $fatal(1, "missing +IMAGE");
         if (!$value$plusargs("MAX_CYCLES=%d", max_cycles)) max_cycles = 100000;
         if (max_cycles <= 0) $fatal(1, "MAX_CYCLES must be positive");
+        if (!$value$plusargs("REPORT_WRITE=%h", report_write)) report_write = -1;
         $readmemh(image_path, memory);
     end
     always @(negedge clk) if (cycles == 4) rst = 0;
@@ -67,18 +78,24 @@ module riscc_cached_bench_tb #(
         // Count the workload before its terminal result store and spin.
         if (!rst && result_issued) result_issued_q <= 1;
         if (!rst && commit && !result_issued_q && !result_issued) commits <= commits + 1;
+        if (!rst && i_refill) i_refills <= i_refills + 1;
+        if (!rst && d_refill) d_refills <= d_refills + 1;
         if (!rst && i_cyc && i_stb) i_rdata <= memory[i_addr & 32767];
         if (!rst && cyc && stb) begin
             rdata <= {memory[{addr[13:0], 1'b1}], memory[{addr[13:0], 1'b0}]};
             if (we) begin
                 writes <= writes + 1;
+                if (report_write >= 0 && addr == report_write[XLEN-1:2] &&
+                    (report_write[1] ? (&sel[3:2]) : (&sel[1:0])))
+                    $display("MARKER cycle=%0d value=%0d", cycles,
+                        report_write[1] ? wdata[31:16] : wdata[15:0]);
                 if (sel[0]) memory[{addr[13:0], 1'b0}][7:0] <= wdata[7:0];
                 if (sel[1]) memory[{addr[13:0], 1'b0}][15:8] <= wdata[15:8];
                 if (sel[2]) memory[{addr[13:0], 1'b1}][7:0] <= wdata[23:16];
                 if (sel[3]) memory[{addr[13:0], 1'b1}][15:8] <= wdata[31:24];
                 if (addr[13:0] == 14'h3fff && (&sel[3:2])) begin
                     if (wdata[31:16] != 16'h600d) $fatal(1, "benchmark failed: %h", wdata);
-                    $display("PASS XLEN=%0d CACHED=%0d cycles=%0d commits=%0d backing_reads=%0d backing_writes=%0d", XLEN, CACHED, cycles, commits, reads, writes+1);
+                    $display("PASS XLEN=%0d CACHED=%0d cycles=%0d commits=%0d backing_reads=%0d backing_writes=%0d i_refills=%0d d_refills=%0d", XLEN, CACHED, cycles, commits, reads, writes+1, i_refills, d_refills);
                     $finish;
                 end
             end else reads <= reads + 1;

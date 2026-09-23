@@ -42,5 +42,6 @@ u16 c_abi_varargs_mix(u16, u16, u16, u16, unsigned int, ...);
 u16 c_abi_tls_update(u16);
 float c_abi_float_scale(float);
 double c_abi_double_scale(double);
+u16 c_abi_partial_stores(void);
 
 #endif

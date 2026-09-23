@@ -6,6 +6,14 @@
 #define BENCH_NOINLINE __attribute__((noinline))
 #define BENCH_RESULT (*(volatile uint16_t *)0xfffeu)
 
+// Simulation timing markers: iteration count starts the interval; zero ends it.
+static inline void bench_mark(uint16_t iterations)
+{
+    __asm__ volatile ("" ::: "memory");
+    *(volatile uint16_t *)0xfffcu = iterations;
+    __asm__ volatile ("" ::: "memory");
+}
+
 static __attribute__((noreturn)) void bench_finish(uint16_t actual,
     uint16_t expected)
 {

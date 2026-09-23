@@ -14,6 +14,11 @@ RISCC_CLANG ?= $(LLVM_RISCC_BUILD)/bin/clang
 RISCC_AR ?= $(LLVM_RISCC_BUILD)/bin/llvm-ar
 RISCC_OBJCOPY ?= $(LLVM_RISCC_BUILD)/bin/llvm-objcopy
 PROFILE ?= full
+RISCC_LIB_OPT ?= -Oz
+ifeq ($(filter $(RISCC_LIB_OPT),-O0 -O1 -O2 -O3 -Os -Oz),)
+$(error RISCC_LIB_OPT must be -O0, -O1, -O2, -O3, -Os or -Oz)
+endif
+RISCC_RUNTIME_SUFFIX := $(if $(filter -Oz,$(RISCC_LIB_OPT)),,$(RISCC_LIB_OPT))
 RISCC_XLEN ?= 16
 ifeq ($(filter $(RISCC_XLEN),16 32),)
 $(error RISCC_XLEN must be 16 or 32)
@@ -22,15 +27,15 @@ ifeq ($(RISCC_XLEN),32)
 ifeq ($(PROFILE),nano)
 $(error RC32 has no Nano profile)
 endif
-RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/rc32/$(PROFILE)
+RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/rc32/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RISCC_XLEN_FLAGS := -mrc32
 RISCC_LINKER_SCRIPT := $(RISCC_ROOT)/firmware/rc32/unified.ld
 else
 ifeq ($(PROFILE),nano)
-RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/nano
+RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/nano$(RISCC_RUNTIME_SUFFIX)
 RISCC_LINKER_SCRIPT := $(RISCC_ROOT)/firmware/nano/unified.ld
 else
-RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/rc16/$(PROFILE)
+RISCC_RUNTIME_DIR ?= $(RISCC_ROOT)/build/firmware/rc16/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RISCC_LINKER_SCRIPT := $(RISCC_ROOT)/firmware/rc16/unified.ld
 endif
 RISCC_XLEN_FLAGS :=
@@ -38,7 +43,7 @@ endif
 
 RISCC_TARGET_FLAGS := --target=riscc-none-elf -mcpu=$(PROFILE) \
 	$(RISCC_XLEN_FLAGS)
-RISCC_CFLAGS := -Os -ffreestanding -fno-builtin -fno-pic -fno-pie \
+RISCC_CFLAGS := $(if $(filter nano min,$(PROFILE)),-Oz,-Os) -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections -I$(RISCC_ROOT)/firmware/include
 RISCC_CXXFLAGS := $(RISCC_CFLAGS) -std=c++17 -fno-exceptions -fno-rtti \

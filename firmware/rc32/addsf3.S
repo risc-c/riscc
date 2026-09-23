@@ -188,17 +188,18 @@ __addsf3:
         LDI     r6, 0                  // alignment sticky
         LDI     r0, 32
         SLTU    r0, r4, r0
-        BNEZ    .Ladd_align_test
+        BNEZ    .Ladd_align_start
         LDI     r2, 1
         JMP8    .Ladd_aligned
+.Ladd_align_start:
+        MOV     r0, r4                 // keep the countdown in the branch register
+        BEQZ    .Ladd_aligned
 .Ladd_align_loop:
-        MOV     r0, r2
-        ANDI    r0, 1
-        OR      r6, r6, r0
+        MOV     r4, r2
+        ANDI    r4, 1
+        OR      r6, r6, r4
         SRLI    r2, r2, 1
-        ADDI    r4, -1
-.Ladd_align_test:
-        MOV     r0, r4
+        ADDI    r0, -1
         BNEZ    .Ladd_align_loop
         OR      r2, r2, r6
 .Ladd_aligned:

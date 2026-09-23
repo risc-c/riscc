@@ -47,6 +47,58 @@ static volatile s64 builtin_s64 = -100000ll;
 static volatile u32 builtin_shift_u32 = 0x80010001ul;
 static volatile u64 builtin_shift_u64 = 0x8001000200040001ull;
 
+// Cover zero divisors, top-bit divisors and every useful quotient width.
+static const u16 native_division_cases[][4] =
+{
+    {0x0000u, 0x0000u, 0x0000u, 0x0000u},
+    {0x0001u, 0x0000u, 0x0000u, 0x0001u},
+    {0xffffu, 0x0000u, 0x0000u, 0xffffu},
+    {0x0000u, 0x0001u, 0x0000u, 0x0000u},
+    {0x0009u, 0x0007u, 0x0001u, 0x0002u},
+    {0x0007u, 0x0009u, 0x0000u, 0x0007u},
+    {0xffffu, 0x8001u, 0x0001u, 0x7ffeu},
+    {0x8000u, 0xffffu, 0x0000u, 0x8000u},
+    {0x8000u, 0x0003u, 0x2aaau, 0x0002u},
+    {0xffffu, 0x0025u, 0x06ebu, 0x0008u},
+    {0xffffu, 0x0001u, 0xffffu, 0x0000u},
+    {0xffffu, 0x0002u, 0x7fffu, 0x0001u},
+    {0xffffu, 0x0004u, 0x3fffu, 0x0003u},
+    {0xffffu, 0x0008u, 0x1fffu, 0x0007u},
+    {0xffffu, 0x0010u, 0x0fffu, 0x000fu},
+    {0xffffu, 0x0020u, 0x07ffu, 0x001fu},
+    {0xffffu, 0x0040u, 0x03ffu, 0x003fu},
+    {0xffffu, 0x0080u, 0x01ffu, 0x007fu},
+    {0xffffu, 0x0100u, 0x00ffu, 0x00ffu},
+    {0xffffu, 0x0200u, 0x007fu, 0x01ffu},
+    {0xffffu, 0x0400u, 0x003fu, 0x03ffu},
+    {0xffffu, 0x0800u, 0x001fu, 0x07ffu},
+    {0xffffu, 0x1000u, 0x000fu, 0x0fffu},
+    {0xffffu, 0x2000u, 0x0007u, 0x1fffu},
+    {0xffffu, 0x4000u, 0x0003u, 0x3fffu},
+    {0xffffu, 0x8000u, 0x0001u, 0x7fffu},
+};
+
+static u16 check_native_division(void)
+{
+    u16 i;
+    for (i = 0; i < sizeof(native_division_cases) /
+                    sizeof(native_division_cases[0]); ++i)
+    {
+        const u16 *c = native_division_cases[i];
+        u16 remainder;
+        if (__udivhi3(c[0], c[1]) != c[2] ||
+            __umodhi3(c[0], c[1]) != c[3] ||
+            __udivmodhi4(c[0], c[1], &remainder) != c[2] ||
+            remainder != c[3] ||
+            __udivmodhi4(c[0], c[1], (u16 *)0) != c[2])
+            return 0;
+    }
+    return __divhi3(9, -7) == -1 && __modhi3(9, -7) == 2 &&
+           __divhi3(-9, -7) == 1 && __modhi3(-9, -7) == -2 &&
+           __divhi3((s16)0x8000u, -1) == (s16)0x8000u &&
+           __modhi3((s16)0x8000u, -1) == 0;
+}
+
 u16 feature_test_builtins(void)
 {
     u16 remainder16;
@@ -65,6 +117,8 @@ u16 feature_test_builtins(void)
     u32 shift32 = builtin_shift_u32;
     u64 shift64 = builtin_shift_u64;
 
+    if (!check_native_division())
+        return 30;
     if (__mulhi3(value16, 37) != 37000 ||
         __mulhi3(0xffffu, 0xffffu) != 1 ||
         __udivhi3(value16, 37) != 27 || __umodhi3(value16, 37) != 1 ||

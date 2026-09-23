@@ -37,6 +37,8 @@ u32 rc32_tls_update(u32);
 u32 rc32_literal_long(u32);
 u32 rc32_cpp_check(u32);
 u16 rc32_test_builtins(void);
+u16 rc32_test_division(void);
+u16 rc32_test_codegen(void);
 u16 rc32_test_float(void);
 u16 rc32_test_tail(void);
 

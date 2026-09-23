@@ -4,7 +4,7 @@
 #include "internal.h"
 
 static uint16_t significand_bit(
-    const riscc_math_uint *significand, int16_t position)
+    const riscc_math_uint *significand, int position)
 {
     if (position < 0)
         return 0;
@@ -14,11 +14,11 @@ static uint16_t significand_bit(
 }
 
 static void scaled_square_root(const riscc_math_uint *significand,
-    uint16_t precision, uint16_t words, riscc_math_uint *root,
+    unsigned int precision, unsigned int words, riscc_math_uint *root,
     riscc_math_uint *remainder)
 {
-    int16_t zero_bits = (int16_t)precision - 1;
-    int16_t pair;
+    int zero_bits = (int)precision - 1;
+    int pair;
 
     *root = (riscc_math_uint){{0}};
     *remainder = (riscc_math_uint){{0}};
@@ -27,10 +27,10 @@ static void scaled_square_root(const riscc_math_uint *significand,
      * Compute floor(sqrt(significand << zero_bits)) one base-four digit at
      * a time. The small word loops avoid compiler-expanded 64-bit operations.
      */
-    for (pair = (int16_t)precision - 1; pair >= 0; --pair)
+    for (pair = (int)precision - 1; pair >= 0; --pair)
     {
         riscc_math_uint trial;
-        int16_t low_position = pair * 2;
+        int low_position = pair * 2;
         uint16_t input_pair =
             significand_bit(significand, low_position - zero_bits) |
             (significand_bit(
@@ -56,12 +56,12 @@ float sqrtf(float value)
     riscc_float_shape shape = {value};
     uint16_t sign = shape.word[1] & UINT16_C(0x8000);
     uint32_t fraction = shape.bits & UINT32_C(0x007fffff);
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
     uint32_t significand;
     riscc_math_uint input = {{0}};
     riscc_math_uint root;
     riscc_math_uint remainder;
-    int16_t unbiased;
+    int unbiased;
 
     if (exponent == 0xff)
     {
@@ -82,7 +82,7 @@ float sqrtf(float value)
     if (exponent)
     {
         significand = UINT32_C(0x00800000) | fraction;
-        unbiased = (int16_t)exponent - 127;
+        unbiased = (int)exponent - 127;
     }
     else
     {
@@ -102,14 +102,14 @@ float sqrtf(float value)
 
     input.word[0] = (uint16_t)significand;
     input.word[1] = (uint16_t)(significand >> 16);
-    scaled_square_root(&input, 24, 2, &root, &remainder);
-    if (__riscc_math_compare(&remainder, &root, 2) > 0)
-        __riscc_math_increment(&root, 2);
+    scaled_square_root(&input, 24, RISCC_MATH_FLOAT_WORDS, &root, &remainder);
+    if (__riscc_math_compare(&remainder, &root, RISCC_MATH_FLOAT_WORDS) > 0)
+        __riscc_math_increment(&root, RISCC_MATH_FLOAT_WORDS);
 
     unbiased /= 2;
     if (root.word[1] & UINT16_C(0x0100))
     {
-        __riscc_math_shift_right_one(&root, 2);
+        __riscc_math_shift_right_one(&root, RISCC_MATH_FLOAT_WORDS);
         ++unbiased;
     }
     shape.word[0] = root.word[0];
@@ -123,11 +123,11 @@ double sqrt(double value)
     riscc_double_shape shape = {value};
     uint16_t sign = shape.word[3] & UINT16_C(0x8000);
     uint16_t fraction_high = shape.word[3] & UINT16_C(0x000f);
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
     riscc_math_uint input = {{0}};
     riscc_math_uint root;
     riscc_math_uint remainder;
-    int16_t unbiased;
+    int unbiased;
 
     if (exponent == 0x7ff)
     {
@@ -161,31 +161,31 @@ double sqrt(double value)
     if (exponent)
     {
         input.word[3] |= UINT16_C(0x0010);
-        unbiased = (int16_t)exponent - 1023;
+        unbiased = (int)exponent - 1023;
     }
     else
     {
         unbiased = -1022;
         while (!(input.word[3] & UINT16_C(0x0010)))
         {
-            __riscc_math_shift_left_one(&input, 4);
+            __riscc_math_shift_left_one(&input, RISCC_MATH_WORDS);
             --unbiased;
         }
     }
     if (unbiased % 2)
     {
-        __riscc_math_shift_left_one(&input, 4);
+        __riscc_math_shift_left_one(&input, RISCC_MATH_WORDS);
         --unbiased;
     }
 
-    scaled_square_root(&input, 53, 4, &root, &remainder);
-    if (__riscc_math_compare(&remainder, &root, 4) > 0)
-        __riscc_math_increment(&root, 4);
+    scaled_square_root(&input, 53, RISCC_MATH_WORDS, &root, &remainder);
+    if (__riscc_math_compare(&remainder, &root, RISCC_MATH_WORDS) > 0)
+        __riscc_math_increment(&root, RISCC_MATH_WORDS);
 
     unbiased /= 2;
     if (root.word[3] & UINT16_C(0x0020))
     {
-        __riscc_math_shift_right_one(&root, 4);
+        __riscc_math_shift_right_one(&root, RISCC_MATH_WORDS);
         ++unbiased;
     }
     shape.word[0] = root.word[0];

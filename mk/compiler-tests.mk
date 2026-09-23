@@ -1,6 +1,6 @@
 COMPILER_RULES := Makefile mk/compiler-tests.mk mk/firmware.mk mk/boards.mk
 
-COMPILER_BUILD ?= build/compiler/$(RISCC_ARCH)/$(PROFILE)
+COMPILER_BUILD ?= build/compiler/$(RISCC_ARCH)/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RC16_COMPILER_SOURCE_DIR := test/compiler/rc16
 COMPILER_MAX_INSNS ?= 1000000
 FLOAT_MAX_INSNS ?= 5000000
@@ -20,7 +20,7 @@ FEATURE_MODULES := feature_main feature_language feature_integer \
 	feature_builtins feature_memory feature_abi feature_abi_callee \
 	feature_varargs feature_varargs_callee feature_tail
 FLOAT_MODULES := float_main feature_float feature_float_callee
-BENCHMARKS := int32 softfloat libm32 matrix structures \
+BENCHMARKS := int32 softfloat libm32 matrix structures dhrystone \
 	memory_copy memory_update memory_chase
 FEATURE_ASM_OBJ := $(COMPILER_BUILD)/features/feature_abi_asm.o
 LIBC_TIME_TESTS_nano :=
@@ -207,6 +207,7 @@ compiler-smoke: $(COMPILER_SMOKE).bin $(COMPILER_SMOKE).memh $(RISCC_SIM) \
 OPT_FLAGS_o0 := -O0
 OPT_FLAGS_o2 := -O2
 OPT_FLAGS_os := -Os
+OPT_FLAGS_oz := -Oz
 CFLAGS_NO_OPT := $(filter-out -O%,$(RISCC_CFLAGS))
 
 .PRECIOUS: $(COMPILER_BUILD)/matrix/%/smoke.o \
@@ -358,10 +359,10 @@ $(foreach profile,$(RC16_COMPILER_PROFILES), \
 # Focused RC32 C/C++ and ABI integration matrix. RC16 and RC32 use peer source,
 # runtime, and output directories because their objects are link-incompatible.
 RC32_COMPILER_PROFILES := min sys full
-RC32_COMPILER_BUILD = build/compiler/rc32/$(PROFILE)
+RC32_COMPILER_BUILD = build/compiler/rc32/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RC32_COMPILER_TARGET_FLAGS = --target=riscc-none-elf -mcpu=$(PROFILE) -mrc32
 RC32_COMPILER_CFLAGS = $(CFLAGS_NO_OPT) -Itest/compiler/rc32 -Ifirmware/include
-RC32_COMPILER_MODULES := main helper builtins float tail
+RC32_COMPILER_MODULES := main helper builtins division codegen float tail
 RC32_COMPILER_MAX_INSNS ?= 1000000
 RC32_COMPILER_MAX_CYCLES ?= 30000000
 RC32_COMPILER_TB = build/test/rc32/$(PROFILE)/16/tb
@@ -516,7 +517,7 @@ compiler-rc32-irqs: compiler-rc32-irq-sys compiler-rc32-irq-full
 # separate from the architecture-specific programs above: it catches codegen
 # regressions that affect either data width without duplicating test sources.
 C_ABI_COMPILER_SOURCE_DIR := test/compiler/c_abi
-C_ABI_COMPILER_BUILD = build/compiler/c-abi/$(RISCC_ARCH)/$(PROFILE)
+C_ABI_COMPILER_BUILD = build/compiler/c-abi/$(RISCC_ARCH)/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 C_ABI_COMPILER_MODULES := c_abi_main c_abi_helper
 C_ABI_COMPILER_MAX_INSNS ?= 1000000
 C_ABI_COMPILER_MAX_CYCLES ?= 30000000
@@ -607,7 +608,7 @@ $(foreach profile,$(RC32_COMPILER_PROFILES), \
 # constant initialization, and cross-translation-unit calls. Dynamic startup
 # constructors are rejected by the linker scripts and tested below.
 CPP_COMPILER_SOURCE_DIR := test/compiler/cpp
-CPP_COMPILER_BUILD = build/compiler/cpp/$(RISCC_ARCH)/$(PROFILE)
+CPP_COMPILER_BUILD = build/compiler/cpp/$(RISCC_ARCH)/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 CPP_COMPILER_MODULES := cpp_main cpp_helper
 CPP_COMPILER_MAX_INSNS ?= 1000000
 CPP_COMPILER_MAX_CYCLES ?= 30000000
@@ -722,8 +723,17 @@ benchmark_bins = $(addprefix $(COMPILER_BUILD)/benchmarks/$(1)/, \
 
 # BENCHMARK_RULES(optimization)
 define BENCHMARK_RULES
+# Dhrystone keeps the original two separately compiled translation units.
+$$(COMPILER_BUILD)/benchmarks/$(1)/dhrystone.o \
+$$(COMPILER_BUILD)/benchmarks/$(1)/dhrystone_procs.o: \
+		test/compiler/bench/dhrystone.h
+
+$$(COMPILER_BUILD)/benchmarks/$(1)/dhrystone.elf: \
+		$$(COMPILER_BUILD)/benchmarks/$(1)/dhrystone_procs.o
+
 $$(COMPILER_BUILD)/benchmarks/$(1)/%.o: \
-		test/compiler/bench/%.c test/compiler/bench/bench.h $$(RISCC_CLANG)
+		test/compiler/bench/%.c test/compiler/bench/bench.h \
+		$$(COMPILER_RULES) $$(RISCC_CLANG)
 	@mkdir -p $$(@D)
 	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(CFLAGS_NO_OPT) \
 	  $$(OPT_FLAGS_$(1)) -std=c11 -Itest/compiler/bench \
@@ -736,8 +746,7 @@ $$(COMPILER_BUILD)/benchmarks/$(1)/%.elf: \
 		$$(RISCC_CLANG) $$(RISCC_LLD)
 	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(RISCC_LDFLAGS) \
 	  -fuse-ld=lld -nostdlib -Wl,-T,$$(abspath $$(RISCC_LINKER_SCRIPT)) \
-	  $$(FW_VECTORS) $$(FW_CRT0) \
-	  $$(patsubst %.elf,%.o,$$@) \
+	  $$(filter %.o,$$^) \
 	  $$(FW_LIBS) -o $$@
 
 endef
@@ -761,13 +770,17 @@ compiler-benchmarks: $(BENCHMARK_BINS) $(RISCC_SIM)
 # C benchmarks on native-width Full and ECP5 block-RF Fast/Cached cores.
 BENCHMARK_RTL_MAX_CYCLES ?= 30000000
 BENCHMARK_RTL_TIMEOUT ?= 300
+# Match the boards' one-clock local SRAM and registered instruction fetch.
+# Select cache to measure the separate I/D caches and backing SRAM instead.
+BENCHMARK_CACHED_MEMORY ?= sram
+BENCHMARK_CACHED_SOFT := $(call cached_bench_tb,$(RISCC_XLEN),soft,ecp5-block,$(BENCHMARK_CACHED_MEMORY))
+BENCHMARK_CACHED_DSP := $(call cached_bench_tb,$(RISCC_XLEN),dsp,ecp5-block,$(BENCHMARK_CACHED_MEMORY))
 BENCHMARK_RTL_BASE_TB := $(call wide_tb,$(RISCC_XLEN),full,0,native)
 BENCHMARK_RTL_FAST_FAMILY := $(call fast_family,$(RISCC_XLEN))
 BENCHMARK_RTL_TBS := $(BENCHMARK_RTL_BASE_TB) \
 	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb \
 	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb \
-	$(foreach multiplier,$(MULTIPLIERS), \
-	  $(call cached_bench_tb,$(RISCC_XLEN),$(multiplier),ecp5-block))
+	$(BENCHMARK_CACHED_SOFT) $(BENCHMARK_CACHED_DSP)
 
 .PHONY: compiler-benchmarks-rtl
 ifeq ($(PROFILE),full)
@@ -781,12 +794,12 @@ compiler-benchmarks-rtl: $(BENCHMARK_BINS) $(BENCHMARK_RTL_TBS) \
 	  --max-cycles $(BENCHMARK_RTL_MAX_CYCLES) \
 	  --timeout $(BENCHMARK_RTL_TIMEOUT) \
 	  --xlen $(RISCC_XLEN) --profile $(PROFILE) \
-	  --output "$(abspath $(COMPILER_BUILD)/benchmarks/rtl-cycles.json)" \
+	  --output "$(abspath $(COMPILER_BUILD)/benchmarks/rtl-cycles-$(BENCHMARK_CACHED_MEMORY).json)" \
 	  --core full-native="$(abspath $(BENCHMARK_RTL_BASE_TB))" \
 	  --core fast-soft="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb)" \
 	  --core fast-dsp="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb)" \
-	  --native-core cached-soft="$(abspath $(call cached_bench_tb,$(RISCC_XLEN),soft,ecp5-block))" \
-	  --native-core cached-dsp="$(abspath $(call cached_bench_tb,$(RISCC_XLEN),dsp,ecp5-block))"
+	  --native-core cached-$(BENCHMARK_CACHED_MEMORY)-soft="$(abspath $(BENCHMARK_CACHED_SOFT))" \
+	  --native-core cached-$(BENCHMARK_CACHED_MEMORY)-dsp="$(abspath $(BENCHMARK_CACHED_DSP))"
 else
 compiler-benchmarks-rtl:
 	@echo "compiler-benchmarks-rtl requires PROFILE=full (got PROFILE=$(PROFILE))" >&2
@@ -868,10 +881,11 @@ libm_test_bins = $(addprefix $(COMPILER_BUILD)/libc/$(1)/, \
 # LIBC_TEST_RULES(optimization)
 define LIBC_TEST_RULES
 $$(COMPILER_BUILD)/libc/$(1)/%.o: test/compiler/libc/%.c \
-		$$(LIBC_TEST_HEADERS) $$(RISCC_CLANG)
+		$$(LIBC_TEST_HEADERS) $$(COMPILER_RULES) $$(RISCC_CLANG)
 	@mkdir -p $$(@D)
 	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(CFLAGS_NO_OPT) \
-	  $$(OPT_FLAGS_$(1)) -Itest/compiler/libc -Ifirmware/include \
+	  $$(OPT_FLAGS_$(1)) -ffreestanding -fno-builtin \
+	  -Itest/compiler/libc -Ifirmware/include \
 	  -c $$< -o $$@
 
 $$(COMPILER_BUILD)/libc/$(1)/%.elf: \
@@ -904,6 +918,9 @@ LIBM_RUNS := $(foreach opt,$(OPT_LEVELS), \
 
 compiler-libc: $(LIBC_RUNS)
 compiler-libm: $(LIBM_RUNS)
+
+# The alignment/length matrix exercises the byte-only Nano library as well.
+$(foreach opt,$(OPT_LEVELS),compiler-libc-run-$(opt)-memory_string): COMPILER_MAX_INSNS = 50000000
 
 define LIBC_BATCH_RUN_RULE
 compiler-libc-run-$(1)-$(2): \

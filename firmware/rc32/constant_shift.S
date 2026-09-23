@@ -1,10 +1,12 @@
 /*
- * Size-oriented RC32 fixed-count shifts for Min and Sys.
+ * Shared RC32 shift sequences.
  *
  * LLVM enters one rung for a large constant shift in a minsize function.
  * R_RISCC_NONE keeps only the required fall-through suffix live, allowing all
  * call sites in an image to share the same one-instruction-per-bit sequence.
- * Full emits its native shifts directly and does not reference this object.
+ * Speed-oriented variable shifts jump into the same sequence. Their counts
+ * must be in 0..31; a zero count jumps directly to RET. The dispatcher's
+ * relocation keeps all 31 rungs live, even with --gc-sections.
  */
 
         .macro SHIFT_LABEL name
@@ -13,6 +15,25 @@
         .type \name,@function
 \name:
         .endm
+
+        .macro VARIABLE_SHIFT stem
+        .section .text.\stem\()_fast,"ax",@progbits
+        .p2align 2
+        SHIFT_LABEL \stem\()_fast
+        LDPC    r0, .L\stem\()_end
+        ADD     r2, r2, r2
+        SUB     r0, r0, r2
+        JMP     r0
+        .size \stem\()_fast, . - \stem\()_fast
+.L\stem\()_end:
+        // Reference the first rung to retain the whole fall-through chain;
+        // its return is 31 two-byte instructions later.
+        .long   \stem\()31 + 31 * 2
+        .endm
+
+        VARIABLE_SHIFT __riscc_shlsi
+        VARIABLE_SHIFT __riscc_lshrsi
+        VARIABLE_SHIFT __riscc_ashrsi
 
         .macro SHL_STEP count, next
         .section .text.__riscc_shlsi\count,"ax",@progbits

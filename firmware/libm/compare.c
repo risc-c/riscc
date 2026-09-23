@@ -3,13 +3,13 @@
 
 #include "internal.h"
 
-static int16_t float_is_nan(riscc_float_shape shape)
+static int float_is_nan(riscc_float_shape shape)
 {
     return (shape.word[1] & UINT16_C(0x7f80)) == UINT16_C(0x7f80) &&
         ((shape.word[1] & UINT16_C(0x007f)) || shape.word[0]);
 }
 
-static int16_t double_is_nan(riscc_double_shape shape)
+static int double_is_nan(riscc_double_shape shape)
 {
     return (shape.word[3] & UINT16_C(0x7ff0)) == UINT16_C(0x7ff0) &&
         ((shape.word[3] & UINT16_C(0x000f)) || shape.word[2] ||

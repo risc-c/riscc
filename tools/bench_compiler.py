@@ -20,6 +20,7 @@ NATIVE_PASS_RE = re.compile(
     re.MULTILINE,
 )
 METRIC_RE = re.compile(r"(?P<name>\w+)=(?P<value>\d+)")
+MARKER_RE = re.compile(r"^MARKER cycle=(\d+) value=(\d+)$", re.MULTILINE)
 NATIVE_MAX_IMAGE_BYTES = 64 * 1024
 
 
@@ -48,6 +49,10 @@ def run_core(core_name: str, testbench: Path, image: Path, memh: Path | None,
     command = ([str(testbench), f"+IMAGE={memh}", f"+MAX_CYCLES={max_cycles}"
                 ] if native else [str(testbench), str(image), "--max-cycles",
                                   str(max_cycles)])
+    timed = image.stem == "dhrystone"
+    if timed:
+        command += (["+REPORT_WRITE=fffc"] if native else
+                    ["--report-write", "0xfffc"])
     result = {"core": core_name, "image": str(image), "testbench": str(testbench)}
     output = ""
     try:
@@ -72,7 +77,8 @@ def run_core(core_name: str, testbench: Path, image: Path, memh: Path | None,
                            for metric in METRIC_RE.finditer(match.group("metrics"))}
                 if "cycles" in metrics:
                     result["cycles"] = metrics["cycles"]
-                    for name in ("commits", "backing_reads", "backing_writes"):
+                    for name in ("commits", "backing_reads", "backing_writes",
+                                 "i_refills", "d_refills"):
                         if name in metrics:
                             result[name] = metrics[name]
                     result["status"] = "PASS" if completed.returncode == 0 else "FAIL"
@@ -99,6 +105,17 @@ def run_core(core_name: str, testbench: Path, image: Path, memh: Path | None,
                 result["status"] = "TIMEOUT"
             else:
                 result["status"] = "FAIL"
+        if timed and result["status"] == "PASS":
+            markers = [tuple(map(int, m)) for m in MARKER_RE.findall(output)]
+            if (len(markers) != 2 or markers[0][1] <= 0 or markers[1][1] != 0
+                    or markers[1][0] <= markers[0][0]):
+                result["status"] = "FAIL"
+                output += "\nMissing or invalid benchmark timing markers\n"
+            else:
+                result["loop_cycles"] = markers[1][0] - markers[0][0]
+                result["iterations"] = markers[0][1]
+                result["dmips_per_mhz"] = (
+                    result["iterations"] * 1_000_000 / (1757 * result["loop_cycles"]))
     return result, output
 
 
@@ -150,7 +167,10 @@ def main() -> int:
                     results.append(result)
                     label = f"{core_name} {opt_level} {benchmark}"
                     if result["status"] == "PASS":
-                        print(f"{label}: {result['cycles']} cycles PASS", flush=True)
+                        timing = (f", {result['loop_cycles']} loop cycles, "
+                                  f"{result['dmips_per_mhz']:.3f} DMIPS/MHz"
+                                  if "loop_cycles" in result else "")
+                        print(f"{label}: {result['cycles']} cycles{timing} PASS", flush=True)
                     else:
                         failures += 1
                         print(f"{label}: {result['status']}\n{output}", file=sys.stderr)

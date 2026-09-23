@@ -461,7 +461,8 @@ int main(int argc, char **argv)
                 marker_done = 1;
             if (report_at_write >= 0 && fixture_addr ==
                     ((static_cast<uint64_t>(report_at_write) >> 1) & 0x7fff))
-                printf("MARKER cycle=%llu\n", (unsigned long long)cyc);
+                printf("MARKER cycle=%llu value=%u\n",
+                    (unsigned long long)cyc, unsigned(nw));
             if (uart_expect_line && fixture_addr == 0x7FF8 && (wmask & 1))
             {
                 const char ch = char(wdata & 0xFF);

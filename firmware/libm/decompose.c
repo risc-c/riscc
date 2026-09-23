@@ -5,26 +5,18 @@
 
 static void shift_float_left(riscc_float_shape *shape)
 {
-    shape->word[1] =
-        (uint16_t)((shape->word[1] << 1) | (shape->word[0] >> 15));
-    shape->word[0] <<= 1;
+    shape->bits <<= 1;
 }
 
 static void shift_double_left(riscc_double_shape *shape)
 {
-    shape->word[3] =
-        (uint16_t)((shape->word[3] << 1) | (shape->word[2] >> 15));
-    shape->word[2] =
-        (uint16_t)((shape->word[2] << 1) | (shape->word[1] >> 15));
-    shape->word[1] =
-        (uint16_t)((shape->word[1] << 1) | (shape->word[0] >> 15));
-    shape->word[0] <<= 1;
+    shape->bits <<= 1;
 }
 
 float modff(float value, float *integral)
 {
     riscc_float_shape shape = {value};
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
 
     *integral = truncf(value);
     if (exponent == 0xff)
@@ -41,7 +33,7 @@ float modff(float value, float *integral)
 double modf(double value, double *integral)
 {
     riscc_double_shape shape = {value};
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
 
     *integral = trunc(value);
     if (exponent == 0x7ff)
@@ -70,15 +62,15 @@ float frexpf(float value, int *result_exponent)
 {
     riscc_float_shape shape = {value};
     uint16_t sign = shape.word[1] & UINT16_C(0x8000);
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t unbiased;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int unbiased;
 
     *result_exponent = 0;
     if (exponent == 0xff || !(shape.word[0] || (shape.word[1] & 0x7fff)))
         return value;
     shape.word[1] &= UINT16_C(0x7fff);
     if (exponent)
-        unbiased = (int16_t)exponent - 127;
+        unbiased = (int)exponent - 127;
     else
     {
         unbiased = -126;
@@ -98,8 +90,8 @@ double frexp(double value, int *result_exponent)
 {
     riscc_double_shape shape = {value};
     uint16_t sign = shape.word[3] & UINT16_C(0x8000);
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
-    int16_t unbiased;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
+    int unbiased;
 
     *result_exponent = 0;
     if (exponent == 0x7ff ||
@@ -108,7 +100,7 @@ double frexp(double value, int *result_exponent)
         return value;
     shape.word[3] &= UINT16_C(0x7fff);
     if (exponent)
-        unbiased = (int16_t)exponent - 1023;
+        unbiased = (int)exponent - 1023;
     else
     {
         unbiased = -1022;
@@ -129,14 +121,14 @@ long double frexpl(long double value, int *result_exponent)
     return (long double)frexp((double)value, result_exponent);
 }
 
-static float multiply_float_power(float value, int16_t exponent)
+static float multiply_float_power(float value, int exponent)
 {
     riscc_float_shape power = {.bits = 0};
     power.word[1] = (uint16_t)(exponent + 127) << 7;
     return value * power.value;
 }
 
-static double multiply_double_power(double value, int16_t exponent)
+static double multiply_double_power(double value, int exponent)
 {
     riscc_double_shape power = {.bits = 0};
     power.word[3] = (uint16_t)(exponent + 1023) << 4;
@@ -227,7 +219,7 @@ float scalblnf(float value, long exponent)
         exponent = INT16_MAX;
     else if (exponent < INT16_MIN)
         exponent = INT16_MIN;
-    return scalbnf(value, (int16_t)exponent);
+    return scalbnf(value, (int)exponent);
 }
 
 double scalbln(double value, long exponent)
@@ -236,7 +228,7 @@ double scalbln(double value, long exponent)
         exponent = INT16_MAX;
     else if (exponent < INT16_MIN)
         exponent = INT16_MIN;
-    return scalbn(value, (int16_t)exponent);
+    return scalbn(value, (int)exponent);
 }
 
 long double scalblnl(long double value, long exponent)
@@ -247,15 +239,15 @@ long double scalblnl(long double value, long exponent)
 int ilogbf(float value)
 {
     riscc_float_shape shape = {value};
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
-    int16_t result;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
+    int result;
 
     if (!(shape.word[0] || (shape.word[1] & UINT16_C(0x7fff))))
         return FP_ILOGB0;
     if (exponent == 0xff)
         return FP_ILOGBNAN;
     if (exponent)
-        return (int16_t)exponent - 127;
+        return (int)exponent - 127;
     result = -127;
     while (!(shape.word[1] & UINT16_C(0x0040)))
     {
@@ -268,8 +260,8 @@ int ilogbf(float value)
 int ilogb(double value)
 {
     riscc_double_shape shape = {value};
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
-    int16_t result;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
+    int result;
 
     if (!(shape.word[0] || shape.word[1] || shape.word[2] ||
             (shape.word[3] & UINT16_C(0x7fff))))
@@ -277,7 +269,7 @@ int ilogb(double value)
     if (exponent == 0x7ff)
         return FP_ILOGBNAN;
     if (exponent)
-        return (int16_t)exponent - 1023;
+        return (int)exponent - 1023;
     result = -1023;
     while (!(shape.word[3] & UINT16_C(0x0008)))
     {
@@ -295,7 +287,7 @@ int ilogbl(long double value)
 float logbf(float value)
 {
     riscc_float_shape shape = {value};
-    uint16_t exponent = (shape.word[1] >> 7) & 0xff;
+    unsigned int exponent = (shape.word[1] >> 7) & 0xff;
 
     if (!(shape.word[0] || (shape.word[1] & UINT16_C(0x7fff))))
     {
@@ -315,7 +307,7 @@ float logbf(float value)
 double logb(double value)
 {
     riscc_double_shape shape = {value};
-    uint16_t exponent = (shape.word[3] >> 4) & 0x7ff;
+    unsigned int exponent = (shape.word[3] >> 4) & 0x7ff;
 
     if (!(shape.word[0] || shape.word[1] || shape.word[2] ||
             (shape.word[3] & UINT16_C(0x7fff))))

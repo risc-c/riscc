@@ -15,10 +15,12 @@ extern void *sbrk(ptrdiff_t increment);
 
 static size_t block_size(size_t size)
 {
-    if (!size || size > SIZE_MAX - sizeof(size_t) - 1u)
+    const size_t mask = sizeof(size_t) - 1u;
+    if (!size || size > SIZE_MAX - sizeof(size_t) - mask)
         return 0;
-    size += sizeof(size_t);
-    return (size + 1u) & ~(size_t)1u;
+    size = (size + sizeof(size_t) + mask) & ~mask;
+    // A freed allocation must hold both its size and the next-block pointer.
+    return size < sizeof(struct free_block) ? sizeof(struct free_block) : size;
 }
 
 void *malloc(size_t size)

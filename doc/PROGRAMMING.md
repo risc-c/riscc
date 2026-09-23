@@ -157,6 +157,13 @@ program.bin: $(ELF)
 The supplied flags use one section per function or data item and link with
 `--gc-sections`, so unused parts of the runtime are not included.
 
+Nano and Min default to `-Oz`; Sys and Full default to `-Os`. Append `-O2`
+for speed-oriented application builds. Runtime C libraries default to `-Oz`.
+RC16 and RC32 variable shifts use compact loops at `-Os`/`-Oz`; speed builds
+share unrolled helpers, linked only for the shift directions used.
+Applications allow standard-library optimizations, including inlining short
+copies; the library implementations themselves disable builtins.
+
 ### Direct tool invocation
 
 The application fragment is preferred because it keeps profiles and runtime
@@ -165,7 +172,7 @@ begin as follows:
 
 ```sh
 build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
-  -Os -ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
+  -Os -ffunction-sections -fdata-sections \
   -Ifirmware/include -c program.c -o program.o
 
 build/llvm-riscc/bin/clang --target=riscc-none-elf -mcpu=full \
@@ -310,6 +317,23 @@ recovery.
 
 These are static archives. Only referenced objects and sections enter the
 application image.
+
+C libraries default to `RISCC_LIB_OPT=-Oz`. Select `RISCC_LIB_OPT=-O2` for
+speed, including unrolled string loops; the application optimization level
+does not change a prebuilt library. Runtime archives and compiler-test results
+use separate directories, such as `build/firmware/rc32/full-O2` and
+`build/compiler/rc32/full-O2`, leaving the compact builds available.
+
+```sh
+make RISCC_XLEN=32 PROFILE=full RISCC_LIB_OPT=-O2 firmware
+make RISCC_XLEN=32 PROFILE=full RISCC_LIB_OPT=-O2 compiler-benchmarks-rtl
+```
+
+For an application using `firmware/riscc.mk`, set the same `RISCC_LIB_OPT`
+before including it to select those archives. Native assembly helpers are
+unchanged; computed-shift selection still follows the calling function's
+speed or size optimization setting.
+Board demo targets retain their separate compact runtime.
 
 ### C library headers
 

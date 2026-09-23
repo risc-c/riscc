@@ -77,7 +77,8 @@ atum-a3-test:
 	  build/atum_a3_nano_test/test.sof
 
 DEMO_RAM_LENGTH ?= 0x4000
-# Board images always use RC32 Full, independent of application defaults.
+# Board images use RC32 Full and compact libraries, independent of application
+# defaults. Their fixed runtime directory is separate from application builds.
 DEMO_TARGET_FLAGS := --target=riscc-none-elf -mcpu=full -mrc32 -DRISCC_BOARD_DEMO
 DEMO_FIRMWARE_BUILD := build/firmware/boards-rc32/full
 DEMO_VECTORS := $(DEMO_FIRMWARE_BUILD)/vectors.o
@@ -86,7 +87,7 @@ DEMO_LIBS := $(addprefix $(DEMO_FIRMWARE_BUILD)/,libc.a libm.a libbsp.a libirq.a
 DEMO_LINKER_SCRIPT := firmware/rc32/unified.ld
 .PHONY: demo-firmware
 demo-firmware:
-	+$(MAKE) --no-print-directory RISCC_XLEN=32 PROFILE=full \
+	+$(MAKE) --no-print-directory RISCC_XLEN=32 PROFILE=full RISCC_LIB_OPT=-Oz \
 	  RISCC_FIRMWARE_BUILD=$(DEMO_FIRMWARE_BUILD) \
 	  RISCC_TARGET_FLAGS='$(DEMO_TARGET_FLAGS)' firmware
 

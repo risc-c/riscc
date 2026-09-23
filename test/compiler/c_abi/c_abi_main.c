@@ -116,6 +116,8 @@ int main(void)
     if (float_bits(c_abi_float_scale(1.5f)) != 0x40580000u ||
         double_bits(c_abi_double_scale(1.5)) != 0x4010000000000000ull)
         fail(13);
+    if (!c_abi_partial_stores())
+        fail(14);
 
     RESULT_WORD = 0x600d;
     return 0;

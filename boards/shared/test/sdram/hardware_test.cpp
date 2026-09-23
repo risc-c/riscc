@@ -264,7 +264,7 @@ static void memory_benchmarks()
     scattered_benchmark("Scattered write, 1 MiB", true, kBenchWords, 4093u, 0x76543210u);
 }
 
-extern "C" int main()
+int main()
 {
     test_cached_accesses();
     puts("CPU SDRAM CACHE CHECKS PASS");

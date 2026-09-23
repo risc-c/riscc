@@ -17,13 +17,13 @@ static uint32_t unsigned_fmodf(uint32_t numerator, uint32_t denominator)
     uint32_t denominator_significand = denominator & UINT32_C(0x007fffff);
     uint16_t numerator_field = (uint16_t)(numerator >> 23);
     uint16_t denominator_field = (uint16_t)(denominator >> 23);
-    int16_t numerator_exponent;
-    int16_t denominator_exponent;
+    int numerator_exponent;
+    int denominator_exponent;
 
     if (numerator_field)
     {
         numerator_significand |= UINT32_C(0x00800000);
-        numerator_exponent = (int16_t)numerator_field - 127;
+        numerator_exponent = (int)numerator_field - 127;
     }
     else
     {
@@ -38,7 +38,7 @@ static uint32_t unsigned_fmodf(uint32_t numerator, uint32_t denominator)
     if (denominator_field)
     {
         denominator_significand |= UINT32_C(0x00800000);
-        denominator_exponent = (int16_t)denominator_field - 127;
+        denominator_exponent = (int)denominator_field - 127;
     }
     else
     {
@@ -112,22 +112,22 @@ float fmodf(float numerator, float denominator)
     return left.value;
 }
 
-static int16_t double_significand(
+static int double_significand(
     riscc_math_uint *value, uint16_t exponent_field)
 {
-    int16_t exponent;
+    int exponent;
 
     value->word[3] &= UINT16_C(0x000f);
     if (exponent_field)
     {
         value->word[3] |= UINT16_C(0x0010);
-        return (int16_t)exponent_field - 1023;
+        return (int)exponent_field - 1023;
     }
 
     exponent = -1022;
     while (!(value->word[3] & UINT16_C(0x0010)))
     {
-        __riscc_math_shift_left_one(value, 4);
+        __riscc_math_shift_left_one(value, RISCC_MATH_WORDS);
         --exponent;
     }
     return exponent;
@@ -135,25 +135,25 @@ static int16_t double_significand(
 
 static void unsigned_fmod(
     riscc_math_uint *numerator, const riscc_math_uint *denominator,
-    int16_t *numerator_exponent, int16_t denominator_exponent)
+    int *numerator_exponent, int denominator_exponent)
 {
     while (*numerator_exponent > denominator_exponent)
     {
-        if (__riscc_math_compare(numerator, denominator, 4) >= 0)
-            __riscc_math_subtract(numerator, denominator, 4);
-        if (__riscc_math_is_zero(numerator, 4))
+        if (__riscc_math_compare(numerator, denominator, RISCC_MATH_WORDS) >= 0)
+            __riscc_math_subtract(numerator, denominator, RISCC_MATH_WORDS);
+        if (__riscc_math_is_zero(numerator, RISCC_MATH_WORDS))
             return;
-        __riscc_math_shift_left_one(numerator, 4);
+        __riscc_math_shift_left_one(numerator, RISCC_MATH_WORDS);
         --*numerator_exponent;
     }
-    if (__riscc_math_compare(numerator, denominator, 4) >= 0)
-        __riscc_math_subtract(numerator, denominator, 4);
-    if (__riscc_math_is_zero(numerator, 4))
+    if (__riscc_math_compare(numerator, denominator, RISCC_MATH_WORDS) >= 0)
+        __riscc_math_subtract(numerator, denominator, RISCC_MATH_WORDS);
+    if (__riscc_math_is_zero(numerator, RISCC_MATH_WORDS))
         return;
 
     while (!(numerator->word[3] & UINT16_C(0x0010)))
     {
-        __riscc_math_shift_left_one(numerator, 4);
+        __riscc_math_shift_left_one(numerator, RISCC_MATH_WORDS);
         --*numerator_exponent;
     }
 }
@@ -169,9 +169,9 @@ double fmod(double numerator, double denominator)
     uint16_t sign = left.word[3] & UINT16_C(0x8000);
     uint16_t x_field = x.word[3] >> 4;
     uint16_t y_field = y.word[3] >> 4;
-    int16_t comparison = __riscc_math_compare(&x, &y, 4);
-    int16_t x_exponent;
-    int16_t y_exponent;
+    int comparison = __riscc_math_compare(&x, &y, RISCC_MATH_WORDS);
+    int x_exponent;
+    int y_exponent;
 
     if ((x_field == 0x7ff &&
             (x.word[3] & UINT16_C(0x000f) || x.word[2] || x.word[1] ||
@@ -187,7 +187,7 @@ double fmod(double numerator, double denominator)
         left.word[3] |= UINT16_C(0x0008);
         return left.value;
     }
-    if (x_field == 0x7ff || __riscc_math_is_zero(&y, 4))
+    if (x_field == 0x7ff || __riscc_math_is_zero(&y, RISCC_MATH_WORDS))
     {
         left.word[0] = 0;
         left.word[1] = 0;
@@ -209,7 +209,7 @@ double fmod(double numerator, double denominator)
     x_exponent = double_significand(&x, x_field);
     y_exponent = double_significand(&y, y_field);
     unsigned_fmod(&x, &y, &x_exponent, y_exponent);
-    if (__riscc_math_is_zero(&x, 4))
+    if (__riscc_math_is_zero(&x, RISCC_MATH_WORDS))
     {
         left.word[0] = 0;
         left.word[1] = 0;
@@ -225,7 +225,7 @@ double fmod(double numerator, double denominator)
     {
         while (x_exponent < -1022)
         {
-            __riscc_math_shift_right_one(&x, 4);
+            __riscc_math_shift_right_one(&x, RISCC_MATH_WORDS);
             ++x_exponent;
         }
         x.word[3] &= UINT16_C(0x000f);

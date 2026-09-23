@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "test.h"
@@ -17,22 +18,24 @@ int main(void)
     errno = 0;
     CHECK(malloc(0) == 0 && errno == 0, 1);
     free(0);
-    first = realloc(0, 4);
+    first = realloc(0, 2 * sizeof(size_t));
     CHECK(first != 0, 2);
     first[0] = 0x5a;
     CHECK(realloc(first, 0) == 0, 3);
     CHECK(calloc(0, 4) == 0 && calloc(4, 0) == 0, 4);
 
-    first = malloc(4);
-    second = malloc(4);
-    third = malloc(4);
+    // Two adjacent three-word blocks leave a two-word free block after
+    // allocating four words (header included), on either native width.
+    first = malloc(2 * sizeof(size_t));
+    second = malloc(2 * sizeof(size_t));
+    third = malloc(2 * sizeof(size_t));
     CHECK(first && second && third, 5);
     free(second);
     free(first);
-    merged = malloc(6);
+    merged = malloc(3 * sizeof(size_t));
     CHECK(merged == first, 6);
-    split = malloc(2);
-    CHECK(split == merged + 8, 7);
+    split = malloc(sizeof(size_t));
+    CHECK(split == merged + 4 * sizeof(size_t), 7);
     free(split);
     free(merged);
     free(third);
@@ -67,5 +70,18 @@ int main(void)
         (blocks[count] = malloc(1024)) != 0)
         ++count;
     CHECK(count > 10 && count < sizeof(blocks) / sizeof(blocks[0]), 17);
+    for (unsigned int i = 0; i < count; ++i)
+        free(blocks[i]);
+    // Small allocations still need native alignment and room for free-list
+    // metadata. Freeing one must not overwrite its allocated neighbour.
+    first = malloc(1);
+    second = malloc(1);
+    CHECK(first && second &&
+        ((uintptr_t)first & (sizeof(size_t) - 1u)) == 0 &&
+        ((uintptr_t)second & (sizeof(size_t) - 1u)) == 0, 18);
+    second[0] = 0xa5;
+    free(first);
+    CHECK(second[0] == 0xa5, 19);
+    CHECK(malloc(1) == first && second[0] == 0xa5, 20);
     pass();
 }

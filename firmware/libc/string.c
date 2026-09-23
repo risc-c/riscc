@@ -1,6 +1,10 @@
 #include <errno.h>
 #include <stddef.h>
 
+#if !defined(__RISCC_NANO__) && !defined(__RISCC_MIN__)
+#include "word.h"
+#endif
+
 char *strcat(char *dest, const char *src)
 {
     char *result = dest;
@@ -24,12 +28,36 @@ char *strchr(const char *string, int character)
 
 int strcmp(const char *left, const char *right)
 {
-    while (*left && *left == *right)
+#if !defined(__RISCC_NANO__) && !defined(__RISCC_MIN__)
+    if (RISCC_WORD_ALIGNED(left) && RISCC_WORD_ALIGNED(right))
     {
-        ++left;
-        ++right;
+        const riscc_word_t *left_words = (const riscc_word_t *)left;
+        const riscc_word_t *right_words = (const riscc_word_t *)right;
+        // Speed builds amortize pointer updates; size builds keep one copy.
+#if defined(__OPTIMIZE__) && !defined(__OPTIMIZE_SIZE__)
+#pragma clang loop unroll_count(2)
+#endif
+        for (;;)
+        {
+            riscc_word_t a = *left_words++;
+            riscc_word_t b = *right_words++;
+            // The NUL check covers the second load's latency. Without a
+            // terminator, only the first differing byte needs comparison.
+            if (RISCC_WORD_HAS_ZERO(a))
+                return a == b ? 0 : riscc_word_compare(a, b, 1);
+            if (a != b)
+                return riscc_word_compare(a, b, 0);
+        }
     }
-    return (int)(unsigned char)*left - (int)(unsigned char)*right;
+#endif
+
+    unsigned char a, b;
+    do
+    {
+        a = (unsigned char)*left++;
+        b = (unsigned char)*right++;
+    } while (a == b && a != 0);
+    return (int)a - (int)b;
 }
 
 int strcoll(const char *left, const char *right)
@@ -40,6 +68,33 @@ int strcoll(const char *left, const char *right)
 char *strcpy(char *dest, const char *src)
 {
     char *result = dest;
+
+#if !defined(__RISCC_NANO__) && !defined(__RISCC_MIN__)
+    if ((((uintptr_t)dest ^ (uintptr_t)src) & RISCC_WORD_ALIGN_MASK) ==
+        (uintptr_t)0)
+    {
+        while (!RISCC_WORD_ALIGNED(dest))
+        {
+            const unsigned char value = (unsigned char)*src++;
+            *dest++ = (char)value;
+            if (!value)
+                return result;
+        }
+        riscc_word_t *dest_words = (riscc_word_t *)dest;
+        const riscc_word_t *src_words = (const riscc_word_t *)src;
+        for (;;)
+        {
+            const riscc_word_t word = *src_words;
+            if (RISCC_WORD_HAS_ZERO(word))
+                break;
+            *dest_words++ = word;
+            ++src_words;
+        }
+        dest = (char *)dest_words;
+        src = (const char *)src_words;
+    }
+#endif
+
     while ((*dest++ = *src++) != '\0')
         ;
     return result;
@@ -81,6 +136,23 @@ char *strerror(int errnum)
 size_t strlen(const char *string)
 {
     const char *start = string;
+
+#if !defined(__RISCC_NANO__) && !defined(__RISCC_MIN__)
+    while (!RISCC_WORD_ALIGNED(string))
+    {
+        if (!*string)
+            return (size_t)(string - start);
+        ++string;
+    }
+    for (;;)
+    {
+        const riscc_word_t value = *(const riscc_word_t *)string;
+        if (RISCC_WORD_HAS_ZERO(value))
+            break;
+        string += RISCC_WORD_SIZE;
+    }
+#endif
+
     while (*string)
         ++string;
     return (size_t)(string - start);
@@ -102,6 +174,27 @@ char *strncat(char *dest, const char *src, size_t count)
 
 int strncmp(const char *left, const char *right, size_t count)
 {
+#if !defined(__RISCC_NANO__) && !defined(__RISCC_MIN__)
+    if (count >= RISCC_WORD_SIZE && RISCC_WORD_ALIGNED(left) &&
+        RISCC_WORD_ALIGNED(right))
+    {
+        const riscc_word_t *left_words = (const riscc_word_t *)left;
+        const riscc_word_t *right_words = (const riscc_word_t *)right;
+        while (count >= RISCC_WORD_SIZE)
+        {
+            const riscc_word_t a = *left_words;
+            const riscc_word_t b = *right_words;
+            if (a != b || RISCC_WORD_HAS_ZERO(a))
+                return riscc_word_compare(a, b, 1);
+            ++left_words;
+            ++right_words;
+            count -= RISCC_WORD_SIZE;
+        }
+        left = (const char *)left_words;
+        right = (const char *)right_words;
+    }
+#endif
+
     while (count && *left && *left == *right)
     {
         ++left;

@@ -626,7 +626,7 @@ void draw_next_strip()
 
 }  // namespace
 
-extern "C" int main()
+int main()
 {
 #ifdef RISCC_ATUM_A3
     puts("RISC-C on Atum A3 Nano");

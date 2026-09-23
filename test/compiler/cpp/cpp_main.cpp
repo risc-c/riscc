@@ -13,7 +13,7 @@ constexpr cpp_pair constant_pair = {0x0102u, 0x0304u};
 }
 }
 
-extern "C" int main()
+int main()
 {
     static_assert(sizeof(cpp_word) == sizeof(void *));
     static_assert(__is_trivially_copyable(cpp_pair));

@@ -508,34 +508,54 @@ instruction-count differences. Memory fixtures match those described above.
 
 ### Compiler benchmark cycles
 
-Both widths compile the same C programs at `-O2` for the Full profile.
+Both widths compile the same C programs at `-O2` for the Full profile,
+with the size-optimized runtime libraries and standard-library optimizations enabled.
 The RC16 MulH/MulDiv columns reuse the Full binary; MulDiv also speeds up FSL1.
 
 | Benchmark | RC16 Full /16 | RC16 MulH /16 | RC16 MulDiv /16 | RC32 Full /32 |
 |---|---:|---:|---:|---:|
-| `int32` | 164528 | 164528 | 159828 | 109772 |
-| `softfloat` | 386225 | 386225 | 381526 | 722032 |
-| `libm32` | 30726 | 30726 | 30320 | 49922 |
-| `matrix` | 197998 | 197998 | 195793 | 332295 |
-| `structures` | 8102 | 8102 | 8102 | 12336 |
-| `memory_copy` | 1143392 | 1143392 | 1143392 | 284289 |
-| `memory_update` | 524080 | 524080 | 524080 | 233051 |
-| `memory_chase` | 1848547 | 1848547 | 1848547 | 626849 |
-| Total | 4303598 | 4303598 | 4291588 | 2370546 |
+| `int32` | 156236 | 156236 | 151440 | 66557 |
+| `softfloat` | 366094 | 366094 | 361395 | 387796 |
+| `libm32` | 28625 | 28625 | 28219 | 27418 |
+| `matrix` | 188835 | 188835 | 186630 | 214918 |
+| `structures` | 7823 | 7823 | 7823 | 9882 |
+| `dhrystone` | 2174198 | 2174198 | 2174198 | 1402563 |
+| `memory_copy` | 1122711 | 1122711 | 1122711 | 277885 |
+| `memory_update` | 442580 | 442580 | 442580 | 222964 |
+| `memory_chase` | 1572078 | 1572078 | 1572078 | 545984 |
+| Total | 6059180 | 6059180 | 6047074 | 3155967 |
 
 Pipelined DSP cores with ECP5 block RF:
 
-| Benchmark | RC16 Fast | RC32 Fast | RC16 Cached | RC32 Cached |
+| Benchmark | RC16 Fast | RC32 Fast | RC16 Cached, SRAM | RC32 Cached, SRAM |
 |---|---:|---:|---:|---:|
-| `int32` | 68486 | 47650 | 76988 | 45705 |
-| `softfloat` | 172690 | 343849 | 224328 | 440053 |
-| `libm32` | 13880 | 23912 | 21606 | 32298 |
-| `matrix` | 86683 | 157459 | 119124 | 150108 |
-| `structures` | 3653 | 5944 | 4256 | 7459 |
-| `memory_copy` | 455966 | 158007 | 496946 | 183109 |
-| `memory_update` | 236410 | 132634 | 186756 | 82509 |
-| `memory_chase` | 730229 | 308315 | 867359 | 482501 |
-| Total | 1767997 | 1177770 | 1997363 | 1423742 |
+| `int32` | 64258 | 27855 | 65757 | 28448 |
+| `softfloat` | 164088 | 185994 | 164631 | 175223 |
+| `libm32` | 12968 | 13367 | 12963 | 12511 |
+| `matrix` | 82734 | 101793 | 82839 | 99594 |
+| `structures` | 3494 | 4529 | 3462 | 3975 |
+| `dhrystone` | 1021131 | 729670 | 942047 | 511836 |
+| `memory_copy` | 451762 | 159923 | 405692 | 97422 |
+| `memory_update` | 198864 | 130562 | 147534 | 78830 |
+| `memory_chase` | 640129 | 288878 | 571516 | 216148 |
+| Total | 2639428 | 1642571 | 2396441 | 1223987 |
+
+`dhrystone` adapts [Dhrystone 2.1](https://www.netlib.org/benchmark/dhry-c)
+for bare-metal execution with static records, 1,000 iterations, and final-state
+checks. It uses native 16-bit or 32-bit `int`, with the original two translation
+units compiled separately, procedure inlining disabled, and linker call relaxation.
+Dhrystone performance in **DMIPS/MHz**, measured over the loop only, excluding
+setup and verification. Applications use `-O2`; library optimization is shown
+separately. The cycle tables above use the default `-Oz` libraries; select
+`RISCC_LIB_OPT=-O2` for [speed-optimized libraries](PROGRAMMING.md#libraries).
+
+| Core | RC16, `-Oz` libs | RC32, `-Oz` libs | RC16, `-O2` libs | RC32, `-O2` libs |
+|---|---:|---:|---:|---:|
+| Wide Full, native width | 0.265 | 0.415 | 0.294 | 0.419 |
+| Fast soft | 0.563 | 0.785 | 0.619 | 0.793 |
+| Fast DSP | 0.567 | 0.802 | 0.623 | 0.810 |
+| Cached soft, SRAM | 0.612 | 1.120 | 0.682 | 1.138 |
+| Cached DSP, SRAM | 0.615 | 1.150 | 0.687 | 1.169 |
 
 The memory tests use volatile 32-bit data and unrolled loops on both widths.
 `memory_copy` makes eight round trips between two 4 KiB buffers;
@@ -543,10 +563,10 @@ The memory tests use volatile 32-bit data and unrolled loops on both widths.
 an 8 KiB chain of indices 16 times, updating each visited node. All verify
 every element. Cycle counts include startup, initialization, and verification.
 
-Cached uses the same native 32-bit backing SRAM as the assembly benchmarks:
-one-clock responses, accepting one word per clock. Fast uses its direct 16-bit
-SRAM port. Cached tests exercise the caches, not the boards' direct local SRAM
-or external SDRAM.
+Cached runs with direct instruction/data SRAM: one-clock responses, no cache
+misses, and one independent load/store per clock. It uses the boards'
+`REGISTER_FETCH` setting, so taken branches cost three cycles. Fast uses its
+direct 16-bit SRAM port. These are RTL simulations, not board measurements.
 
 ```sh
 make bench bench-cached
@@ -555,7 +575,11 @@ make RISCC_XLEN=32 compiler-benchmarks-rtl
 ```
 
 The C target runs both `-O2` and `-Os`, with soft and DSP multipliers.
-Results are saved in `build/compiler/rc16/full/benchmarks/rtl-cycles.json`
+Add `BENCHMARKS=dhrystone` to run only Dhrystone, or
+`BENCH_OPT_LEVELS=oz` to measure the smallest-code setting. Use
+`BENCHMARK_CACHED_MEMORY=cache` to test the I/D caches against backing SRAM.
+Results, including loop cycles and DMIPS/MHz, are saved in
+`build/compiler/rc16/full/benchmarks/rtl-cycles-sram.json` (or `rtl-cycles-cache.json`)
 and the corresponding `rc32` directory.
 
 ### Reproducing measurements

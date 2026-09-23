@@ -33,6 +33,57 @@ static __attribute__((noinline)) u16 tail_with_large_frame(u16 value)
     [[clang::musttail]] return tail_leaf(frame[99]);
 }
 
+static __attribute__((noinline)) u16 nested_leaf(u16 value)
+{
+    return (u16)(value + 3);
+}
+
+static __attribute__((noinline)) u16 nested_middle(u16 value)
+{
+    u16 first = nested_leaf(value);
+    u16 second = nested_leaf(first);
+    return (u16)(second + 5);
+}
+
+static __attribute__((noinline)) u16 nested_outer(u16 value)
+{
+    u16 first = nested_middle(value);
+    u16 second = nested_middle(first);
+    return (u16)(second + 7);
+}
+
+__attribute__((noinline)) u16 feature_tail_public_step(u16 value)
+{
+    return (u16)(value + 11);
+}
+
+static __attribute__((noinline)) u16 public_to_private_target(u16 value)
+{
+    return (u16)(value + 13);
+}
+
+__attribute__((noinline)) u16 feature_tail_public_to_private(u16 value)
+{
+    value = feature_tail_public_step(value);
+    [[clang::musttail]] return public_to_private_target(value);
+}
+
+__attribute__((noinline)) u16 feature_tail_public_target(u16 value)
+{
+    return (u16)(value + 17);
+}
+
+static __attribute__((noinline)) u16 private_to_public_step(u16 value)
+{
+    return (u16)(value + 19);
+}
+
+static __attribute__((noinline)) u16 private_to_public(u16 value)
+{
+    value = private_to_public_step(value);
+    [[clang::musttail]] return feature_tail_public_target(value);
+}
+
 u16 feature_test_tail(void)
 {
     if (tail_direct(10) != 17)
@@ -43,5 +94,11 @@ u16 feature_test_tail(void)
         return 3;
     if (tail_with_large_frame(40) != 47)
         return 4;
+    if (feature_tail_public_to_private(20) != 44)
+        return 5;
+    if (private_to_public(30) != 66)
+        return 6;
+    if (nested_outer(10) != 39)
+        return 7;
     return 0;
 }

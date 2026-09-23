@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "test.h"
+#include "../../../firmware/libm/internal.h"
 
 typedef union
 {
@@ -14,8 +15,6 @@ typedef union
     double value;
     uint64_t bits;
 } double_shape;
-
-int16_t __riscc_math_compare(const uint16_t *, const uint16_t *, uint16_t);
 
 static volatile float float_half = 0.5f;
 static volatile float float_two = 2.0f;
@@ -36,6 +35,134 @@ static uint64_t double_bits(double value)
     return shape.bits;
 }
 
+static int math_words_equal(const riscc_math_uint *value,
+    const uint16_t expected[4])
+{
+    unsigned int index;
+
+    for (index = 0; index != 4; ++index)
+        if (value->word[index] != expected[index])
+            return 0;
+    return 1;
+}
+
+static int math_helper_boundaries(void)
+{
+    const unsigned int partial_words = RISCC_MATH_FLOAT_WORDS;
+    const unsigned int full_words = RISCC_MATH_WORDS;
+    const uint16_t unchanged[4] = {0x1357, 0x2468, 0xaaaa, 0x5555};
+    const uint16_t partial_shift_left_one[4] =
+        {0xfffe, 0x0003, 0xaaaa, 0x5555};
+    const uint16_t partial_shift_left_two[4] =
+        {0xfffc, 0x0007, 0xaaaa, 0x5555};
+    const uint16_t partial_shift_right_one[4] =
+        {0xffff, 0x4000, 0xaaaa, 0x5555};
+    const uint16_t full_shift_left_one[4] =
+        {0x0002, 0x0008, 0x0004, 0x0002};
+    const uint16_t full_shift_left_two[4] =
+        {0x0004, 0x0010, 0x0008, 0x0004};
+    const uint16_t full_shift_right_one[4] =
+        {0x0000, 0x0002, 0x8001, 0x4000};
+    const uint16_t partial_increment_wrap[4] =
+        {0x0000, 0x0000, 0xa5a5, 0x5a5a};
+    const uint16_t full_increment_wrap[4] = {0, 0, 0, 0};
+    const uint16_t partial_subtract_borrow[4] =
+        {0xffff, 0x0000, 0xa5a5, 0x5a5a};
+    const uint16_t full_subtract_borrow[4] =
+        {0xffff, 0xffff, 0xffff, 0x0000};
+    const uint16_t full_subtract_wrap[4] = {0xffff, 0xffff, 0xffff, 0xffff};
+    const uint16_t full_subtract_borrow_wrap[4] = {1, 0, 0, 0};
+    riscc_math_uint value;
+    riscc_math_uint right;
+    riscc_math_uint compare_left =
+        {.word = {0x1000, 0x0000, 0x1234, 0xffff}};
+    riscc_math_uint compare_partial_right =
+        {.word = {0x1001, 0x0000, 0x1234, 0xfffe}};
+    riscc_math_uint compare_full_right =
+        {.word = {0x1001, 0x1233, 0x0000, 0x0000}};
+    riscc_math_uint compare_zero = {.word = {0, 0, 0, 0}};
+    riscc_math_uint nonzero = {.word = {0, 1, 0, 0}};
+
+    if (__riscc_math_compare(&compare_left, &compare_partial_right, 0) != 0 ||
+        __riscc_math_compare(&compare_left, &compare_partial_right,
+            partial_words) >= 0 ||
+        __riscc_math_compare(&compare_left, &compare_full_right,
+            full_words) <= 0 ||
+        __riscc_math_compare(&compare_left, &compare_left, full_words) != 0)
+        return 0;
+    if (!__riscc_math_is_zero(&compare_zero, 0) ||
+        !__riscc_math_is_zero(&compare_zero, full_words) ||
+        __riscc_math_is_zero(&nonzero, partial_words))
+        return 0;
+
+    value = (riscc_math_uint){{0x1357, 0x2468, 0xaaaa, 0x5555}};
+    right = (riscc_math_uint){{1, 0, 0, 0}};
+    __riscc_math_increment(&value, 0);
+    __riscc_math_shift_left_one(&value, 0);
+    __riscc_math_shift_left_two(&value, 0);
+    __riscc_math_shift_right_one(&value, 0);
+    __riscc_math_subtract(&value, &right, 0);
+    if (!math_words_equal(&value, unchanged))
+        return 0;
+
+    value = (riscc_math_uint){{0xffff, 0x8001, 0xaaaa, 0x5555}};
+    __riscc_math_shift_left_one(&value, partial_words);
+    if (!math_words_equal(&value, partial_shift_left_one))
+        return 0;
+    value = (riscc_math_uint){{0xffff, 0x8001, 0xaaaa, 0x5555}};
+    __riscc_math_shift_left_two(&value, partial_words);
+    if (!math_words_equal(&value, partial_shift_left_two))
+        return 0;
+    value = (riscc_math_uint){{0xffff, 0x8001, 0xaaaa, 0x5555}};
+    __riscc_math_shift_right_one(&value, partial_words);
+    if (!math_words_equal(&value, partial_shift_right_one))
+        return 0;
+
+    value = (riscc_math_uint){{0x0001, 0x0004, 0x0002, 0x8001}};
+    __riscc_math_shift_left_one(&value, full_words);
+    if (!math_words_equal(&value, full_shift_left_one))
+        return 0;
+    value = (riscc_math_uint){{0x0001, 0x0004, 0x0002, 0x8001}};
+    __riscc_math_shift_left_two(&value, full_words);
+    if (!math_words_equal(&value, full_shift_left_two))
+        return 0;
+    value = (riscc_math_uint){{0x0001, 0x0004, 0x0002, 0x8001}};
+    __riscc_math_shift_right_one(&value, full_words);
+    if (!math_words_equal(&value, full_shift_right_one))
+        return 0;
+
+    value = (riscc_math_uint){{0xffff, 0xffff, 0xa5a5, 0x5a5a}};
+    __riscc_math_increment(&value, partial_words);
+    if (!math_words_equal(&value, partial_increment_wrap))
+        return 0;
+    value = (riscc_math_uint){{0xffff, 0xffff, 0xffff, 0xffff}};
+    __riscc_math_increment(&value, full_words);
+    if (!math_words_equal(&value, full_increment_wrap))
+        return 0;
+
+    value = (riscc_math_uint){{0x0000, 0x0001, 0xa5a5, 0x5a5a}};
+    right = (riscc_math_uint){{0x0001, 0x0000, 0, 0}};
+    __riscc_math_subtract(&value, &right, partial_words);
+    if (!math_words_equal(&value, partial_subtract_borrow))
+        return 0;
+    value = (riscc_math_uint){{0x0000, 0x0000, 0x0000, 0x0001}};
+    right = (riscc_math_uint){{0x0001, 0x0000, 0x0000, 0x0000}};
+    __riscc_math_subtract(&value, &right, full_words);
+    if (!math_words_equal(&value, full_subtract_borrow))
+        return 0;
+    value = (riscc_math_uint){{0, 0, 0, 0}};
+    __riscc_math_subtract(&value, &right, full_words);
+    if (!math_words_equal(&value, full_subtract_wrap))
+        return 0;
+    value = (riscc_math_uint){{0, 0, 0, 0}};
+    right = (riscc_math_uint){{0xffff, 0xffff, 0xffff, 0xffff}};
+    __riscc_math_subtract(&value, &right, full_words);
+    if (!math_words_equal(&value, full_subtract_borrow_wrap))
+        return 0;
+
+    return 1;
+}
+
 int main(void)
 {
     float_shape float_infinity = {.bits = UINT32_C(0x7f800000)};
@@ -53,15 +180,7 @@ int main(void)
     double dhalf = double_half;
     double dtwo = double_two;
     double dfive = double_five_and_half;
-    uint16_t compare_left[4] = {0x1000, 0x9999, 0x1234, 0xffff};
-    uint16_t compare_right[4] = {0x1001, 0x0001, 0x1234, 0xfffe};
-
-    CHECK(__riscc_math_compare(compare_left, compare_right, 0) == 0 &&
-            __riscc_math_compare(compare_left, compare_right, 1) < 0 &&
-            __riscc_math_compare(compare_left, compare_right, 2) > 0 &&
-            __riscc_math_compare(compare_left, compare_right, 4) > 0 &&
-            __riscc_math_compare(compare_left, compare_left, 4) == 0,
-        15);
+    CHECK(math_helper_boundaries(), 15);
 
     CHECK(fpclassify(0.0f) == FP_ZERO &&
             fpclassify(float_subnormal.value) == FP_SUBNORMAL &&

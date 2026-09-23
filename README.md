@@ -11,6 +11,11 @@ RISC-C Nano is the smallest practical C/C++-programmable FPGA soft CPU,
 using just 94 ECP5 LUT4 sites plus one memory block. Even a 32-bit RISC-C core
 with interrupts and preemptive RTOS support uses only 172 LUT4 sites.
 
+The pipelined 32-bit core uses a single-issue, in-order design and runs at
+200 MHz on Agilex 3. With local SRAM and speed-optimized libraries, RTL
+benchmarks measure [1.169 DMIPS/MHz](doc/HARDWARE.md#compiler-benchmark-cycles),
+equivalent to about 234 DMIPS at 200 MHz.
+
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
 instruction set simulator (ISS), a compact freestanding C library and firmware

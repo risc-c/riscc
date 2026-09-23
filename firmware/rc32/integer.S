@@ -1,4 +1,4 @@
-// RC32 multiply and unsigned divide/remainder helpers.
+// RC32 multiply and signed/unsigned divide/remainder helpers.
 
         .macro RC32_FUNCTION name
         .section .text.\name,"ax",@progbits
@@ -11,43 +11,71 @@
 
         RC32_FUNCTION __mulsi3
         LDI     r3, 0
-.Lmul_loop:
         MOV     r0, r2
         BEQZ    .Lmul_done
-        MOV     r0, r2
+.Lmul_loop:
         ANDI    r0, 1
         BEQZ    .Lmul_skip_add
         ADD     r3, r3, r1
 .Lmul_skip_add:
         ADD     r1, r1, r1
         SRLI    r2, r2, 1
-        JMP8    .Lmul_loop
+        MOV     r0, r2
+        BNEZ    .Lmul_loop
 .Lmul_done:
         MOV     r1, r3
         RET     s7
         .size __mulsi3, . - __mulsi3
 
-        // S3 selects quotient (0), remainder (1), or quotient plus a stored
-        // remainder (2). It is caller-saved by ABI v0.
+        // S4 holds result mode in bits 0..1 (quotient, remainder, or both)
+        // and the original operand signs in bits 2..3. S2..S4 are caller-saved.
         .section .text.__udivmodsi4,"ax",@progbits
         .p2align 1
         .global __divsi3
         .hidden __divsi3
         .type __divsi3,@function
 __divsi3:
-        LDI     r0, 0
-        MTS     s3, r0
-        LDI     r3, 0
-        JMP8    .Lsdiv_flags
+        OR      r0, r1, r2
+        BLTZ    .Lsdiv_quotient
         .size __divsi3, . - __divsi3
+
+        // Nonnegative signed operands share the unsigned fast path.
+        .global __udivsi3
+        .hidden __udivsi3
+        .type __udivsi3,@function
+__udivsi3:
+        // Quotient-only entries need no mode or sign bookkeeping here.
+        MOV     r0, r2
+        BEQZ    .Ludiv_return_zero
+        SLTU    r0, r1, r2
+        BNEZ    .Ludiv_return_zero
+        SRLI    r0, r1, 1
+        SLTU    r0, r0, r2
+        BEQZ    .Ludiv_large_quotient
+        LDI     r1, 1
+        RET     s7
+.Ludiv_large_quotient:
+        CMPI    r2, 1
+        BEQZ    .Ludiv_return
+        LDI     r0, 0
+        MTS     s4, r0
+        JMP8    .Ludiv_normalize
+.Ludiv_return_zero:
+        LDI     r1, 0
+        RET     s7
+        .size __udivsi3, . - __udivsi3
+
+.Lsdiv_quotient:
+        LDI     r0, 0
+        MTS     s4, r0
+        JMP8    .Lsdiv_flags
 
         .global __modsi3
         .hidden __modsi3
         .type __modsi3,@function
 __modsi3:
         LDI     r0, 1
-        MTS     s3, r0
-        LDI     r3, 0
+        MTS     s4, r0
         JMP8    .Lsdiv_flags
         .size __modsi3, . - __modsi3
 
@@ -56,45 +84,35 @@ __modsi3:
         .type __divmodsi4,@function
 __divmodsi4:
         LDI     r0, 2
-        MTS     s3, r0
+        MTS     s4, r0
 
 .Lsdiv_flags:
-        LDI     r0, 0                  // bit 2: numerator, bit 3: divisor
-        MTS     s4, r0
+        OR      r0, r1, r2
+        BGEZ    .Ludiv_common         // both operands are nonnegative
         MOV     r0, r1
         BGEZ    .Lsdiv_numerator_positive
+        LDI     r0, 0
+        SUB     r1, r0, r1
         MFS     r0, s4
         ORI     r0, 4
         MTS     s4, r0
 .Lsdiv_numerator_positive:
         MOV     r0, r2
         BGEZ    .Ludiv_common
+        LDI     r0, 0
+        SUB     r2, r0, r2
         MFS     r0, s4
         ORI     r0, 8
         MTS     s4, r0
         JMP8    .Ludiv_common
         .size __divmodsi4, . - __divmodsi4
 
-        .global __udivsi3
-        .hidden __udivsi3
-        .type __udivsi3,@function
-__udivsi3:
-        LDI     r0, 0
-        MTS     s3, r0
-        MTS     s4, r0
-        LDI     r3, 0
-        JMP8    .Ludiv_common
-        .size __udivsi3, . - __udivsi3
-
         .global __umodsi3
         .hidden __umodsi3
         .type __umodsi3,@function
 __umodsi3:
         LDI     r0, 1
-        MTS     s3, r0
-        LDI     r0, 0
         MTS     s4, r0
-        LDI     r3, 0
         JMP8    .Ludiv_common
         .size __umodsi3, . - __umodsi3
 
@@ -103,61 +121,68 @@ __umodsi3:
         .type __udivmodsi4,@function
 __udivmodsi4:
         LDI     r0, 2
-        MTS     s3, r0
-        LDI     r0, 0
         MTS     s4, r0
 
 .Ludiv_common:
-        MTS     s2, r4
-        ADDI    r7, -8
-        ST      r5, [r7 + 0]
-        ST      r6, [r7 + 4]
-
-        MFS     r0, s4
-        ANDI    r0, 4
-        BEQZ    .Ludiv_numerator_ready
-        LDI     r0, 0
-        SUB     r1, r0, r1
-.Ludiv_numerator_ready:
-        MFS     r0, s4
-        ANDI    r0, 8
-        BEQZ    .Ludiv_denominator_ready
-        LDI     r0, 0
-        SUB     r2, r0, r2
-.Ludiv_denominator_ready:
-
-        LDI     r4, 0                  // remainder
-        LDI     r5, 0                  // quotient
-        LDI     r6, 32
+        // Common cases need no working-register saves or division rounds.
         MOV     r0, r2
-        BEQZ    .Ludiv_zero
+        BEQZ    .Ludiv_quotient_zero   // runtime zero-divisor convention
+        SLTU    r0, r1, r2
+        BNEZ    .Ludiv_quotient_zero
+        CMPI    r2, 1
+        BEQZ    .Ludiv_divisor_one
+        SRLI    r0, r1, 1             // numerator / 2 avoids divisor overflow
+        SLTU    r0, r0, r2
+        BNEZ    .Ludiv_quotient_one    // divisor <= numerator < 2 * divisor
+
+.Ludiv_normalize:
+        MTS     s2, r4
+        MTS     s3, r6
+        MOV     r4, r1                 // remainder
+        SRLI    r1, r1, 1             // alignment limit, then quotient
+        LDI     r6, 1                  // current quotient bit
+
+        // Quotient >= 2. Align the divisor, then process only useful bits.
+.Ludiv_align:
+        ADD     r2, r2, r2
+        ADD     r6, r6, r6
+        SLTU    r0, r1, r2
+        BEQZ    .Ludiv_align
+        LDI     r1, 0
 .Ludiv_loop:
-        ADD     r4, r4, r4
-        LDI     r0, 0
-        SLT     r0, r1, r0             // old numerator top bit
-        OR      r4, r4, r0
-        ADD     r1, r1, r1
-        ADD     r5, r5, r5
         SLTU    r0, r4, r2
         BNEZ    .Ludiv_no_subtract
         SUB     r4, r4, r2
-        ORI     r5, 1
+        OR      r1, r1, r6
 .Ludiv_no_subtract:
-        ADDI    r6, -1
+        SRLI    r6, r6, 1
+        SRLI    r2, r2, 1
         MOV     r0, r6
         BNEZ    .Ludiv_loop
+        MOV     r2, r4
+        MFS     r4, s2
+        MFS     r6, s3
         JMP8    .Ludiv_finish
 
-.Ludiv_zero:
-        /* Match the wide helpers: quotient zero, remainder numerator. */
-        MOV     r4, r1
+.Ludiv_quotient_zero:
+        MOV     r2, r1
+        LDI     r1, 0
+        JMP8    .Ludiv_finish
+.Ludiv_quotient_one:
+        SUB     r2, r1, r2
+        LDI     r1, 1
+        JMP8    .Ludiv_finish
+.Ludiv_divisor_one:
+        LDI     r2, 0
 
 .Ludiv_finish:
+        // R1 is the quotient and R2 the remainder on every path.
         MFS     r0, s4
+        BEQZ    .Ludiv_return          // unsigned or positive quotient
         ANDI    r0, 4
         BEQZ    .Ludiv_remainder_sign_ready
         LDI     r0, 0
-        SUB     r4, r0, r4
+        SUB     r2, r0, r2
 .Ludiv_remainder_sign_ready:
         MFS     r0, s4
         ANDI    r0, 12
@@ -165,24 +190,19 @@ __udivmodsi4:
         CMPI    r0, 12
         BEQZ    .Ludiv_quotient_sign_ready
         LDI     r0, 0
-        SUB     r5, r0, r5
+        SUB     r1, r0, r1
 .Ludiv_quotient_sign_ready:
-        MFS     r0, s3
-        BEQZ    .Ludiv_quotient
+        MFS     r0, s4
+        ANDI    r0, 3
+        BEQZ    .Ludiv_return
         ADDI    r0, -1
         BEQZ    .Ludiv_remainder
         MOV     r0, r3
-        BEQZ    .Ludiv_quotient
-        ST      r4, [r3 + 0]
-.Ludiv_quotient:
-        MOV     r1, r5
-        JMP8    .Ludiv_return
-.Ludiv_remainder:
-        MOV     r1, r4
+        BEQZ    .Ludiv_return
+        ST      r2, [r3 + 0]
 .Ludiv_return:
-        MFS     r4, s2
-        LD      r5, [r7 + 0]
-        LD      r6, [r7 + 4]
-        ADDI    r7, 8
+        RET     s7
+.Ludiv_remainder:
+        MOV     r1, r2
         RET     s7
         .size __udivmodsi4, . - __udivmodsi4

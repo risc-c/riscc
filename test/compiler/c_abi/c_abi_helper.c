@@ -109,3 +109,62 @@ double c_abi_double_scale(double value)
 {
     return value * 2.0 + 1.0;
 }
+
+static unsigned observed;
+static unsigned calls_left, bytes_seen;
+
+static __attribute__((noinline)) unsigned consume_byte(unsigned byte)
+{
+    bytes_seen += byte;
+    return --calls_left;
+}
+
+static __attribute__((noinline)) unsigned recover_pointer(unsigned char *base)
+{
+    volatile unsigned char *adjusted = base + 3;
+    do {} while (consume_byte(*adjusted));
+    return base[0] + base[1];
+}
+
+static __attribute__((noinline)) unsigned store_predicate(unsigned value)
+{
+    return value & 1;
+}
+
+/* The initial value is dead on three arms. On the reading arm, however,
+ * out can alias observed: moving its store past that read changes the result. */
+static __attribute__((noinline)) void partial_store(unsigned *out, unsigned which)
+{
+    *out = store_predicate(which) ? 9 : which;
+    switch (which)
+    {
+    case 0: *out = 10; break;
+    case 1: *out = observed + 11; break;
+    case 2: *out = 20; break;
+    case 4: *out = 40; break;
+    default: break;
+    }
+}
+
+u16 c_abi_partial_stores(void)
+{
+    static const unsigned expected[] = {10, 34, 20, 9, 40, 9, 6};
+    unsigned separate;
+    for (unsigned i = 0; i != 7; ++i)
+    {
+        observed = 23;
+        partial_store(&separate, i);
+        if (separate != expected[i] || observed != 23)
+            return 0;
+        observed = 23;
+        partial_store(&observed, i);
+        if (observed != (i == 1 ? 20 : expected[i]))
+            return 0;
+    }
+    unsigned char bytes[] = {5, 7, 11, 13};
+    calls_left = 5;
+    bytes_seen = 0;
+    if (recover_pointer(bytes) != 12 || calls_left || bytes_seen != 65)
+        return 0;
+    return 1;
+}

@@ -1,11 +1,11 @@
 /*
- * Size-oriented RC16 constant shifts for the Min, Sys, and Nano profiles.
+ * Shared RC16 shifts for the Min, Sys, Full, and Nano profiles.
  *
  * Every rung is an input section, but its R_RISCC_NONE relocation keeps the
  * next rung live.  Therefore --gc-sections retains exactly the suffix entered
  * by a constant-count helper without adding a branch between fall-through
- * shifts.  The variable-count helpers are compact bounded loops, so using one
- * does not pull in a whole direction's staircase.
+ * shifts. Size builds use compact variable-count loops; speed builds jump
+ * into the same rungs. Each direction is linked only when used.
  */
 
 #ifdef __RISCC_NANO__
@@ -20,6 +20,22 @@
         .type \name,@function
 \name:
         .endm
+
+        .macro VARIABLE_SHIFT stem
+        .section .text.\stem\()_fast,"ax",@progbits
+        .p2align 1
+        SHIFT_LABEL \stem\()_fast
+        // Reference the first rung to retain the whole fall-through chain.
+        LDI16   r0, \stem\()15 + 15*2
+        ADD     r2, r2, r2
+        SUB     r0, r0, r2
+        JMP     r0
+        .size \stem\()_fast, . - \stem\()_fast
+        .endm
+
+        VARIABLE_SHIFT __riscc_shlhi
+        VARIABLE_SHIFT __riscc_lshrhi
+        VARIABLE_SHIFT __riscc_ashrhi
 
         .macro SHL_STEP count, next
         .section .text.__riscc_shlhi\count,"ax",@progbits

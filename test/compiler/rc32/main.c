@@ -64,6 +64,11 @@ int main(void)
             fail((u16)(0x100u + detail));
     }
     {
+        u16 detail = rc32_test_division();
+        if (detail)
+            fail((u16)(0x400u + detail));
+    }
+    {
         u16 detail = rc32_test_float();
         if (detail)
             fail((u16)(0x200u + detail));
@@ -72,6 +77,12 @@ int main(void)
         u16 detail = rc32_test_tail();
         if (detail)
             fail((u16)(0x300u + detail));
+    }
+
+    {
+        u16 detail = rc32_test_codegen();
+        if (detail)
+            fail((u16)(0x500u + detail));
     }
 
     RESULT = 0x600d;

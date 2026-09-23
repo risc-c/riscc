@@ -3,13 +3,13 @@
 
 #include "internal.h"
 
-static int16_t float_is_nan(riscc_float_shape shape)
+static int float_is_nan(riscc_float_shape shape)
 {
     return (shape.word[1] & UINT16_C(0x7f80)) == UINT16_C(0x7f80) &&
         ((shape.word[1] & UINT16_C(0x007f)) || shape.word[0]);
 }
 
-static int16_t double_is_nan(riscc_double_shape shape)
+static int double_is_nan(riscc_double_shape shape)
 {
     return (shape.word[3] & UINT16_C(0x7ff0)) == UINT16_C(0x7ff0) &&
         ((shape.word[3] & UINT16_C(0x000f)) || shape.word[2] ||
@@ -18,37 +18,29 @@ static int16_t double_is_nan(riscc_double_shape shape)
 
 static void increment_float(riscc_float_shape *shape)
 {
-    if (++shape->word[0] == 0)
-        ++shape->word[1];
+    ++shape->bits;
 }
 
 static void decrement_float(riscc_float_shape *shape)
 {
-    if (shape->word[0]-- == 0)
-        --shape->word[1];
+    --shape->bits;
 }
 
 static void increment_double(riscc_double_shape *shape)
 {
-    uint16_t index;
-    for (index = 0; index != 4; ++index)
-        if (++shape->word[index])
-            return;
+    ++shape->bits;
 }
 
 static void decrement_double(riscc_double_shape *shape)
 {
-    uint16_t index;
-    for (index = 0; index != 4; ++index)
-        if (shape->word[index]--)
-            return;
+    --shape->bits;
 }
 
 float nextafterf(float from, float toward)
 {
     riscc_float_shape from_shape = {from};
     riscc_float_shape toward_shape = {toward};
-    int16_t increase;
+    int increase;
 
     if (float_is_nan(from_shape))
     {
@@ -83,7 +75,7 @@ double nextafter(double from, double toward)
 {
     riscc_double_shape from_shape = {from};
     riscc_double_shape toward_shape = {toward};
-    int16_t increase;
+    int increase;
 
     if (double_is_nan(from_shape))
     {
