@@ -248,7 +248,9 @@ An immediately preceding ALU/CMP write to r0 defers the branch to Execute:
 two bubbles if taken, none if not taken. Scheduling one independent instruction
 between an ALU/CMP, shift, or multiply producer and its branch enables the
 one-bubble taken path; loads need two. Pending load results retain the existing
-load-use interlock and resolve in Execute. JALR, RET, and JALL retain two redirect bubbles. Both board
+load-use interlock and resolve in Execute. LLVM's default
+[branch scheduling](PROGRAMMING.md#2-choose-a-target) fills these gaps with
+independent work. JALR, RET, and JALL retain two redirect bubbles. Both board
 demos enable registered fetch.
 
 Reset clears cache validity in 64 clocks for RC16 or 32 for RC32. Stores
@@ -521,39 +523,37 @@ instruction-count differences. Memory fixtures match those described above.
 
 ### Compiler benchmark cycles
 
-These compiler benchmark measurements predate the Decode-stage branch changes.
-
 Both widths compile the same C programs at `-O2` for the Full profile,
 with the size-optimized runtime libraries and standard-library optimizations enabled.
 The RC16 MulH/MulDiv columns reuse the Full binary; MulDiv also speeds up FSL1.
 
 | Benchmark | RC16 Full /16 | RC16 MulH /16 | RC16 MulDiv /16 | RC32 Full /32 |
 |---|---:|---:|---:|---:|
-| `int32` | 156236 | 156236 | 151440 | 66557 |
-| `softfloat` | 366094 | 366094 | 361395 | 387796 |
-| `libm32` | 28625 | 28625 | 28219 | 27418 |
-| `matrix` | 188835 | 188835 | 186630 | 214918 |
-| `structures` | 7823 | 7823 | 7823 | 9882 |
-| `dhrystone` | 2174198 | 2174198 | 2174198 | 1402563 |
-| `memory_copy` | 1122711 | 1122711 | 1122711 | 277885 |
-| `memory_update` | 442580 | 442580 | 442580 | 222964 |
-| `memory_chase` | 1572078 | 1572078 | 1572078 | 545984 |
-| Total | 6059180 | 6059180 | 6047074 | 3155967 |
+| `int32` | 156234 | 156234 | 151438 | 66555 |
+| `softfloat` | 366092 | 366092 | 361393 | 387794 |
+| `libm32` | 28621 | 28621 | 28215 | 27410 |
+| `matrix` | 188741 | 188741 | 186536 | 214815 |
+| `structures` | 7821 | 7821 | 7821 | 9814 |
+| `dhrystone` | 2166196 | 2166196 | 2166196 | 1377561 |
+| `memory_copy` | 1122709 | 1122709 | 1122709 | 277883 |
+| `memory_update` | 442578 | 442578 | 442578 | 221685 |
+| `memory_chase` | 1572076 | 1572076 | 1572076 | 535676 |
+| Total | 6051068 | 6051068 | 6038962 | 3119193 |
 
 Pipelined DSP cores with ECP5 block RF:
 
 | Benchmark | RC16 Fast | RC32 Fast | RC16 Cached, SRAM | RC32 Cached, SRAM |
 |---|---:|---:|---:|---:|
-| `int32` | 64258 | 27855 | 65757 | 28448 |
-| `softfloat` | 164088 | 185994 | 164631 | 175223 |
-| `libm32` | 12968 | 13367 | 12963 | 12511 |
-| `matrix` | 82734 | 101793 | 82839 | 99594 |
-| `structures` | 3494 | 4529 | 3462 | 3975 |
-| `dhrystone` | 1021131 | 729670 | 942047 | 511836 |
-| `memory_copy` | 451762 | 159923 | 405692 | 97422 |
-| `memory_update` | 198864 | 130562 | 147534 | 78830 |
-| `memory_chase` | 640129 | 288878 | 571516 | 216148 |
-| Total | 2639428 | 1642571 | 2396441 | 1223987 |
+| `int32` | 64258 | 27855 | 64245 | 26907 |
+| `softfloat` | 164088 | 185994 | 160764 | 173565 |
+| `libm32` | 12968 | 13367 | 12686 | 12390 |
+| `matrix` | 82704 | 101749 | 81199 | 98842 |
+| `structures` | 3494 | 4507 | 3342 | 3849 |
+| `dhrystone` | 1015131 | 714670 | 891963 | 486734 |
+| `memory_copy` | 451762 | 159923 | 402636 | 93343 |
+| `memory_update` | 198864 | 130052 | 145039 | 75823 |
+| `memory_chase` | 640129 | 284740 | 565374 | 205874 |
+| Total | 2633398 | 1622857 | 2327248 | 1177327 |
 
 `dhrystone` adapts [Dhrystone 2.1](https://www.netlib.org/benchmark/dhry-c)
 for bare-metal execution with static records, 1,000 iterations, and final-state
@@ -566,11 +566,14 @@ separately. The cycle tables above use the default `-Oz` libraries; select
 
 | Core | RC16, `-Oz` libs | RC32, `-Oz` libs | RC16, `-O2` libs | RC32, `-O2` libs |
 |---|---:|---:|---:|---:|
-| Wide Full, native width | 0.265 | 0.415 | 0.294 | 0.419 |
-| Fast soft | 0.563 | 0.785 | 0.619 | 0.793 |
-| Fast DSP | 0.567 | 0.802 | 0.623 | 0.810 |
-| Cached soft, SRAM | 0.612 | 1.120 | 0.682 | 1.138 |
-| Cached DSP, SRAM | 0.615 | 1.150 | 0.687 | 1.169 |
+| Wide Full, native width | 0.266 | 0.423 | 0.304 | 0.428 |
+| Fast soft | 0.566 | 0.802 | 0.642 | 0.813 |
+| Fast DSP | 0.570 | 0.819 | 0.647 | 0.831 |
+| Cached soft, SRAM | 0.647 | 1.178 | 0.748 | 1.201 |
+| Cached DSP, SRAM | 0.650 | 1.211 | 0.753 | 1.235 |
+
+With speed libraries, Cached DSP's timed loops take 756,009 cycles on RC16
+and 461,011 on RC32; linked text sizes are 1,924 and 1,950 bytes.
 
 The memory tests use volatile 32-bit data and unrolled loops on both widths.
 `memory_copy` makes eight round trips between two 4 KiB buffers;
@@ -579,9 +582,10 @@ an 8 KiB chain of indices 16 times, updating each visited node. All verify
 every element. Cycle counts include startup, initialization, and verification.
 
 Cached runs with direct instruction/data SRAM: one-clock responses, no cache
-misses, and one independent load/store per clock. It uses the boards'
-`REGISTER_FETCH` setting, so taken branches cost three cycles. Fast uses its
-direct 16-bit SRAM port. These are RTL simulations, not board measurements.
+misses, and one independent load/store per clock. Cached uses `REGISTER_FETCH`
+with Decode-stage branches; applications and libraries use the compiler's
+default branch scheduling. Fast uses its direct 16-bit SRAM port. These are
+RTL simulations, not board measurements.
 
 ```sh
 make bench bench-cached

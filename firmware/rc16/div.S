@@ -171,8 +171,8 @@
         // including divisors with their top bit set. Zero division returns
         // quotient zero and the original numerator as remainder.
         .macro DIVIDE_NATIVE
-        LDI     r4, 0
         MOV     r0, r2
+        LDI     r4, 0
         BEQZ    .Lnative_done\@
         SLTU    r0, r1, r2
         BNEZ    .Lnative_done\@
@@ -181,13 +181,13 @@
         BEQZ    .Lnative_one\@
         MOV     r3, r1
         SRLI    r3, r3, 1
-        LDI     r5, 1
         SLTU    r0, r3, r2
+        LDI     r5, 1
         BNEZ    .Lnative_loop\@
 .Lnative_align\@:
         ADD     r2, r2, r2
-        ADD     r5, r5, r5
         SLTU    r0, r3, r2
+        ADD     r5, r5, r5
         BEQZ    .Lnative_align\@
 .Lnative_loop\@:
         SLTU    r0, r1, r2
@@ -196,8 +196,8 @@
         OR      r4, r4, r5
 .Lnative_keep\@:
         SRLI    r5, r5, 1
-        SRLI    r2, r2, 1
         MOV     r0, r5
+        SRLI    r2, r2, 1
         BNEZ    .Lnative_loop\@
         JMP8    .Lnative_done\@
 .Lnative_one\@:

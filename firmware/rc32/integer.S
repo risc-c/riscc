@@ -10,17 +10,17 @@
         .endm
 
         RC32_FUNCTION __mulsi3
-        LDI     r3, 0
         MOV     r0, r2
+        LDI     r3, 0
         BEQZ    .Lmul_done
 .Lmul_loop:
         ANDI    r0, 1
         BEQZ    .Lmul_skip_add
         ADD     r3, r3, r1
 .Lmul_skip_add:
-        ADD     r1, r1, r1
         SRLI    r2, r2, 1
         MOV     r0, r2
+        ADD     r1, r1, r1
         BNEZ    .Lmul_loop
 .Lmul_done:
         MOV     r1, r3
@@ -45,16 +45,16 @@ __divsi3:
         .type __udivsi3,@function
 __udivsi3:
         // Quotient-only entries need no mode or sign bookkeeping here.
-        MOV     r0, r2
-        BEQZ    .Ludiv_return_zero
-        SLTU    r0, r1, r2
-        BNEZ    .Ludiv_return_zero
+        // n/2 < d proves d is nonzero and the quotient is zero or one.
         SRLI    r0, r1, 1
         SLTU    r0, r0, r2
         BEQZ    .Ludiv_large_quotient
-        LDI     r1, 1
+        SLTU    r1, r1, r2
+        XORI    r1, 1
         RET     s7
 .Ludiv_large_quotient:
+        MOV     r0, r2
+        BEQZ    .Ludiv_return_zero
         CMPI    r2, 1
         BEQZ    .Ludiv_return
         LDI     r0, 0
@@ -145,8 +145,8 @@ __udivmodsi4:
         // Quotient >= 2. Align the divisor, then process only useful bits.
 .Ludiv_align:
         ADD     r2, r2, r2
-        ADD     r6, r6, r6
         SLTU    r0, r1, r2
+        ADD     r6, r6, r6
         BEQZ    .Ludiv_align
         LDI     r1, 0
 .Ludiv_loop:
@@ -156,8 +156,8 @@ __udivmodsi4:
         OR      r1, r1, r6
 .Ludiv_no_subtract:
         SRLI    r6, r6, 1
-        SRLI    r2, r2, 1
         MOV     r0, r6
+        SRLI    r2, r2, 1
         BNEZ    .Ludiv_loop
         MOV     r2, r4
         MFS     r4, s2

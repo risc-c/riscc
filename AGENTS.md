@@ -58,6 +58,18 @@ recorded results.
   benefit unavailable from a generic form.
 - Reject affected LUT/site increases or Fmax decreases without a measured
   compensating benefit. RC16/Nano are area-first; Fast targets MIPS per LUT/LE.
+- For compiler and runtime optimizations, give RC16 and RC32 equal weight.
+  Compare speed and linked code size separately at speed and size optimization
+  levels. Use per-benchmark ratios within each core/configuration; summed raw
+  cycles let long-running workloads dominate. Show results with and without
+  the motivating benchmark, and list regressions even when the average improves.
+- Justify tradeoffs by the general code pattern and representative workloads,
+  including short/common cases and adverse cases for runtime helpers. A
+  Dhrystone gain alone does not justify a broad heuristic change, but a
+  generally applicable optimization is not disqualified because this suite
+  shows its largest benefit there. Weigh the measured costs and benefits. Respect
+  `-Os`/`-Oz`; treat code growth as a regression and justify any accepted
+  exception explicitly. Keep detailed acceptance evidence under `build/`.
 
 Quartus Pro is required for Agilex characterization. Set `QUARTUS_SH` to the
 configured executable and run Quartus outside the sandbox; sandboxed runs can

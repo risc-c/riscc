@@ -127,10 +127,25 @@ extension on both RC16 and RC32 with `PROFILE=2, MDU=2`; see the
 [hardware options](HARDWARE.md#parameterized-full-width-core).
 RC32X remains unsupported and `-mrc32x` is intentionally rejected.
 
+Min, Sys, and Full default to scheduling for the pipeline. For Cached's
+Decode-stage branches, the scheduler places useful independent instructions
+between an r0 producer and its branch: one after ALU/compare, shift, or multiply;
+two after a load. It reorders after register allocation, inserts no NOPs, and
+does not change the ISA or ABI. Nano keeps its existing scheduling.
+
+The default applies when compiling both applications and libraries; rebuild
+libraries to use it. Hand-written assembly is not rescheduled. To disable this
+branch preference, use `llc -mattr=-early-branches` or Clang
+`-Xclang -target-feature -Xclang -early-branches`.
+
 RC32 direct calls are address-range independent. The compiler places a
 full-width target literal, and the linker automatically replaces each Sys or
 Full call whose final target is at or below `0x1ffffe` with `JALL` or `JMPL`.
-Far calls retain `LDPC` plus `JALR`; no code-model option is required.
+Far calls retain `LDPC` plus `JALR`; no code-model option is required. Nearby RC16
+and RC32 direct jumps that do not write a link register can become `JMP8`.
+This rewrite retains the unused second halfword to preserve code and literal
+alignment; it reduces execution cost, not binary size. `--no-relax` disables
+linker relaxation.
 
 ## 3. Compile, link, and inspect programs
 

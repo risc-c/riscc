@@ -35,7 +35,7 @@ int strcmp(const char *left, const char *right)
         const riscc_word_t *right_words = (const riscc_word_t *)right;
         // Speed builds amortize pointer updates; size builds keep one copy.
 #if defined(__OPTIMIZE__) && !defined(__OPTIMIZE_SIZE__)
-#pragma clang loop unroll_count(2)
+#pragma clang loop unroll_count(4)
 #endif
         for (;;)
         {

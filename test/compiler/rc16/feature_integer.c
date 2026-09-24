@@ -1,4 +1,5 @@
 #include "riscc_compiler_features.h"
+#include "../comparison_ranges.h"
 
 static volatile u16 integer_u16_a = 0xf123u;
 static volatile u16 integer_u16_b = 0x1357u;
@@ -135,6 +136,8 @@ static __attribute__((noinline)) u16 check_variable_shifts(u16 value)
 
 u16 feature_test_integer(void)
 {
+    if (test_comparison_ranges())
+        return 30;
     u16 a = integer_u16_a;
     u16 b = integer_u16_b;
     u16 shift = integer_shift;

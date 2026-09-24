@@ -1,4 +1,5 @@
 #include "test.h"
+#include "../comparison_ranges.h"
 
 static __attribute__((noinline)) s32 signed_byte(signed char value)
 {
@@ -136,6 +137,8 @@ static __attribute__((noinline)) u32 masked_merge_sign_high(u32 a, u32 b)
 
 u16 rc32_test_codegen(void)
 {
+    if (test_comparison_ranges())
+        return 14;
     if (byte_loop(120) != -1808 || unsigned_byte_loop(120) != -1808)
         return 1;
     if (half_loop(32760) != -524048)
