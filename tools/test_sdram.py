@@ -69,19 +69,22 @@ def run_controller(root: Path, verilator: str, build_root: Path,
                     data_bits: int, clk_mhz: int, init_cycles: int,
                     refresh_cycles: int, t_ac: str, clock_period_ns: str,
                     seeds: list[int], pin_pipeline: int = 0,
-                    device_phase_ns: str | None = None) -> bool:
+                    device_phase_ns: str | None = None,
+                    oe_active_low: int = 0) -> bool:
     tag_period = clock_period_ns.replace(".", "p")
     tag_tac = t_ac.replace(".", "p")
     tag_phase = "default" if device_phase_ns is None else device_phase_ns.replace(".", "p")
     name = (f"controller-x{data_bits}-clk{clk_mhz}-period{tag_period}-"
             f"tac{tag_tac}-init{init_cycles}-refresh{refresh_cycles}"
             f"-pin{pin_pipeline}-phase{tag_phase}")
+    if oe_active_low:
+        name += "-oe-low"
     mdir = build_root / name
     params = [f"-GDATA_BITS={data_bits}", f"-GCLK_MHZ={clk_mhz}",
               f"-GCLOCK_PERIOD_NS={clock_period_ns}",
               f"-GINIT_CYCLES={init_cycles}",
               f"-GREFRESH_CYCLES={refresh_cycles}", f"-GT_AC={t_ac}",
-              f"-GPIN_PIPELINE={pin_pipeline}"]
+              f"-GPIN_PIPELINE={pin_pipeline}", f"-GOE_ACTIVE_LOW={oe_active_low}"]
     if device_phase_ns is not None:
         params.append(f"-GDEVICE_CLK_PHASE_NS={device_phase_ns}")
     sources = [root / "boards/shared/rtl/riscc_sdram.v",
@@ -229,6 +232,13 @@ def main() -> int:
                               clk_mhz, init_cycles, refresh_cycles, t_ac,
                               period, seeds, pin_pipeline=1,
                               device_phase_ns=phase):
+            return 1
+        # Icepi drives native I/O tristate registers from the controller's
+        # active-low output. Both polarities must have identical pin timing.
+        if not run_controller(root, args.verilator, build_root, data_bits,
+                              clk_mhz, init_cycles, refresh_cycles, t_ac,
+                              period, seeds, pin_pipeline=1,
+                              device_phase_ns=phase, oe_active_low=1):
             return 1
     if not args.skip_cache:
         cache_rates = ((50, "20.0", "6.0"), (125, "8.0", "6.0"),

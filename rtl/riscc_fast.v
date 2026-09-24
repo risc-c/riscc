@@ -373,11 +373,6 @@ module riscc_fast #(
                           {1'b0, adjusted_alu_b} +
                           {{XLEN{1'b0}}, alu_carry_in};
     assign alu_result = alu_sum[XLEN-1:0];
-    wire alu_carry_out = alu_sum[XLEN];
-    wire alu_overflow = (alu_a[XLEN-1] ^ alu_b[XLEN-1]) &
-                        (alu_result[XLEN-1] ^ alu_a[XLEN-1]);
-    wire signed_less = alu_result[XLEN-1] ^ alu_overflow;
-    wire unsigned_less = ~alu_carry_out;
     wire x_compare = x_alu_kind_q[1] && !x_alu_kind_q[0];
 
     reg r0_negative_q, r0_zero_q;
@@ -456,7 +451,9 @@ module riscc_fast #(
     wire [XLEN-1:0] pc_write_data = alu_result;
     // Calls/EPC and arithmetic now use the same ALU result. Select that
     // shared source once; compares, memory, multiply and bypass are disjoint.
-    wire compare_value = x_f3[0] ? unsigned_less : signed_less;
+    // Signed and unsigned order differ only when the operand signs differ.
+    wire compare_value = !alu_sum[XLEN] ^
+        ((alu_a[XLEN-1] ^ alu_b[XLEN-1]) && !x_f3[0]);
     wire write_arithmetic = pc_write || x_alu_kind_q[0];
     wire [XLEN-1:0] rf_wdata = write_arithmetic ? alu_result :
         in_mul ? mul_write_data :

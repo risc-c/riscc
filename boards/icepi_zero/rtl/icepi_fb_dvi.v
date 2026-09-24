@@ -20,13 +20,15 @@ module icepi_fb_dvi (
     output wire [3:0]  tmds
 );
     localparam [10:0] H_ACTIVE = 11'd1280;
+    localparam [10:0] H_SYNC_START = 11'd1390;
+    localparam [10:0] H_SYNC_END = 11'd1430;
     localparam [10:0] H_TOTAL = 11'd1650;
     localparam [9:0] V_ACTIVE = 10'd720;
     localparam [9:0] V_TOTAL = 10'd750;
     reg [10:0] h_count_q;
     reg [9:0] v_count_q;
     wire active = h_count_q < H_ACTIVE && v_count_q < V_ACTIVE;
-    wire hsync = h_count_q >= 11'd1390 && h_count_q < 11'd1430;
+    wire hsync = h_count_q >= H_SYNC_START && h_count_q < H_SYNC_END;
     wire vsync = v_count_q >= 10'd725 && v_count_q < 10'd730;
     wire [10:0] active_x = h_count_q;
     wire [9:0] active_y = v_count_q;
@@ -74,13 +76,16 @@ module icepi_fb_dvi (
             hsync_q <= 1'b1;
             vsync_q <= 1'b1;
         end else begin
-            if (h_count_q == H_TOTAL - 10'd1) begin
+            if (h_count_q == H_TOTAL - 11'd1) begin
                 h_count_q <= 11'd0;
+            end else begin
+                h_count_q <= h_count_q + 11'd1;
+            end
+            // CEA-861 progressive sync edges coincide. Advance the video
+            // line at HSYNC, before the following line's active pixels.
+            if (h_count_q == H_SYNC_START - 11'd1)
                 v_count_q <= (v_count_q == V_TOTAL - 10'd1) ?
                              10'd0 : (v_count_q + 10'd1);
-            end else begin
-                h_count_q <= h_count_q + 10'd1;
-            end
 
             active_x_q <= active_x;
             active_y_q <= active_y;

@@ -344,43 +344,11 @@ module riscc_cached_sram_tb #(
         d_access(32'h3ffc, 1'b0, 4'hf, 0, 32'hcafef00d);
         d_access(32'h4000, 1'b0, 4'hf, 0, backing[14'h1000]);
 
-        // A same-word write accepts alongside the fetch, suppresses the
-        // stale instruction response, and retries the retained address.
-        @(negedge clk);
-        i_addr_q = 4 >> 1; i_cyc_q = 1'b1; i_stb_q = 1'b1;
-        d_addr_q = 4 >> 2; d_wdata_q = 32'h0000cafe; d_sel_q = 4'h3;
-        d_we_q = 1'b1; d_cyc_q = 1'b1; d_stb_q = 1'b1;
-        #1;
-        if (i_stall || d_stall)
-            fail("same-word collision was stalled before acceptance");
-        // Both requests are accepted at this edge. The data response is
-        // immediate, while the colliding instruction response is suppressed.
-        @(posedge clk); #1;
-        if (!d_ack || i_ack)
-            fail("collision did not suppress the stale instruction response");
-        if (!i_stall)
-            fail("collision did not retain the instruction retry");
-        // Keep a second same-word write active during the retry. This checks
-        // that repeated conflicts continue to suppress stale fetch data.
-        @(negedge clk);
-        i_stb_q = 1'b0;
-        d_wdata_q = 32'h0000beef;
-        #1;
-        if (!i_stall || d_stall)
-            fail("repeated collision did not retain retry state");
-        @(posedge clk); #1;
-        if (!d_ack || i_ack)
-            fail("repeated collision produced an early instruction response");
-        @(negedge clk);
-        d_stb_q = 1'b0;
-        #1;
-        if (!i_stall)
-            fail("retry was released before its reread edge");
-        @(posedge clk); #1;
-        if (!i_ack || i_data !== 16'hbeef)
-            fail("retry instruction response did not read the stored word");
-        @(negedge clk);
-        i_cyc_q = 1'b0; d_cyc_q = 1'b0; d_we_q = 1'b0;
+        // Instruction fetch must follow a completed write. Simultaneous
+        // mixed-port reads and writes of one SRAM word are undefined.
+        d_access(4, 1'b1, 4'h3, 32'h0000cafe, 0);
+        i_read(4, 16'hcafe);
+        d_access(4, 1'b1, 4'h3, 32'h0000beef, 0);
         i_read(4, 16'hbeef);
 
         // Hold a cache refill at the backing port. A local data request must
@@ -464,7 +432,7 @@ module riscc_cached_sram_tb #(
         if (backend_accepts != n + 17 || backend_writes != 1)
             fail("instruction invalidation did not refill exactly one line");
 
-        $display("PASS Cached SRAM: init, masks, halfwords, dual-port, collision, cache stall (backing=%0d writes=%0d)",
+        $display("PASS Cached SRAM: init, masks, halfwords, dual-port, ordered code write, cache stall (backing=%0d writes=%0d)",
                  backend_accepts, backend_writes);
         $finish;
     end

@@ -27,6 +27,7 @@ test-video-palette:
 test-icepi-tmds:
 	$(PYTHON) tools/test_tmds_encoder.py
 	$(PYTHON) tools/test_tmds_serializer.py
+	$(PYTHON) tools/test_icepi_video_timing.py
 
 # Standalone external-memory controllers and their cache-facing protocol.
 .PHONY: test-sdram fuzz-sdram

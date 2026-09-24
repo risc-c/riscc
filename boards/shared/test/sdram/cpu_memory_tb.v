@@ -246,10 +246,9 @@ module cpu_memory_tb #(
                 if (!cpu_stall || cpu_ack) $fatal(1, "SDRAM access accepted before ready");
                 waited_for_sdram = 1;
             end
-            if (cpu_cyc && cpu_stb && !cpu_stall) begin
-                if (cpu_we) writes = writes + 1;
-                else reads = reads + 1;
-            end
+            // The LED is written by the CPU on an earlier edge. Check the
+            // completed phase before counting a request accepted on this
+            // edge, so that the request belongs to the following phase.
             if (led[3:0] != phase) begin
                 case (led[3:0])
                     1: if (reads != 0 || writes != 56) $fatal(1,"store miss allocated reads=%0d writes=%0d",reads,writes);
@@ -283,6 +282,10 @@ module cpu_memory_tb #(
                     default: $fatal(1,"unexpected CPU phase %d",led);
                 endcase
                 phase = led[3:0]; phase_reads = reads; phase_writes = writes;
+            end
+            if (cpu_cyc && cpu_stb && !cpu_stall) begin
+                if (cpu_we) writes = writes + 1;
+                else reads = reads + 1;
             end
         end
     end

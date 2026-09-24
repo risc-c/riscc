@@ -9,6 +9,7 @@
 
 module riscc_sdram_tb #(
     parameter integer DATA_BITS = 16,
+    parameter integer OE_ACTIVE_LOW = 0,
     parameter integer ROW_BITS = 13,
     parameter integer COL_BITS = 9,
     parameter integer CLK_MHZ = 50,
@@ -76,7 +77,8 @@ module riscc_sdram_tb #(
     wire [BYTE_BITS-1:0] dut_sd_dqm;
     wire [DATA_BITS-1:0] dut_sd_dq_o;
     wire [DATA_BITS-1:0] sd_dq_i;
-    wire dut_sd_dq_oe;
+    wire dut_sd_dq_oe_raw;
+    wire dut_sd_dq_oe = dut_sd_dq_oe_raw ^ (OE_ACTIVE_LOW != 0);
     wire sd_cke, sd_cs_n, sd_ras_n, sd_cas_n, sd_we_n;
     wire [12:0] sd_addr;
     wire [1:0] sd_ba;
@@ -85,6 +87,7 @@ module riscc_sdram_tb #(
     wire sd_dq_oe;
 
     riscc_sdram #(
+        .OE_ACTIVE_LOW(OE_ACTIVE_LOW),
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
         .CLK_MHZ(CLK_MHZ), .INIT_CYCLES(INIT_CYCLES),
         .REFRESH_CYCLES(REFRESH_CYCLES), .CAS(CAS), .TRCD(TRCD),
@@ -99,7 +102,7 @@ module riscc_sdram_tb #(
         .sd_cs_n(dut_sd_cs_n), .sd_ras_n(dut_sd_ras_n),
         .sd_cas_n(dut_sd_cas_n), .sd_we_n(dut_sd_we_n),
         .sd_addr(dut_sd_addr), .sd_ba(dut_sd_ba), .sd_dqm(dut_sd_dqm),
-        .sd_dq_i(sd_dq_i), .sd_dq_o(dut_sd_dq_o), .sd_dq_oe(dut_sd_dq_oe)
+        .sd_dq_i(sd_dq_i), .sd_dq_o(dut_sd_dq_o), .sd_dq_oe(dut_sd_dq_oe_raw)
     );
 
     generate

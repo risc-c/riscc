@@ -57,8 +57,10 @@ module atum_a3_nano_soc #(
     wire periph_region = &mem_addr[29:4];
     wire sdram_sel;
     reg sdram_pending_q;
-    assign mem_stall = (sdram_pending_q && !sdram_ack) ||
-                       (sdram_sel && sdram_stall);
+    // Shared-port backpressure is independent of the offered address.
+    // MMIO also waits for bridge capacity, keeping address classification
+    // out of the CPU's completion and issue control path.
+    assign mem_stall = (sdram_pending_q && !sdram_ack) || sdram_stall;
     assign sdram_addr = mem_addr[23:0];
     assign sdram_wdata = mem_wdata;
     assign sdram_wmask = mem_wmask;

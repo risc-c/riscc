@@ -98,15 +98,10 @@ module riscc_cached #(
             // Speculative SRAM reads have no side effects. Cache backpressure
             // belongs to a nonlocal reply; it need not gate the SRAM read ports.
             wire d_read = d_stb && !d_we;
-            // Retry a fetch that overlaps a store to the same word. Keeping the
-            // comparison out of STALL avoids a data-ALU-to-fetch combinational path.
-            reg retry_q;
-            reg [WORD_BITS-1:0] retry_addr_q;
+            // Software must keep instruction fetches clear of concurrent
+            // writes to the same word; mixed-port read/write data is undefined.
             wire i_accept = i_cyc && i_stb && i_local && !i_stall && !rst;
-            wire i_read = i_stb || retry_q;
-            wire [WORD_BITS-1:0] read_word = retry_q ? retry_addr_q : i_word;
-            wire instruction_collision = (i_accept || retry_q) && d_accept && d_we &&
-                                         read_word == d_word;
+            wire i_read = i_stb;
             reg i_local_q, d_local_q, i_ack_q, d_ack_q, i_half_q;
             wire [31:0] i_word_q, d_word_q;
             wire [15:0] i_sram_data = i_half_q ? i_word_q[31:16] : i_word_q[15:0];
@@ -150,7 +145,7 @@ module riscc_cached #(
                 .byteena_a(d_sel),
                 .q_a(d_word_q),
                 .data_b(32'b0),
-                .address_b(read_word),
+                .address_b(i_word),
                 .wren_b(1'b0),
                 .rden_b(i_read),
                 .byteena_b(4'hf),
@@ -165,7 +160,7 @@ module riscc_cached #(
             assign d_word_q = d_read_q;
             always @(posedge clk) begin
                 if (i_read)
-                    i_read_q <= ram[read_word];
+                    i_read_q <= ram[i_word];
                 if (d_read)
                     d_read_q <= ram[d_word];
             end
@@ -180,12 +175,10 @@ module riscc_cached #(
             always @(posedge clk) begin
                 if (i_accept) begin
                     i_half_q <= i_addr[0];
-                    retry_addr_q <= i_word;
                 end
             end
             always @(posedge clk) begin
-                i_ack_q <= (i_accept || retry_q) && !instruction_collision;
-                retry_q <= instruction_collision;
+                i_ack_q <= i_accept;
                 d_ack_q <= d_accept;
                 // Retain response ownership through stalls and across boundaries.
                 if (i_cyc && i_stb && !i_stall)
@@ -194,7 +187,6 @@ module riscc_cached #(
                     d_local_q <= d_local;
                 if (rst) begin
                     i_ack_q <= 0;
-                    retry_q <= 0;
                     d_ack_q <= 0;
                     i_local_q <= 0;
                     d_local_q <= 0;
@@ -206,7 +198,7 @@ module riscc_cached #(
             assign d_ack = d_ack_q || cache_d_ack;
             // Each CPU port has at most one pending request. A busy cache owns
             // that port; readiness need not wait for the new address decode.
-            assign i_stall = retry_q || cache_i_stall;
+            assign i_stall = cache_i_stall;
             assign d_stall = cache_d_stall;
         end else begin : g_no_sram
             assign i_local = 1'b0;
@@ -226,8 +218,8 @@ module riscc_cached #(
     wire ib_we, ib_cyc, ib_stb, ib_stall, ib_ack;
     wire db_we, db_cyc, db_stb, db_stall, db_ack;
     wire ib_cacheable, db_cacheable;
-    // The captured store invalidates code before a following jump executes.
-    // A subsequent instruction miss waits behind the ordered backing write.
+    // Captured stores invalidate matching instruction-cache indices.
+    // Software handles ordering with prefetched instructions.
     wire invalidate;
 
     riscc_cached_cache #(
@@ -305,7 +297,9 @@ module riscc_cached #(
     // A refill keeps the backing port until complete. Data has priority
     // between fills. This also orders code stores after older I-cache fills.
     reg instruction_owner_q;
-    wire select_d = db_cyc && !(instruction_owner_q && ib_cyc);
+    // Early Decode redirects need registered ownership release to keep
+    // fetch classification out of the data response and pipeline-stall path.
+    wire select_d = db_cyc && !(instruction_owner_q && (REGISTER_FETCH || ib_cyc));
     assign mem_cacheable = select_d ? db_cacheable : ib_cacheable;
     assign mem_addr = select_d ? db_addr : ib_addr;
     // Only D-cache writes; instruction refills do not consume write data.
@@ -393,10 +387,12 @@ module riscc_cached_pipe #(
     // can complete on the same edge that accepts its replacement.
     // Cache responses stay stable during a stall; raw SRAM needs d_instr_q.
     reg [XLEN-2:0] f_pc_q;
+    reg f_advance_q;
     reg [XLEN-2:0] x_pc_next_q;
     reg i_pending_q, i_discard_q;
     reg data_pending_q;
     reg d_valid_q;
+    reg d_redirected_q;
     reg fetch_held_q;
     reg [15:0] d_instr_q;
     // One completion slot shares the RF write port between ALU and loads.
@@ -524,6 +520,8 @@ module riscc_cached_pipe #(
     reg x_signed_byte_q;
     reg x_indirect_q;
     reg x_jall_q;
+    reg x_early_redirect_q;
+    reg x_late_branch_q;
     reg x_move_q;
     reg x_ie_write_q;
     // Decode also registers the result and arithmetic operand selects.
@@ -727,9 +725,17 @@ module riscc_cached_pipe #(
     wire unsigned_less = ~alu_carry_out;
     wire x_compare = x_alu_kind_q[1] && !x_alu_kind_q[0];
 
-    reg r0_negative_q, r0_zero_q;
-    wire x_branch_taken = x_ddd[2] |
-        ((x_ddd[1] ? r0_negative_q : r0_zero_q) ^ x_ddd[0]);
+    reg r0_negative_q;
+    // Save one nonzero bit per byte; the branch stage combines only two or
+    // four bits. Load data need not traverse a whole-word reduction before
+    // reaching these flops.
+    localparam integer FLAG_BYTES = XLEN / 8;
+    reg [FLAG_BYTES-1:0] r0_nonzero_q;
+    wire r0_zero_q = !(|r0_nonzero_q);
+    // Ready flags resolve in Decode. An adjacent producer uses the newly
+    // saved flags in Execute, preserving the original not-taken timing.
+    wire x_branch_taken = REGISTER_FETCH && !x_late_branch_q ? x_early_redirect_q :
+        x_ddd[2] | ((x_ddd[1] ? r0_negative_q : r0_zero_q) ^ x_ddd[0]);
 
     // Execute completion, control transfers, and issue from Decode.
     wire x_shift_start = normal_x & x_shift_nonzero_q;
@@ -749,8 +755,10 @@ module riscc_cached_pipe #(
     wire x_redirect = normal_x &&
         ((x_branch && x_branch_taken) || x_indirect || (x_jall && d_valid));
     wire [31:0] x_long_target = {11'b0, x_instr_q[10:6], d_instr};
+    wire [XLEN-2:0] x_branch_target = REGISTER_FETCH ?
+        relative_branch_target : alu_result[XLEN-1:1];
     wire [XLEN-2:0] x_redirect_pc = x_jall ? x_long_target[XLEN-1:1] :
-        x_branch ? alu_result[XLEN-1:1] : rf_a[XLEN-1:1];
+        x_branch ? x_branch_target : rf_a[XLEN-1:1];
     wire redirect = take_irq | x_redirect;
     wire i_accept;
     // Redirects cancel any unaccepted fetch; accepted replies are discarded.
@@ -764,7 +772,7 @@ module riscc_cached_pipe #(
     wire [XLEN-2:0] compact_redirect_pc =
         ({{(XLEN-3){1'b0}}, 2'b10} & {(XLEN-1){take_irq}}) |
         (x_long_target[XLEN-1:1] & {(XLEN-1){target_long}}) |
-        (alu_result[XLEN-1:1] & {(XLEN-1){target_branch}}) |
+        (x_branch_target & {(XLEN-1){target_branch}}) |
         (rf_a[XLEN-1:1] & {(XLEN-1){target_register}});
     wire [XLEN-2:0] frontend_redirect_pc = REGISTER_FETCH ?
         (take_irq ? 2 : x_redirect_pc) : compact_redirect_pc;
@@ -788,10 +796,16 @@ module riscc_cached_pipe #(
          (d_reads_ddd && match_ddd) ||
          (d_reads_bbb && match_bbb) ||
          (d_branch && !(|x_dst_q)));
+    // Decode reads saved r0 flags. A branch adjacent to a producer issues
+    // normally and resolves in Execute after that producer saves its flags.
+    wire x_r0_pending = x_valid_q && x_we_q && !(|x_dst_q);
+    wire w_r0_pending = data_pending_q && w_we_q && !(|w_dst_q);
+    wire d_flag_wait = REGISTER_FETCH && d_branch && !d_ddd[2] &&
+        (x_r0_pending || w_r0_pending);
     wire d_issue = !rst && d_valid && x_slot_available && !redirect && !load_use;
 
-    wire d_alu_pc = d_branch | d_ldpc | d_return | d_link_jump;
-    wire d_alu_immediate = d_branch | d_ldpc | d_imm_memory |
+    wire d_alu_pc = (!REGISTER_FETCH && d_branch) | d_ldpc | d_return | d_link_jump;
+    wire d_alu_immediate = (!REGISTER_FETCH && d_branch) | d_ldpc | d_imm_memory |
         (d_imm_alu & ~d_aaa[2] & d_aaa[1]);
     wire d_alu_rf_b = (d_reg_alu_group & ~d_f5[2]) | d_indexed_memory;
     // Share field comparisons with load-use detection. Compare before
@@ -826,9 +840,15 @@ module riscc_cached_pipe #(
         load_native ? dmem_rdata[31:16] : {16{load_sign}},
         load_byte ? {8{load_sign}} : load_half[15:8], accepted_load_byte};
     wire [XLEN-1:0] accepted_load_value = extended_load[XLEN-1:0];
-    // Zero depends only on the selected payload, not its sign extension.
-    wire load_zero = (XLEN == 32 && load_native) ? !(|dmem_rdata) :
-        load_byte ? !(|accepted_load_byte) : !(|load_half);
+    // Reduce each memory byte before lane selection. Zero needs no data
+    // alignment or sign extension, keeping those wide muxes off the flag path.
+    wire [3:0] load_nonzero_bytes = {
+        |dmem_rdata[31:24], |dmem_rdata[23:16],
+        |dmem_rdata[15:8], |dmem_rdata[7:0]};
+    wire [3:0] load_flag_mask = (XLEN == 32 && load_native) ? 4'b1111 :
+        load_byte ? (4'b0001 << {load_upper, load_odd}) :
+        load_upper ? 4'b1100 : 4'b0011;
+    wire [3:0] load_nonzero_lanes = load_nonzero_bytes & load_flag_mask;
 `ifdef RISCC_FAST_SOFT_MUL
     wire [XLEN-1:0] mul_write_data = mul_step;
 `endif
@@ -897,13 +917,27 @@ module riscc_cached_pipe #(
     always @(posedge clk) begin
         if (rf_we && data_pending_q && !(|rf_waddr)) begin
             r0_negative_q <= accepted_load_value[XLEN-1];
-            r0_zero_q <= load_zero;
         end
         if (flags_from_execute) begin
             r0_negative_q <= x_result[XLEN-1];
-            r0_zero_q <= !(|x_result);
         end
     end
+
+    genvar flag_byte;
+    generate
+        for (flag_byte = 0; flag_byte < FLAG_BYTES; flag_byte = flag_byte + 1) begin : g_r0_flags
+            // Fold the upper and lower memory halfwords into the two RC16
+            // flag bytes. Only the selected halfword contributes any bits.
+            wire load_nonzero = load_nonzero_lanes[flag_byte] |
+                ((XLEN == 16) && load_nonzero_lanes[flag_byte + (XLEN == 16 ? 2 : 0)]);
+            always @(posedge clk) begin
+                if (rf_we && data_pending_q && !(|rf_waddr))
+                    r0_nonzero_q[flag_byte] <= load_nonzero;
+                if (flags_from_execute)
+                    r0_nonzero_q[flag_byte] <= |x_result[flag_byte*8 +: 8];
+            end
+        end
+    endgenerate
 
     // Shifts reuse the completion result; RF reads only belong to Decode.
     wire shift_feedback = core_advance &&
@@ -936,45 +970,77 @@ module riscc_cached_pipe #(
         x_native_word_q ? 4'b1111 : (alu_result[1] ? 4'b1100 : 4'b0011);
 
     wire i_ready = !i_pending_q || imem_ack;
-    // A registered Decode stage can retain one instruction while the
-    // memory port holds the following response during an Execute stall.
+    // Decode resolves relative branches with available r0 flags. Execute
+    // retains the original PC until retirement for precise IRQ entry.
+    // Redirect a held Decode branch once, independently of cache completion.
+    // Older control transfers retain priority; pending r0 writers defer the decision to Execute.
+    wire d_early_allowed = REGISTER_FETCH && !rst && d_valid_q &&
+        !d_redirected_q && d_branch &&
+        !(x_valid_q && ((x_branch && x_branch_taken) || x_indirect || x_jall)) &&
+        !(irq_waiting && x_valid_q && in_run);
+    // The target adder runs independently of this two-bit flag test.
+    // There is no combinational Execute-to-fetch result or flag bypass.
+    wire d_early_redirect = d_early_allowed && !d_flag_wait &&
+        (d_ddd[2] || ((d_ddd[1] ? r0_negative_q : r0_zero_q) ^ d_ddd[0]));
+    // The PC is Decode's current address or Execute's successor address.
+    // Share the target adder across both stages; only the short displacement
+    // and successor carry differ. No wide target pipeline register is needed.
+    wire relative_from_execute = x_valid_q && x_branch && x_branch_taken;
+    wire [7:0] relative_displacement = relative_from_execute ?
+        {x_imm_sign_q, x_instr_q[7:1]} : {d_instr[0], d_instr[7:1]};
+    wire [XLEN-2:0] relative_branch_target = x_pc_next_q +
+        {{(XLEN-9){relative_displacement[7]}}, relative_displacement} +
+        {{(XLEN-2){1'b0}}, !relative_from_execute};
+    wire late_redirect = take_irq || (x_redirect && !x_early_redirect_q);
+    wire fetch_flush = late_redirect || d_early_redirect;
+    wire discard_fetch = fetch_flush;
     wire decode_space = !d_valid_q || d_issue;
     // Retained cache responses can be consumed and replaced together.
     // A target without retained data uses the explicit holding register.
     wire fetch_space = REGISTER_FETCH ?
         ((!fetch_held_q || ((FETCH_RESPONSE_HELD != 0) && decode_space)) &&
          (decode_space || !fetch_reply)) : !d_valid || d_issue;
-    wire redirect_fetch = redirect;
+    wire redirect_fetch = late_redirect;
     assign imem_stb = !rst && i_ready &&
-        (redirect_fetch || (fetch_space && (!REGISTER_FETCH || !redirect)));
+        (fetch_flush || fetch_space);
     assign imem_cyc = !rst && (i_pending_q || imem_stb);
     // Select fetch sources in parallel; a taken branch need not traverse
     // the call, interrupt, and sequential-PC priority muxes.
     wire fetch_irq = redirect_fetch && take_irq;
     wire fetch_long = redirect_fetch && !take_irq && x_jall;
-    wire fetch_branch = redirect_fetch && !take_irq && !x_jall && x_branch;
     wire fetch_register = redirect_fetch && !take_irq && !x_jall && !x_branch;
-    assign imem_addr = !REGISTER_FETCH ?
+    // Increment before redirect selection, keeping a second carry chain
+    // out of the flag-to-fetch path. Remember whether this address was used.
+    wire [XLEN-2:0] sequential_fetch_pc = REGISTER_FETCH ?
+        f_pc_q + {{(XLEN-2){1'b0}}, f_advance_q} : f_pc_q;
+    wire [XLEN-2:0] normal_fetch_pc = !REGISTER_FETCH ?
         (redirect_fetch ? frontend_redirect_pc : f_pc_q) :
-        (f_pc_q & {(XLEN-1){!redirect_fetch}}) |
+        (sequential_fetch_pc & {(XLEN-1){!redirect_fetch}}) |
         ({{(XLEN-3){1'b0}}, 2'b10} & {(XLEN-1){fetch_irq}}) |
         (x_long_target[XLEN-1:1] & {(XLEN-1){fetch_long}}) |
-        (alu_result[XLEN-1:1] & {(XLEN-1){fetch_branch}}) |
         (rf_a[XLEN-1:1] & {(XLEN-1){fetch_register}});
+    // Registered fetch shares the relative target across Decode and Execute.
+    // Compact fetch keeps using the existing ALU through normal_fetch_pc.
+    // IRQ remains higher priority than an Execute branch redirect.
+    wire fetch_branch = REGISTER_FETCH && (d_early_redirect ||
+        (redirect_fetch && !take_irq && x_branch));
+    assign imem_addr = fetch_branch ? relative_branch_target : normal_fetch_pc;
     assign i_accept = imem_stb && !imem_stall;
     wire fetch_capture = REGISTER_FETCH ?
-        ((fetch_held_q || fetch_reply) && decode_space && !frontend_flush) :
+        ((fetch_held_q || fetch_reply) && decode_space && !discard_fetch) :
         (!frontend_flush && fetch_reply && (d_valid_q || !d_issue));
 
     always @(posedge clk) begin
         if (rst) begin
             f_pc_q <= RESET_PC[XLEN-2:0];
+            f_advance_q <= 0;
             x_pc_next_q <= RESET_PC[XLEN-2:0];
             i_pending_q <= 0;
             i_discard_q <= 0;
             data_pending_q <= 0;
             interrupt_request_q <= 0;
             d_valid_q <= 0;
+            d_redirected_q <= 0;
             fetch_held_q <= 0;
         end else begin
             interrupt_request_q <= irq;
@@ -983,17 +1049,24 @@ module riscc_cached_pipe #(
             if (i_ready) begin
                 i_pending_q <= i_accept;
                 i_discard_q <= 0;
-            end else if (frontend_flush) i_discard_q <= 1;
-            if (frontend_flush || i_accept)
-                f_pc_q <= (frontend_flush ? frontend_redirect_pc : f_pc_q) +
-                    {{(XLEN-2){1'b0}}, i_accept};
+            end else if (fetch_flush) i_discard_q <= 1;
+            if (fetch_flush || i_accept) begin
+                f_pc_q <= REGISTER_FETCH ? imem_addr :
+                    imem_addr + {{(XLEN-2){1'b0}}, i_accept};
+                f_advance_q <= i_accept;
+            end
             if (frontend_flush) x_pc_next_q <= frontend_redirect_pc;
             else if (d_issue) x_pc_next_q <= x_pc_next_q + 1'b1;
             if (REGISTER_FETCH) begin
                 if (fetch_reply) fetch_held_q <= 1;
-                if (fetch_capture || frontend_flush) fetch_held_q <= 0;
+                if (fetch_capture || discard_fetch) fetch_held_q <= 0;
             end
-            if (frontend_flush || d_issue) d_valid_q <= 0;
+            // An early target may already be held here while an older load
+            // delays the jump's retirement. Only a late redirect discards it.
+            if (late_redirect || d_issue) begin
+                d_valid_q <= 0;
+                d_redirected_q <= 0;
+            end else if (d_early_redirect) d_redirected_q <= 1;
             if (fetch_capture) begin
                 d_instr_q <= imem_rdata;
                 d_valid_q <= 1;
@@ -1004,8 +1077,7 @@ module riscc_cached_pipe #(
     // Capture decoded controls and advance Execute.
     always @(posedge clk) begin
         if (!rst && core_advance) begin
-            // D/RF -> X. The RF module samples the same decoded addresses on
-            // this edge; its registered outputs and these controls stay aligned.
+            // Operand reads and controls advance only when Decode issues.
             if (d_issue) begin
                 x_instr_q <= d_instr[13:0];
                 x_dst_q <= d_dst;
@@ -1029,6 +1101,8 @@ module riscc_cached_pipe #(
                 x_signed_byte_q <= (XLEN == 32) ? d_f5[2] : d_signed_byte;
                 x_indirect_q <= d_return | d_jal;
                 x_jall_q <= d_jall;
+                x_early_redirect_q <= d_redirected_q || d_early_redirect;
+                x_late_branch_q <= d_flag_wait;
                 x_move_q <= d_move;
                 x_ie_write_q <= d_ie_write;
                 x_run_short_imm_q <= d_imm_alu & ~d_aaa[2] & ~d_aaa[1];
@@ -1040,9 +1114,13 @@ module riscc_cached_pipe #(
                 };
             end
 
+            // Issue replaces a completed slot; unfinished shifts and multiplies
+            // keep it valid. IRQ entry cancels the current instruction. Keep
+            // this independent of the multi-cycle state-selection priority.
+            if (take_irq || x_slot_available)
+                x_valid_q <= d_issue;
             if (frontend_flush) begin
                 state_q <= ST_RUN;
-                x_valid_q <= 1'b0;
             end else if (x_shift_start) begin
                 state_q <= ST_SHIFT;
 `ifdef RISCC_FAST_SOFT_MUL
@@ -1073,7 +1151,6 @@ module riscc_cached_pipe #(
 `endif
             end else if (x_finish | ~x_valid_q) begin
                 state_q <= ST_RUN;
-                x_valid_q <= d_issue;
             end
 
             // Architectural IE changes only at completed instruction boundaries.
@@ -1297,9 +1374,12 @@ module riscc_cached_cache #(
     wire ram_read_en = (!REGISTER_LOOKUP && cpu_request) || relook;
     // The two-clock lookup uses its first clock for tags and its second
     // for data plus the tag comparison. No extra response clock is added.
-    wire [INDEX_BITS-1:0] tag_read_addr = relook ? req_index : c_index;
+    // Registered lookup captures the hit in the following stage, so tags
+    // may be read speculatively without retaining the old RAM output. A
+    // refill supplies its hit directly across the tag write below.
+    wire [INDEX_BITS-1:0] tag_read_addr = (!REGISTER_LOOKUP && relook) ? req_index : c_index;
     always @(posedge clk)
-        if (!rst && (cpu_request || relook)) begin
+        if (!rst && (REGISTER_LOOKUP || cpu_request || relook)) begin
             tag_word <= tag_mem[tag_read_addr];
             tag_invalidated_q <= inv_valid && (inv_index == tag_read_addr);
         end

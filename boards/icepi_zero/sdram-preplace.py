@@ -14,9 +14,12 @@ for index, bel in enumerate(boot_bels):
         ctx.bindBel(bel, cells[name], STRENGTH_USER)
 count = 0
 for name, cell in ctx.cells:
-    # Anchor state and distributed RAM; let their combinational cones follow.
-    if cell.type == 'TRELLIS_COMB' and not any(
-            key == 'MODE' and str(value) == 'DPRAM' for key, value in cell.params):
+    # Keep SDRAM arbitration/control cones with their state. Leaving these
+    # LUTs unconstrained can spread a request path outside the memory region.
+    if (cell.type == 'TRELLIS_COMB' and
+            not name.startswith(('fabric.', 'memory.', 'video.scanout.')) and
+            not any(key == 'MODE' and str(value) == 'DPRAM'
+                    for key, value in cell.params)):
         continue
     if name.startswith(('soc.cpu.cpu.regs.', 'soc.cpu.cpu.r0_zero_q')):
         ctx.constrainCellToRegion(name, 'cpu_load')
@@ -42,7 +45,8 @@ for name, cell in ctx.cells:
         'producer_', 'consumer_', 'get_q', 'issued_last_q',
         'request_valid_q', 'head_write', 'reply_last_q', 'empty_q')):
         ctx.constrainCellToRegion(name, 'command_payload')
-    elif name.startswith('fabric.') and not name.startswith('fabric.crossing.'):
+    elif ((name.startswith('fabric.') and not name.startswith('fabric.crossing.')) or
+          name.startswith('memory.mem_stb')):
         ctx.constrainCellToRegion(name, 'command_payload')
     elif name.startswith('memory.controller.') and any(part in name for part in (
         'head_data', 'head_mask', 'head_addr', 'lookup_data', 'lookup_mask')):

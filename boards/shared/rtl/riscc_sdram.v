@@ -7,6 +7,8 @@
 
 module riscc_sdram #(
     parameter integer DATA_BITS = 16,
+    // Match a registered I/O tristate input without an output-side inverter.
+    parameter integer OE_ACTIVE_LOW = 0,
     parameter integer ROW_BITS = 13,
     parameter integer COL_BITS = 9,
     parameter integer ADDR_BITS = ROW_BITS + COL_BITS + 2 - (DATA_BITS == 16 ? 1 : 0),
@@ -190,7 +192,7 @@ module riscc_sdram #(
         recovered_q <= !(|(recovery_q >> 1));
         bank_safe_q <= !(|(recovery_q >> 1)) && !(|(active_age_q >> 1));
         // DQ updates continuously; only sd_dq_oe enables its output drivers.
-        sd_dq_oe <= write_first || burst_q;
+        sd_dq_oe <= (write_first || burst_q) ^ (OE_ACTIVE_LOW != 0);
         sd_dq_o <= burst_q ? {{(DATA_BITS-16){1'b0}}, write_high_q} :
                               head_data_q[DATA_BITS-1:0];
         sd_dqm <= {DATA_BITS/8{!ready}} |
@@ -390,7 +392,7 @@ module riscc_sdram #(
             head_same_direction_q <= 1;
             head_we_q <= 0;
             sd_dqm <= {DATA_BITS/8{1'b1}};
-            sd_dq_oe <= 0;
+            sd_dq_oe <= (OE_ACTIVE_LOW != 0);
             mem_ack <= 0;
         end
     end

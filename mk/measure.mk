@@ -57,33 +57,33 @@ rc16_fmax_options = $(call rc16_area_options,ecp5-block,$(1),$(2))
 rc32_fmax_options = $(call serial_options,ecp5-block,32,$(2),$(3))
 # Fast: minimum area per RF mapping; timing uses the best median MHz/LUT4
 # across seeds 1–32. Keep the timed recipe separate from minimum-area builds.
-FAST_BLOCK_OPTIONS_fast_soft :=
-FAST_BLOCK_OPTIONS_fast_dsp :=
-FAST_BLOCK_OPTIONS_fast32_soft :=
-FAST_BLOCK_OPTIONS_fast32_dsp :=
+FAST_BLOCK_OPTIONS_fast_soft := -abc2
+FAST_BLOCK_OPTIONS_fast_dsp := -abc2 -dff
+FAST_BLOCK_OPTIONS_fast32_soft := -abc2 -dff
+FAST_BLOCK_OPTIONS_fast32_dsp := -abc2
 FAST_LUTRAM_OPTIONS_fast_soft :=
-FAST_LUTRAM_OPTIONS_fast_dsp := -abc2 -dff
+FAST_LUTRAM_OPTIONS_fast_dsp :=
 FAST_LUTRAM_OPTIONS_fast32_soft :=
-FAST_LUTRAM_OPTIONS_fast32_dsp := -abc2
-FAST_FMAX_OPTIONS_fast_soft :=
-FAST_FMAX_OPTIONS_fast_dsp :=
-FAST_FMAX_OPTIONS_fast32_soft :=
+FAST_LUTRAM_OPTIONS_fast32_dsp :=
+FAST_FMAX_OPTIONS_fast_soft := -abc2
+FAST_FMAX_OPTIONS_fast_dsp := -abc2 -dff
+FAST_FMAX_OPTIONS_fast32_soft := -dff
 FAST_FMAX_OPTIONS_fast32_dsp := -abc2
 
 # Cached: minimum area and highest MHz/LUT4 mapping at seed 1, including
 # both caches. Cache data uses two EBRs in addition to the RF.
-CACHED_BLOCK_OPTIONS_cached_soft := -dff
-CACHED_BLOCK_OPTIONS_cached_dsp := -dff
-CACHED_BLOCK_OPTIONS_cached32_soft := -dff
+CACHED_BLOCK_OPTIONS_cached_soft := -abc2
+CACHED_BLOCK_OPTIONS_cached_dsp := -abc2
+CACHED_BLOCK_OPTIONS_cached32_soft :=
 CACHED_BLOCK_OPTIONS_cached32_dsp := -abc2
-CACHED_LUTRAM_OPTIONS_cached_soft := -dff
-CACHED_LUTRAM_OPTIONS_cached_dsp := -abc2 -dff
-CACHED_LUTRAM_OPTIONS_cached32_soft := -dff
+CACHED_LUTRAM_OPTIONS_cached_soft := -abc2
+CACHED_LUTRAM_OPTIONS_cached_dsp := -noccu2 -dff
+CACHED_LUTRAM_OPTIONS_cached32_soft :=
 CACHED_LUTRAM_OPTIONS_cached32_dsp :=
 CACHED_FMAX_OPTIONS_cached_soft := -abc2 -dff
-CACHED_FMAX_OPTIONS_cached_dsp := -abc2 -dff
-CACHED_FMAX_OPTIONS_cached32_soft := -dff
-CACHED_FMAX_OPTIONS_cached32_dsp := -abc2
+CACHED_FMAX_OPTIONS_cached_dsp := -abc2
+CACHED_FMAX_OPTIONS_cached32_soft :=
+CACHED_FMAX_OPTIONS_cached32_dsp := -abc2 -dff
 CACHED_MEASURE_RTL := $(abspath rtl/riscc_cached.v rtl/riscc_fast.v)
 
 # Agilex tables consume only generated Quartus results. Published snapshots

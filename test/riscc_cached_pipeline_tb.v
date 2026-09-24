@@ -28,7 +28,8 @@ module riscc_cached_pipeline_tb #(
     localparam integer COMPACT_FETCH_STARTUP_GAP = 2;
     localparam integer REGISTERED_FETCH_STARTUP_GAP = 3;
     localparam integer COMPACT_FETCH_REDIRECT_GAP = 2;
-    localparam integer REGISTERED_FETCH_REDIRECT_GAP = 3;
+    localparam integer REGISTERED_JALL_REDIRECT_GAP = 3;
+    localparam integer REGISTERED_INDIRECT_REDIRECT_GAP = 3;
 
     reg clk;
     reg rst;
@@ -119,6 +120,8 @@ module riscc_cached_pipeline_tb #(
     integer alias_data_accepts;
     integer alias_addr_errors;
     integer alias_irq_entry_errors;
+    integer target_pc_commits;
+    reg early_jump_observed_q;
     reg irq_raised_q;
     reg irq_withdrawn_q;
     localparam integer IRQ_MAIN_LOAD_PC = 11;
@@ -173,6 +176,11 @@ module riscc_cached_pipeline_tb #(
             rotated = {relative[6:0], relative[7]};
             enc_branch = enc_i(cc, 3'b111, rotated);
         end
+    endfunction
+
+    function automatic [15:0] enc_ldpc(
+        input [2:0] rd, input [7:0] offset);
+        enc_ldpc = enc_i(rd, 3'd1, offset);
     endfunction
 
     task automatic put_i(
@@ -520,6 +528,209 @@ module riscc_cached_pipeline_tb #(
                 put_i(pc, 3'd6, 3'd0, DONE_VALUE[7:0]); pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd6, 3'd7,
                         DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 12) begin
+                // A delayed load response leaves JMP8 in Execute while the
+                // registered fetch can already hold its early target. The
+                // four stores on the sequential path must be flushed; only
+                // the target store and completion marker may take effect.
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd1, 3'd0, 8'd0);
+                put_mem(2, 1'b0, 3'd3, 3'd7, 0);
+                mem[3] = enc_branch(3'd4, 8'sd4); // JMP8 -> 8
+                mem[4] = enc_mem(1'b1, 3'd1, 3'd7,
+                                 RESULT_BYTE-DATA_BYTE);
+                mem[5] = mem[4];
+                mem[6] = mem[4];
+                mem[7] = mem[4];
+                put_i(8, 3'd1, 3'd0, 8'd42);
+                put_mem(9, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(10, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(11, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 13) begin
+                // CMPI writes r0. Both equality and sign branches consume
+                // its saved flags in Execute. Stores between each branch
+                // and target expose wrong-path execution; only the final
+                // result and DONE stores count.
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd1, 3'd0, 8'd3);
+                put_i(2, 3'd1, 3'd3, 8'd3); // CMPI r1, 3: r0 = 0
+                mem[3] = enc_branch(3'd0, 8'sd2); // BEQZ -> 6
+                mem[4] = enc_mem(1'b1, 3'd1, 3'd7,
+                                 RESULT_BYTE-DATA_BYTE);
+                mem[5] = mem[4];
+                put_i(6, 3'd1, 3'd2, 8'hff); // ADDI r1, -1
+                put_i(7, 3'd1, 3'd3, 8'd3); // CMPI r1, 3: r0 = -1
+                mem[8] = enc_branch(3'd2, 8'sd2); // BLTZ -> 11
+                mem[9] = enc_mem(1'b1, 3'd1, 3'd7,
+                                 RESULT_BYTE-DATA_BYTE);
+                mem[10] = mem[9];
+                mem[11] = enc_branch(3'd1, 8'sd2); // BNEZ -> 14
+                mem[12] = enc_mem(1'b1, 3'd1, 3'd7,
+                                  RESULT_BYTE-DATA_BYTE);
+                mem[13] = mem[12];
+                put_i(14, 3'd1, 3'd0, 8'd42);
+                put_mem(15, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(16, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(17, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 14) begin
+                // Load flags must replace stale r0 flags. A younger LDI
+                // then overrides a zero load completing on the same edge.
+                mem[DATA_HALF] = 0;
+                mem[DATA_HALF+1] = 0;
+                mem[DATA_HALF+2] = 16'hffff;
+                mem[DATA_HALF+3] = 16'hffff;
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd0, 3'd0, 8'd1);
+                put_mem(2, 1'b0, 3'd0, 3'd7, 0);
+                mem[3] = enc_branch(3'd0, 8'sd2); // BEQZ -> 6
+                mem[4] = enc_mem(1'b1, 3'd0, 3'd7, RESULT_BYTE-DATA_BYTE);
+                mem[5] = mem[4];
+                put_mem(6, 1'b0, 3'd0, 3'd7, 4);
+                mem[7] = enc_branch(3'd2, 8'sd2); // BLTZ -> 10
+                mem[8] = mem[4];
+                mem[9] = mem[4];
+                put_mem(10, 1'b0, 3'd0, 3'd7, 0);
+                put_i(11, 3'd0, 3'd0, 8'd1);
+                mem[12] = enc_branch(3'd1, 8'sd2); // BNEZ -> 15
+                mem[13] = mem[4];
+                mem[14] = mem[4];
+                put_i(15, 3'd1, 3'd0, 8'd42);
+                put_mem(16, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(17, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(18, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 15) begin
+                // ALU producers exercise forwarding in both RF operand
+                // positions before updating the saved flags. Slow r0
+                // producers are followed immediately by both zero and sign
+                // branches; their wrong-path stores must never execute.
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd1, 3'd0, 8'd3);
+                put_i(2, 3'd2, 3'd0, 8'd4);
+                put_r(3, 3'd3, 3'd1, 5'h00, 3'd2); // ADD r3, r1, r2
+                put_r(4, 3'd0, 3'd3, 5'h00, 3'd2); // ADD r0, r3, r2 (A)
+                mem[5] = enc_branch(3'd1, 8'sd2); // BNEZ -> 8
+                mem[6] = enc_mem(1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                mem[7] = mem[6];
+
+                put_r(8, 3'd4, 3'd1, 5'h00, 3'd2); // ADD r4, r1, r2
+                put_r(9, 3'd0, 3'd1, 5'h00, 3'd4); // ADD r0, r1, r4 (B)
+                mem[10] = enc_branch(3'd1, 8'sd2); // BNEZ -> 13
+                mem[11] = mem[6];
+                mem[12] = mem[6];
+
+                put_i(13, 3'd1, 3'd0, 8'd0);
+                put_i(14, 3'd2, 3'd0, 8'd9);
+                put_r(15, 3'd0, 3'd1, 5'h07, 3'd2); // MUL r0, 0, 9
+                mem[16] = enc_branch(3'd0, 8'sd2); // BEQZ -> 19
+                mem[17] = mem[6];
+                mem[18] = mem[6];
+
+                put_i(19, 3'd1, 3'd0, 8'd0);
+                put_i(20, 3'd1, 3'd2, 8'hff); // r1 = -1
+                put_i(21, 3'd2, 3'd0, 8'd1);
+                put_r(22, 3'd0, 3'd1, 5'h07, 3'd2); // MUL r0, -1, 1
+                mem[23] = enc_branch(3'd2, 8'sd2); // BLTZ -> 26
+                mem[24] = mem[6];
+                mem[25] = mem[6];
+
+                put_i(26, 3'd1, 3'd0, 8'd1);
+                // bbb=0 encodes the one-bit shift (the ISA count is bbb+1);
+                // the result is zero and must set Z.
+                put_r(27, 3'd0, 3'd1, 5'h0c, 3'd0); // SRLI r0, r1, 0
+                mem[28] = enc_branch(3'd0, 8'sd2); // BEQZ -> 31
+                mem[29] = mem[6];
+                mem[30] = mem[6];
+
+                put_i(31, 3'd1, 3'd0, 8'd0);
+                put_i(32, 3'd1, 3'd2, 8'hff); // r1 = -1
+                // bbb=2 encodes a three-bit iterative shift. Arithmetic right
+                // shifting preserves the sign and must set N for BLTZ.
+                put_r(33, 3'd0, 3'd1, 5'h0d, 3'd2); // SRAI r0, -1, 2
+                mem[34] = enc_branch(3'd2, 8'sd2); // BLTZ -> 37
+                mem[35] = mem[6];
+                mem[36] = mem[6];
+
+                put_i(37, 3'd1, 3'd0, 8'd42);
+                put_mem(38, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(39, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(40, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 16) begin
+                // JALR immediately follows an ALU update of its target
+                // register. The destination aliases the ALU source, and the
+                // sequential stores must be flushed before the target RET.
+                // A second JALR consumes a loaded target to cover the slow
+                // producer dependency without imposing a timing assertion.
+                mem[DATA_HALF] = 16'h0060;
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd1, 3'd0, 8'h3c);
+                put_i(2, 3'd1, 3'd2, 8'd4); // ADDI r1, r1, 4 -> 0x40
+                put_r(3, 3'd5, 3'd1, 5'h1f, 3'd1); // JALR S5, r1
+                mem[4] = enc_branch(3'd4, 8'sd3); // JMP8 -> 8 on return
+                mem[5] = enc_mem(1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                mem[6] = mem[5];
+                mem[7] = mem[5];
+
+                put_mem(8, 1'b0, 3'd1, 3'd7, 0); // load second target
+                put_r(9, 3'd6, 3'd1, 5'h1f, 3'd1); // JALR S6, r1
+                mem[10] = enc_branch(3'd4, 8'sd3); // JMP8 -> 14 on return
+                mem[11] = mem[5];
+                mem[12] = mem[5];
+                mem[13] = mem[5];
+
+                put_i(14, 3'd1, 3'd0, 8'd42);
+                put_mem(15, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(16, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(17, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+
+                // First JALR target: save its byte link (8), then return.
+                put_r(32, 3'd1, 3'd5, 5'h1f, 3'd2); // MFS r1, S5
+                put_mem(33, 1'b1, 3'd1, 3'd7,
+                        RESULT_BYTE-DATA_BYTE+4);
+                mem[34] = enc_r(3'd0, 3'd5, 5'h1f, 3'd0); // RET S5
+                mem[35] = mem[5]; // must be flushed by RET
+
+                // Second JALR target: save its byte link (20), then return.
+                put_r(48, 3'd2, 3'd6, 5'h1f, 3'd2); // MFS r2, S6
+                put_mem(49, 1'b1, 3'd2, 3'd7,
+                        RESULT_BYTE-DATA_BYTE+8);
+                mem[50] = enc_r(3'd0, 3'd6, 5'h1f, 3'd0); // RET S6
+                mem[51] = mem[5]; // must be flushed by RET
+            end else if (test_case == 18) begin
+                // Same useful instructions as the adjacent-CMPI fixture:
+                // schedule the DONE and result immediates into branch gaps.
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                put_i(1, 3'd1, 3'd0, 8'd3);
+                put_i(2, 3'd1, 3'd3, 8'd3);
+                put_i(3, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                mem[4] = enc_branch(3'd0, 8'sd2);
+                mem[5] = enc_mem(1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                mem[6] = mem[5];
+                put_i(7, 3'd1, 3'd2, 8'hff);
+                put_i(8, 3'd1, 3'd3, 8'd3);
+                put_i(9, 3'd1, 3'd0, 8'd42);
+                mem[10] = enc_branch(3'd2, 8'sd2);
+                mem[11] = mem[5];
+                mem[12] = mem[5];
+                mem[13] = enc_branch(3'd1, 8'sd2);
+                mem[14] = mem[5];
+                mem[15] = mem[5];
+                put_mem(16, 1'b1, 3'd1, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_mem(17, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+            end else if (test_case == 17) begin
+                // RC32 LDPC addresses a literal relative to the following
+                // instruction. Its loaded value is consumed
+                // immediately by ADD, exercising the load-use interlock and
+                // write-first load bypass before the result is stored.
+                put_i(0, 3'd7, 3'd0, DATA_BYTE);
+                mem[1] = enc_ldpc(3'd1, 8'h24); // PC=2, literal at byte 40
+                put_r(2, 3'd2, 3'd1, 5'h00, 3'd1); // ADD r2, r1, r1
+                put_mem(3, 1'b1, 3'd2, 3'd7, RESULT_BYTE-DATA_BYTE);
+                put_i(4, 3'd6, 3'd0, DONE_VALUE[7:0]);
+                put_mem(5, 1'b1, 3'd6, 3'd7, DONE_BYTE-DATA_BYTE);
+                // PC-relative target: next PC byte address 4 + 0x24 = 40.
+                mem[20] = 16'h5678;
+                mem[21] = 16'h1234;
+                expected_gap[2] = 2;
             end else begin
                 // Typed accesses are one beat at either width. Native and
                 // indexed accesses use one native data request.
@@ -706,7 +917,9 @@ module riscc_cached_pipeline_tb #(
                     d_response_count <= d_response_count + 1;
                 // Cache and SRAM replies have a minimum latency of one clock.
                 d_response_pending_q <= 1'b1;
-                d_response_wait_q <= wait_mode ? 3'd2 : 3'd1;
+                d_response_wait_q <= (test_case == 12 && !wait_mode &&
+                                      !stall_mode && !mix_mode) ? 3'd6 :
+                                     wait_mode ? 3'd2 : 3'd1;
                 if (dmem_we) begin
                     if (dmem_wmask[0]) mem[(dmem_addr << 1)][7:0] <= dmem_wdata[7:0];
                     if (dmem_wmask[1]) mem[(dmem_addr << 1)][15:8] <= dmem_wdata[15:8];
@@ -792,6 +1005,8 @@ module riscc_cached_pipeline_tb #(
             alias_data_accepts <= 0;
             alias_addr_errors <= 0;
             alias_irq_entry_errors <= 0;
+            target_pc_commits <= 0;
+            early_jump_observed_q <= 1'b0;
             irq_raised_q <= 1'b0;
             irq_withdrawn_q <= 1'b0;
             irq_epc_pending_q <= 1'b0;
@@ -800,6 +1015,14 @@ module riscc_cached_pipeline_tb #(
             done_age_q <= 0;
         end else begin
             cycle_q <= cycle_q + 1'b1;
+            // Every issued branch carries its actual Decode decision. This
+            // also covers transient IRQ requests while Execute is empty.
+            if (REGISTER_FETCH && dut.d_issue && dut.d_branch && !dut.d_flag_wait &&
+                ((dut.d_redirected_q || dut.d_early_redirect) !==
+                 (dut.d_ddd[2] ||
+                  ((dut.d_ddd[1] ? dut.r0_negative_q : dut.r0_zero_q) ^
+                   dut.d_ddd[0]))))
+                fail("Decode branch decision differs from newest r0 flags");
             if (done_seen_q && done_age_q != 4'hf)
                 done_age_q <= done_age_q + 1'b1;
             if (irq_epc_pending_q) begin
@@ -817,6 +1040,10 @@ module riscc_cached_pipeline_tb #(
                 irq_raised_q <= 1'b1;
                 irq <= 1'b1;
             end
+
+            if (test_case == 12 && REGISTER_FETCH && dut.d_valid &&
+                dut.x_valid_q && dut.x_pc_q == 3 && !dut.core_advance)
+                early_jump_observed_q <= 1'b1;
             if (test_case == 9 && dut.take_irq &&
                 (dut.fetch_pending || (REGISTER_FETCH && dut.fetch_held_q)) &&
                 !imem_ack && !irq_withdrawn_q) begin
@@ -885,9 +1112,17 @@ module riscc_cached_pipeline_tb #(
         if (!rst) begin
             if (dut.commit_valid && !dut.run_commit &&
                 test_case != 6 && test_case != 7 && test_case != 9 &&
-                test_case != 10 && test_case != 11)
+                test_case != 10 && test_case != 11 && test_case != 15)
                 fail("non-multicycle test committed without run_commit");
             if (dut.commit_valid) begin
+                if (test_case == 12 && dut.x_pc_q == 8)
+                    target_pc_commits <= target_pc_commits + 1;
+                if (test_case == 15 && dut.x_pc_q == 4 &&
+                    dut.x_result !== {{(XLEN-4){1'b0}}, 4'd11})
+                    fail("A-forwarded ALU producer produced the wrong r0 result");
+                if (test_case == 15 && dut.x_pc_q == 9 &&
+                    dut.x_result !== {{(XLEN-4){1'b0}}, 4'd10})
+                    fail("B-forwarded ALU producer produced the wrong r0 result");
                 if (!have_last_commit && strict_timing &&
                     (test_case == 0 || test_case == 1)) begin
                     if (REGISTER_FETCH) begin
@@ -905,7 +1140,7 @@ module riscc_cached_pipeline_tb #(
                         if (last_commit_pc == 2 &&
                             (dut.x_pc_q != (CALL_TARGET >> 1) ||
                              cycle_q - last_commit_cycle !=
-                             (REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
+                             (REGISTER_FETCH ? REGISTERED_JALL_REDIRECT_GAP :
                               COMPACT_FETCH_REDIRECT_GAP)))
                             fail(REGISTER_FETCH ?
                                  "JALL target did not commit after registered redirect" :
@@ -913,12 +1148,57 @@ module riscc_cached_pipeline_tb #(
                         if (last_commit_pc == (CALL_TARGET >> 1) &&
                              (dut.x_pc_q != 4 ||
                              cycle_q - last_commit_cycle !=
-                             (REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
+                             (REGISTER_FETCH ? REGISTERED_INDIRECT_REDIRECT_GAP :
                               COMPACT_FETCH_REDIRECT_GAP)))
                             fail(REGISTER_FETCH ?
                                  "RET target did not commit after registered redirect" :
                                  "RET target did not commit after one redirect bubble");
                     end
+                end
+                if (test_case == 16 && strict_timing) begin
+                    if (last_commit_pc == 2 &&
+                        (dut.x_pc_q != 3 || cycle_q - last_commit_cycle != 1))
+                        fail("ALU-dependent JALR inserted a producer-consumer bubble");
+                    if (last_commit_pc == 3 &&
+                        (dut.x_pc_q != 32 ||
+                         cycle_q - last_commit_cycle !=
+                         (REGISTER_FETCH ? REGISTERED_INDIRECT_REDIRECT_GAP :
+                          COMPACT_FETCH_REDIRECT_GAP)))
+                        fail("ALU-dependent JALR target did not commit at the expected gap");
+                    if (last_commit_pc == 34 &&
+                        (dut.x_pc_q != 4 ||
+                         cycle_q - last_commit_cycle !=
+                         (REGISTER_FETCH ? REGISTERED_INDIRECT_REDIRECT_GAP :
+                          COMPACT_FETCH_REDIRECT_GAP)))
+                        fail("RET target did not commit at the expected indirect gap");
+                end
+                if (test_case == 13 && strict_timing) begin
+                    if (last_commit_pc == 3 &&
+                        (dut.x_pc_q != 6 || cycle_q - last_commit_cycle != (REGISTER_FETCH ? 3 : 2)))
+                        fail("BEQZ target did not commit after two cycles");
+                    if (last_commit_pc == 8 &&
+                        (dut.x_pc_q != 11 || cycle_q - last_commit_cycle != (REGISTER_FETCH ? 3 : 2)))
+                        fail("BLTZ target did not commit after two cycles");
+                    if (last_commit_pc == 11 &&
+                        (dut.x_pc_q != 14 || cycle_q - last_commit_cycle != 2))
+                        fail("BNEZ target did not commit after one taken bubble");
+                end
+                if (test_case == 18 && strict_timing) begin
+                    if ((last_commit_pc == 2 || last_commit_pc == 3 ||
+                         last_commit_pc == 7 || last_commit_pc == 8 ||
+                         last_commit_pc == 9) &&
+                        (dut.x_pc_q != last_commit_pc + 1 ||
+                         cycle_q - last_commit_cycle != 1))
+                        fail("scheduled CMPI/filler/branch inserted a dependency bubble");
+                    if (last_commit_pc == 4 &&
+                        (dut.x_pc_q != 7 || cycle_q - last_commit_cycle != 2))
+                        fail("scheduled BEQZ did not have one taken bubble");
+                    if (last_commit_pc == 10 &&
+                        (dut.x_pc_q != 13 || cycle_q - last_commit_cycle != 2))
+                        fail("scheduled BLTZ did not have one taken bubble");
+                    if (last_commit_pc == 13 &&
+                        (dut.x_pc_q != 16 || cycle_q - last_commit_cycle != 2))
+                        fail("scheduled BNEZ did not have one taken bubble");
                 end
                 if (test_case == 5 && dut.x_pc_q == 6)
                     reti_count <= reti_count + 1;
@@ -955,14 +1235,19 @@ module riscc_cached_pipeline_tb #(
                     max_commit_run <= commit_run + 1;
                 if (have_last_commit && strict_timing &&
                     test_case != 3 && test_case != 5 && test_case != 6 &&
-                    test_case != 7 && test_case != 8 && test_case != 9) begin
+                    test_case != 7 && test_case != 8 && test_case != 9 &&
+                    test_case != 12 && test_case != 13 && test_case != 14 &&
+                    test_case != 15 && test_case != 16 && test_case != 18) begin
                     wanted_gap = expected_gap[dut.x_pc_q];
                     if (test_case == 4 &&
                         ((last_commit_pc == 3 && dut.x_pc_q == 2) ||
                          (last_commit_pc == 4 && dut.x_pc_q == 7) ||
                          (last_commit_pc == 10 && dut.x_pc_q == 12)))
-                        wanted_gap = REGISTER_FETCH ? REGISTERED_FETCH_REDIRECT_GAP :
-                                      COMPACT_FETCH_REDIRECT_GAP;
+                        wanted_gap = COMPACT_FETCH_REDIRECT_GAP;
+                    if (REGISTER_FETCH && test_case == 4 &&
+                        ((last_commit_pc == 3 && dut.x_pc_q == 2) ||
+                         (last_commit_pc == 10 && dut.x_pc_q == 12)))
+                        wanted_gap = 3;
                     if (cycle_q - last_commit_cycle != wanted_gap) begin
                         $display("GAP pc=%0d expected=%0d actual=%0d", dut.x_pc_q,
                                  wanted_gap, cycle_q-last_commit_cycle);
@@ -1104,6 +1389,44 @@ module riscc_cached_pipeline_tb #(
                     fail("IRQ was not deferred until MUL completion");
                 if (reti_count != 1)
                     fail("MUL IRQ handler did not return through RETI");
+            end else if (test_case == 12) begin
+                if (mem[RESULT_HALF] !== 16'h002a)
+                    fail("early JMP8 target did not execute exactly once");
+                if (write_count != (XLEN == 32 ? 4 : 2))
+                    fail("flushed JMP8 path produced an unexpected store");
+                if (target_pc_commits != 1)
+                    fail("JMP8 target committed more than once or not at all");
+                if (REGISTER_FETCH && strict_timing && !early_jump_observed_q)
+                    fail("registered fetch did not hold JMP8 target behind load");
+            end else if (test_case == 13 || test_case == 14 || test_case == 18) begin
+                if (mem[RESULT_HALF] !== 16'h002a)
+                    fail("r0 branch chain did not reach final result");
+                if (write_count != (XLEN == 32 ? 4 : 2))
+                    fail("r0 branch chain executed a wrong-path store");
+            end else if (test_case == 15) begin
+                if (mem[RESULT_HALF] !== 16'h002a)
+                    fail("slow r0 producer branch chain did not reach final result");
+                if (write_count != (XLEN == 32 ? 4 : 2))
+                    fail("slow r0 producer branch executed a wrong-path store");
+            end else if (test_case == 16) begin
+                if (mem[RESULT_HALF] !== 16'h002a ||
+                    mem[RESULT_HALF + 2] !== 16'h0008 ||
+                    mem[RESULT_HALF + 4] !== 16'h0014 ||
+                    (XLEN == 32 &&
+                     (mem[RESULT_HALF + 1] !== 16'h0000 ||
+                      mem[RESULT_HALF + 3] !== 16'h0000 ||
+                      mem[RESULT_HALF + 5] !== 16'h0000)))
+                    fail("JALR link, load target, or return result mismatch");
+                if (write_count != (XLEN == 32 ? 8 : 4))
+                    fail("JALR or RET executed a wrong-path store");
+            end else if (test_case == 17) begin
+                if (XLEN != 32 || mem[RESULT_HALF] !== 16'hacf0 ||
+                    mem[RESULT_HALF + 1] !== 16'h2468 ||
+                    mem[DONE_HALF] !== DONE_VALUE ||
+                    mem[DONE_HALF + 1] !== 16'h0000)
+                    fail("LDPC producer or dependent consumer result mismatch");
+                if (write_count != 4)
+                    fail("LDPC program executed an unexpected store");
             end else begin
                 if (mem[RESULT_HALF] !== 16'h00a5)
                     fail("LDB result mismatch");

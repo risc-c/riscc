@@ -35,7 +35,7 @@ module icepi_sdram #(
     end
     assign mem_rdata = response_q;
     wire [15:0] dq_out;
-    wire dq_oe;
+    wire dq_oe_n;
     wire [15:0] dq_sample, dq_pin, dq_tristate, dq_input;
     wire [12:0] addr_o;
     wire [1:0] ba_o, dqm_o;
@@ -78,7 +78,7 @@ module icepi_sdram #(
                 .Q(dq_pin[bit_index])
             );
             (* keep *) OFS1P3DX tristate_out (
-                .D(!dq_oe), .SCLK(clk), .SP(1'b1), .CD(1'b0),
+                .D(dq_oe_n), .SCLK(clk), .SP(1'b1), .CD(1'b0),
                 .Q(dq_tristate[bit_index])
             );
         end
@@ -97,7 +97,7 @@ module icepi_sdram #(
     reg [21:0] control_q;
     always @(posedge clk) begin
         data_q <= dq_out;
-        tristate_q <= !dq_oe;
+        tristate_q <= dq_oe_n;
         control_q <= control_o;
     end
     assign dq_pin = data_q;
@@ -110,6 +110,7 @@ module icepi_sdram #(
 `endif
     riscc_sdram #(
         .DATA_BITS(16),
+        .OE_ACTIVE_LOW(1),
         .ROW_BITS(13),
         .COL_BITS(9),
         .CLK_MHZ(CLK_MHZ),
@@ -142,7 +143,7 @@ module icepi_sdram #(
         .sd_dqm(dqm_o),
         .sd_dq_i(dq_sample),
         .sd_dq_o(dq_out),
-        .sd_dq_oe(dq_oe)
+        .sd_dq_oe(dq_oe_n)
     );
 endmodule
 `default_nettype wire

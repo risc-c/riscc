@@ -114,8 +114,10 @@ module riscc_sdram_bridge #(
     wire current_write = writing[consumer_gray_q];
     wire next_write = writing[next_consumer_gray];
     always @(posedge memory_clk) begin
-        // Select the current head, or the next head after completion.
-        head_write <= complete ? next_write : current_write;
+        // An owned head stays fixed until completion. Keep the late
+        // acknowledgement off the command-type data selector.
+        if (empty_q || complete)
+            head_write <= empty_q ? current_write : next_write;
         producer_meta_q <= producer_gray_q;
         producer_sync_q <= producer_meta_q;
         empty_q <= (consumer_gray_q == producer_sync_q) ||

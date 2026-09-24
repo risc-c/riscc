@@ -5,14 +5,18 @@ The testbench is an executable SystemVerilog top, so this driver only needs
 Verilator and the production RTL.  Each width, multiplier, and RF mapping is
 compiled separately; CASE=0/1 cover one-IPC ALU issue and CASE=2 covers the
 split instruction/data memory contract (the data side is one native-word
-request). CASE=3 checks JALL's literal and link;
+request). CASE=3 checks JALL's literal, link, and target timing;
 CASE=4 checks dependent r0 zero/negative flags, taken/fall-through branches,
 and one-bubble redirects. CASE=8 checks RC32 native loads whose destination
 aliases the base or index register. CASE=10 checks MUL destination aliases,
 back-to-back dependent MUL, and dependent ALU/store consumers,
 including an IRQ before the indexed load. CASE=9 withdraws IRQ while an older
 fetch delays interrupt entry. CASE=11 raises IRQ during soft MUL and checks
-deferred entry plus the dependent result. The main programs run with registered
+deferred entry plus the dependent result. CASE=16 checks ALU- and load-dependent
+JALR/RET link targets and wrong-path stores. CASE=17 checks an RC32 LDPC
+producer and its immediate dependent ALU consumer. CASE=18 schedules useful
+instructions between CMPI and branch and checks one-bubble taken timing.
+The main programs run with registered
 responses, delayed ACK, request STALL, and mixed one-cycle/two-cycle
 response timing. The private ports permit a request to change before
 acceptance; the fixture checks that each accepted request has exactly one
@@ -87,7 +91,9 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         # Cover every functional program in every timing class. WAIT and MIX
         # exercise delayed responses; STALL exercises request backpressure.
         registered_modes = ("", "WAIT", "STALL", "MIX")
-        registered_cases = (0, 1, 2, 3, 4, 6, 7, 9, 10)
+        registered_cases = (0, 1, 2, 3, 4, 6, 7, 9, 10, 12, 13, 14, 15, 16, 18)
+        if xlen == 32:
+            registered_cases += (17,)
         if multiplier == "soft":
             registered_cases += (11,)
         checks = [(case, mode, 0)
@@ -112,6 +118,14 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
                       for mode in ("", "WAIT", "STALL", "MIX"))
         checks.extend((10, mode, 0)
                       for mode in ("", "WAIT", "STALL", "MIX"))
+        checks.extend((12, mode, 0)
+                      for mode in ("", "WAIT", "STALL", "MIX"))
+        checks.extend((case, mode, 0)
+                      for case in (13, 14, 15, 16, 18)
+                      for mode in ("", "WAIT", "STALL", "MIX"))
+        if xlen == 32:
+            checks.extend((17, mode, 0)
+                          for mode in ("", "WAIT", "STALL", "MIX"))
         if multiplier == "soft":
             checks.extend((11, mode, 0)
                           for mode in ("", "WAIT", "STALL", "MIX"))
