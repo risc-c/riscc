@@ -255,6 +255,9 @@ help:
 	  '  atum-a3-demo-rtlsim         run the demo in RTL simulation' \
 	  '  atum-a3-demo                build the Atum A3 Nano image' \
 	  '  atum-a3-test                build the SoC SDRAM test image' \
+	  '  de23-lite-demo             build the DE23-Lite image' \
+	  '  de23-lite-demo-rtlsim      simulate the DE23-Lite demo' \
+	  '  de23-lite-test             build the DE23-Lite SDRAM test image' \
 	  '' \
 	  'Utilities' \
 	  '  version                     print the RISC-C version' \

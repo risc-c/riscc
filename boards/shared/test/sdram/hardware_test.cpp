@@ -4,7 +4,7 @@
 
 #include "cached_access_checks.h"
 
-#if defined(RISCC_ATUM_A3)
+#if (defined(RISCC_ATUM_A3) || defined(RISCC_DE23_LITE))
 static const u32 kSdramWords = 0x01000000u; // 64 MiB
 #elif defined(RISCC_ICEPI_ZERO)
 static const u32 kSdramWords = 0x00800000u; // 32 MiB

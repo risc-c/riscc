@@ -118,6 +118,7 @@ module riscc_sdram #(
     end endgenerate
     reg [CAS+HALF+PIN_PIPELINE+READ_DELAY:0] read_pipe_q;
     reg [HALF+PIN_PIPELINE:0] write_pipe_q;
+    wire [HALF+PIN_PIPELINE+1:0] write_pipe_next = {write_pipe_q, 1'b0};
     reg [15:0] read_low_q, write_high_q;
     reg [1:0] mask_high_q;
     reg burst_q, head_same_direction_q, run_ready_q, recovered_q, bank_safe_q;
@@ -202,7 +203,7 @@ module riscc_sdram #(
         mask_high_q <= ~head_mask_q[3:2];
         mem_ack <= 1'b0;
         read_pipe_q <= read_pipe_q << 1;
-        write_pipe_q <= write_pipe_q << 1;
+        write_pipe_q <= write_pipe_next[HALF+PIN_PIPELINE:0];
         burst_q <= 1'b0;
         if (!init_done_q) begin
             timer_q <= timer_next;

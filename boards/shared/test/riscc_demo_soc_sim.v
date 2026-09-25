@@ -1,12 +1,13 @@
-// atum_a3_nano_soc_sim.v : simulation wrapper for the Atum demo SoC.
+// riscc_demo_soc_sim.v : simulation wrapper for the shared RC32 demo SoC.
 
 `timescale 10ns/10ns
 `default_nettype none
 
-module atum_a3_nano_soc_sim #(
+module riscc_demo_soc_sim #(
     parameter MEM_HEX = "build/atum_a3_nano/mem/demo.memh",
     parameter integer UART_CLK_DIV = 8,
-    parameter integer TIMER_TICK_DIV = 200000
+    parameter integer TIMER_TICK_DIV = 200000,
+    parameter integer VIDEO_SCALE = 6
 ) (
     input  wire clk,
     input  wire rst,
@@ -54,7 +55,7 @@ module atum_a3_nano_soc_sim #(
     wire palette_we;
     wire [7:0] palette_addr;
     wire [23:0] palette_wdata;
-    atum_a3_nano_soc #(
+    riscc_demo_soc #(
         .MEM_HEX(MEM_HEX),
         .UART_CLK_DIV(UART_CLK_DIV),
         .TIMER_TICK_DIV(TIMER_TICK_DIV)
@@ -85,7 +86,7 @@ module atum_a3_nano_soc_sim #(
         .dbg_uart_tx_count(dbg_uart_tx_count),
         .dbg_uart_rx_count(dbg_uart_rx_count)
     );
-    atum_fb_hdmi video (
+    riscc_video_parallel #(.SCALE(VIDEO_SCALE)) video (
         .cpu_clk(clk),
         .palette_we(palette_we),
         .palette_addr(palette_addr),
@@ -102,7 +103,6 @@ module atum_a3_nano_soc_sim #(
         .underrun(),
         .pix_clk(clk),
         .rst(rst),
-        .pix_clk_out(),
         .hdmi_hs(),
         .hdmi_vs(),
         .hdmi_de(),

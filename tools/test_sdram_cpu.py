@@ -41,14 +41,20 @@ def main():
         name = board + ('-async' if period == 7 else '')
         output = build / name
         output.mkdir(exist_ok=True)
-        sources = [source / 'cpu_memory_tb.v', ROOT / f'boards/{board}/rtl/{board}_soc.v',
+        if board == 'atum_a3_nano':
+            soc_name = 'riscc_demo_soc'
+            soc_source = ROOT / 'boards/shared/rtl/riscc_demo_soc.v'
+        else:
+            soc_name = f'{board}_soc'
+            soc_source = ROOT / f'boards/{board}/rtl/{board}_soc.v'
+        sources = [source / 'cpu_memory_tb.v', soc_source,
                    ROOT / 'rtl/riscc_cached.v', ROOT / 'rtl/riscc_fast.v', ROOT / 'test/riscc_sdram_model.v']
         sources += [ROOT / f'boards/shared/rtl/riscc_{name}.v' for name in
                     ('uart_mmio','timer_mmio','irq_ctrl','sdram','sdram_fabric','sdram_bridge')]
         rf_defines = ['-DRISCC_ECP5'] if board == 'icepi_zero' else ['-DRISCC_FAST_BLOCK_RF']
         command([args.verilator, '--binary', '--timing', '-j', '4', '-Wno-UNOPTFLAT',
                  '--top-module', 'cpu_memory_tb', '--Mdir', output,
-                 *rf_defines, f'-DSOC_NAME={board}_soc', f'-DLED_BITS={led}',
+                 *rf_defines, f'-DSOC_NAME={soc_name}', f'-DLED_BITS={led}',
                  f'-DFIRMWARE="{build / "test.memh"}"', f'-GDATA_BITS={width}', f'-GCPU_PERIOD={period}',
                  *sources], output / 'build.log')
         for seed in range(1, args.seeds + 1):

@@ -1,4 +1,4 @@
-#include "Vatum_a3_nano_soc_sim.h"
+#include "Vriscc_demo_soc_sim.h"
 #include "verilated.h"
 
 #include <cstdint>
@@ -55,7 +55,7 @@ struct TxCapture
     }
 };
 
-static void tick(Vatum_a3_nano_soc_sim *top, TxCapture &txcap)
+static void tick(Vriscc_demo_soc_sim *top, TxCapture &txcap)
 {
     top->clk = 0;
     top->eval();
@@ -67,7 +67,8 @@ static void tick(Vatum_a3_nano_soc_sim *top, TxCapture &txcap)
 int main(int argc, char **argv)
 {
     Verilated::commandArgs(argc, argv);
-    Vatum_a3_nano_soc_sim *top = new Vatum_a3_nano_soc_sim;
+    const char *expected_banner = argc > 1 ? argv[1] : "RISC-C on Atum A3 Nano";
+    Vriscc_demo_soc_sim *top = new Vriscc_demo_soc_sim;
     TxCapture txcap;
     top->clk = 0;
     top->rst = 1;
@@ -111,10 +112,10 @@ int main(int argc, char **argv)
                 ticker_scrolled = true;
             }
         }
-        if (txcap.out.find("RISC-C on Atum A3 Nano") != std::string::npos &&
+        if (txcap.out.find(expected_banner) != std::string::npos &&
             julia_writes >= 38 && julia_nonzero > 0 && ticker_scrolled)
         {
-            std::printf("Atum RTL-SOC PASS uart=%s fb_writes=%u julia=%u/%u scroll=%u tx=%u\n",
+            std::printf("Agilex RTL-SOC PASS uart=%s fb_writes=%u julia=%u/%u scroll=%u tx=%u\n",
                 txcap.out.c_str(), unsigned(top->dbg_fb_writes),
                 julia_nonzero, julia_writes, unsigned(ticker_scrolled),
                 unsigned(top->dbg_uart_tx_count));
@@ -123,7 +124,7 @@ int main(int argc, char **argv)
         }
     }
 
-    std::printf("Atum RTL-SOC FAIL uart=%s fb_writes=%u julia=%u/%u scroll=%u tx=%u\n",
+    std::printf("Agilex RTL-SOC FAIL uart=%s fb_writes=%u julia=%u/%u scroll=%u tx=%u\n",
         txcap.out.c_str(), unsigned(top->dbg_fb_writes),
         julia_nonzero, julia_writes, unsigned(ticker_scrolled),
         unsigned(top->dbg_uart_tx_count));

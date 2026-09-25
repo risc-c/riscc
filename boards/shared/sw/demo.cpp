@@ -9,7 +9,7 @@
 namespace
 {
 
-#if defined(RISCC_ATUM_A3) == defined(RISCC_ICEPI_ZERO)
+#if (defined(RISCC_ATUM_A3) + defined(RISCC_ICEPI_ZERO) + defined(RISCC_DE23_LITE)) != 1
 #error "Board demo requires exactly one board macro"
 #endif
 
@@ -132,6 +132,10 @@ enum Glyph : uint8_t
     kGlyphLowerI,
     kGlyphZ,
     kGlyphLowerR,
+    kGlyphD,
+    kGlyphE,
+    kGlyph2,
+    kGlyphL,
     kGlyphCount
 };
 
@@ -158,6 +162,10 @@ const uint8_t kGlyphs[kGlyphCount][7] =
     {0x04u, 0x00u, 0x0cu, 0x04u, 0x04u, 0x04u, 0x0eu},  // i
     {0x1fu, 0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x1fu},  // Z
     {0x00u, 0x00u, 0x16u, 0x19u, 0x10u, 0x10u, 0x10u},  // r
+    {0x1eu, 0x11u, 0x11u, 0x11u, 0x11u, 0x11u, 0x1eu},  // D
+    {0x1fu, 0x10u, 0x10u, 0x1eu, 0x10u, 0x10u, 0x1fu},  // E
+    {0x0eu, 0x11u, 0x01u, 0x02u, 0x04u, 0x08u, 0x1fu},  // 2
+    {0x10u, 0x10u, 0x10u, 0x10u, 0x10u, 0x10u, 0x1fu},  // L
 };
 
 #if defined(RISCC_ATUM_A3)
@@ -168,6 +176,15 @@ const uint8_t kTickerText[] =
     kGlyphA, kGlyphLowerT, kGlyphLowerU, kGlyphLowerM, kGlyphSpace,
     kGlyphA, kGlyph3, kGlyphSpace, kGlyphN, kGlyphLowerA, kGlyphLowerN,
     kGlyphLowerO, kGlyphSpace, kGlyphSpace, kGlyphSpace, kGlyphSpace,
+};
+#elif defined(RISCC_DE23_LITE)
+const uint8_t kTickerText[] =
+{
+    kGlyphR, kGlyphI, kGlyphS, kGlyphC, kGlyphDash, kGlyphC, kGlyphSpace,
+    kGlyphLowerO, kGlyphLowerN, kGlyphSpace,
+    kGlyphD, kGlyphE, kGlyph2, kGlyph3, kGlyphDash,
+    kGlyphL, kGlyphLowerI, kGlyphLowerT, kGlyphLowerE,
+    kGlyphSpace, kGlyphSpace, kGlyphSpace, kGlyphSpace,
 };
 #else
 const uint8_t kTickerText[] =
@@ -630,6 +647,8 @@ int main()
 {
 #ifdef RISCC_ATUM_A3
     puts("RISC-C on Atum A3 Nano");
+#elif defined(RISCC_DE23_LITE)
+    puts("RISC-C on DE23-Lite");
 #else
     puts("RISC-C on Icepi Zero");
 #endif

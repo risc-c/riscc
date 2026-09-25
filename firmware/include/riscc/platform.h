@@ -29,7 +29,7 @@
 #else
 #define RISCC_FRAMEBUFFER_BASE 0x8000u
 #endif
-#if defined(RISCC_ATUM_A3) || defined(RISCC_ICEPI_ZERO)
+#if (defined(RISCC_ATUM_A3) || defined(RISCC_DE23_LITE)) || defined(RISCC_ICEPI_ZERO)
 #define RISCC_FRAMEBUFFER_WIDTH 320u
 #define RISCC_FRAMEBUFFER_HEIGHT 180u
 #else

@@ -1,0 +1,238 @@
+# DE23-Lite rev B. Pin names and assignments follow the Terasic resource kit.
+# Paths are relative to build/de23_lite/quartus (or the corresponding test build).
+set_global_assignment -name FAMILY "Agilex 3"
+set_global_assignment -name DEVICE A3CZ135BB18AE7S
+set_global_assignment -name TOP_LEVEL_ENTITY top
+source ../../../boards/shared/agilex3.qsf
+set_global_assignment -name VERILOG_FILE ../../../boards/de23_lite/rtl/top.v
+set_global_assignment -name VERILOG_FILE ../../../boards/de23_lite/rtl/adv7513_init.v
+set_global_assignment -name SDC_FILE ../../../boards/de23_lite/de23_lite.sdc
+
+set_instance_assignment -name IO_STANDARD "1.2-V" -to CLOCK0_50
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to CLOCK1_50
+set_location_assignment PIN_K43  -to CLOCK0_50
+set_location_assignment PIN_A8   -to CLOCK1_50
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to KEY[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to KEY[1]
+set_location_assignment PIN_K26  -to KEY[0]
+set_location_assignment PIN_K27  -to KEY[1]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[0]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[1]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[2]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[3]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[4]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[5]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[6]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[7]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[8]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to LEDR[9]
+set_location_assignment PIN_B39  -to LEDR[0]
+set_location_assignment PIN_B42  -to LEDR[1]
+set_location_assignment PIN_K35  -to LEDR[2]
+set_location_assignment PIN_F32  -to LEDR[3]
+set_location_assignment PIN_A19  -to LEDR[4]
+set_location_assignment PIN_B24  -to LEDR[5]
+set_location_assignment PIN_A24  -to LEDR[6]
+set_location_assignment PIN_A44  -to LEDR[7]
+set_location_assignment PIN_B34  -to LEDR[8]
+set_location_assignment PIN_D40  -to LEDR[9]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_CLK
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_CKE
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[3]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[4]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[5]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[6]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[7]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[8]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[9]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[10]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[11]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_ADDR[12]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_BA[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_BA[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[3]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[4]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[5]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[6]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[7]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[8]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[9]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[10]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[11]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[12]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[13]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[14]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[15]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[16]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[17]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[18]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[19]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[20]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[21]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[22]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[23]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[24]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[25]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[26]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[27]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[28]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[29]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[30]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQ[31]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_CS_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_WE_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_CAS_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_RAS_n
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQM[0]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQM[1]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQM[2]
+set_instance_assignment -name IO_STANDARD "1.8-V LVCMOS" -to DRAM_DQM[3]
+set_location_assignment PIN_BK32 -to DRAM_CLK
+set_location_assignment PIN_BH40 -to DRAM_CKE
+set_location_assignment PIN_BN26 -to DRAM_ADDR[0]
+set_location_assignment PIN_BH27 -to DRAM_ADDR[1]
+set_location_assignment PIN_BM26 -to DRAM_ADDR[2]
+set_location_assignment PIN_BH18 -to DRAM_ADDR[3]
+set_location_assignment PIN_BH26 -to DRAM_ADDR[4]
+set_location_assignment PIN_BK18 -to DRAM_ADDR[5]
+set_location_assignment PIN_BH21 -to DRAM_ADDR[6]
+set_location_assignment PIN_BH32 -to DRAM_ADDR[7]
+set_location_assignment PIN_BK26 -to DRAM_ADDR[8]
+set_location_assignment PIN_BH35 -to DRAM_ADDR[9]
+set_location_assignment PIN_BN27 -to DRAM_ADDR[10]
+set_location_assignment PIN_BN29 -to DRAM_ADDR[11]
+set_location_assignment PIN_BM24 -to DRAM_ADDR[12]
+set_location_assignment PIN_BH43 -to DRAM_BA[0]
+set_location_assignment PIN_BM29 -to DRAM_BA[1]
+set_location_assignment PIN_BM51 -to DRAM_DQ[0]
+set_location_assignment PIN_BM50 -to DRAM_DQ[1]
+set_location_assignment PIN_BK50 -to DRAM_DQ[2]
+set_location_assignment PIN_BN47 -to DRAM_DQ[3]
+set_location_assignment PIN_BM47 -to DRAM_DQ[4]
+set_location_assignment PIN_BH50 -to DRAM_DQ[5]
+set_location_assignment PIN_BL51 -to DRAM_DQ[6]
+set_location_assignment PIN_BH46 -to DRAM_DQ[7]
+set_location_assignment PIN_BN37 -to DRAM_DQ[8]
+set_location_assignment PIN_BM37 -to DRAM_DQ[9]
+set_location_assignment PIN_BN39 -to DRAM_DQ[10]
+set_location_assignment PIN_BM44 -to DRAM_DQ[11]
+set_location_assignment PIN_BM42 -to DRAM_DQ[12]
+set_location_assignment PIN_BM45 -to DRAM_DQ[13]
+set_location_assignment PIN_BN42 -to DRAM_DQ[14]
+set_location_assignment PIN_BN45 -to DRAM_DQ[15]
+set_location_assignment PIN_BM9  -to DRAM_DQ[16]
+set_location_assignment PIN_BC1  -to DRAM_DQ[17]
+set_location_assignment PIN_BN5  -to DRAM_DQ[18]
+set_location_assignment PIN_BJ1  -to DRAM_DQ[19]
+set_location_assignment PIN_BJ2  -to DRAM_DQ[20]
+set_location_assignment PIN_BG2  -to DRAM_DQ[21]
+set_location_assignment PIN_BC2  -to DRAM_DQ[22]
+set_location_assignment PIN_BG1  -to DRAM_DQ[23]
+set_location_assignment PIN_BN8  -to DRAM_DQ[24]
+set_location_assignment PIN_BN11 -to DRAM_DQ[25]
+set_location_assignment PIN_BM8  -to DRAM_DQ[26]
+set_location_assignment PIN_BM14 -to DRAM_DQ[27]
+set_location_assignment PIN_BM11 -to DRAM_DQ[28]
+set_location_assignment PIN_BN16 -to DRAM_DQ[29]
+set_location_assignment PIN_BN14 -to DRAM_DQ[30]
+set_location_assignment PIN_BM19 -to DRAM_DQ[31]
+set_location_assignment PIN_BN34 -to DRAM_CS_n
+set_location_assignment PIN_BM34 -to DRAM_WE_n
+set_location_assignment PIN_BK40 -to DRAM_CAS_n
+set_location_assignment PIN_BM31 -to DRAM_RAS_n
+set_location_assignment PIN_BE4  -to DRAM_DQM[0]
+set_location_assignment PIN_BA2  -to DRAM_DQM[1]
+set_location_assignment PIN_BE6  -to DRAM_DQM[2]
+set_location_assignment PIN_BD1  -to DRAM_DQM[3]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to HDMI_TX_CLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_HS
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_VS
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[2]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[3]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[4]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[5]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[6]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[7]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[8]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[9]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[10]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[11]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[12]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[13]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[14]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[15]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[16]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[17]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[18]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[19]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[20]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[21]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[22]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_D[23]
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_DE
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_TX_INT
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_LRCLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_MCLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_SCLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to HDMI_I2S0
+set_location_assignment PIN_A22  -to HDMI_TX_CLK
+set_location_assignment PIN_V1   -to HDMI_TX_HS
+set_location_assignment PIN_R2   -to HDMI_TX_VS
+set_location_assignment PIN_AC2  -to HDMI_TX_D[0]
+set_location_assignment PIN_N1   -to HDMI_TX_D[1]
+set_location_assignment PIN_P4   -to HDMI_TX_D[2]
+set_location_assignment PIN_V2   -to HDMI_TX_D[3]
+set_location_assignment PIN_P6   -to HDMI_TX_D[4]
+set_location_assignment PIN_AA6  -to HDMI_TX_D[5]
+set_location_assignment PIN_AD6  -to HDMI_TX_D[6]
+set_location_assignment PIN_AA4  -to HDMI_TX_D[7]
+set_location_assignment PIN_AB9  -to HDMI_TX_D[8]
+set_location_assignment PIN_AC1  -to HDMI_TX_D[9]
+set_location_assignment PIN_AF2  -to HDMI_TX_D[10]
+set_location_assignment PIN_AF1  -to HDMI_TX_D[11]
+set_location_assignment PIN_AG2  -to HDMI_TX_D[12]
+set_location_assignment PIN_AK1  -to HDMI_TX_D[13]
+set_location_assignment PIN_AK2  -to HDMI_TX_D[14]
+set_location_assignment PIN_AM6  -to HDMI_TX_D[15]
+set_location_assignment PIN_AR1  -to HDMI_TX_D[16]
+set_location_assignment PIN_AR2  -to HDMI_TX_D[17]
+set_location_assignment PIN_AV1  -to HDMI_TX_D[18]
+set_location_assignment PIN_AE12 -to HDMI_TX_D[19]
+set_location_assignment PIN_AH9  -to HDMI_TX_D[20]
+set_location_assignment PIN_AJ4  -to HDMI_TX_D[21]
+set_location_assignment PIN_AJ6  -to HDMI_TX_D[22]
+set_location_assignment PIN_AH12 -to HDMI_TX_D[23]
+set_location_assignment PIN_Y1   -to HDMI_TX_DE
+set_location_assignment PIN_AL12 -to HDMI_TX_INT
+set_location_assignment PIN_L1   -to HDMI_LRCLK
+set_location_assignment PIN_T6   -to HDMI_MCLK
+set_location_assignment PIN_J2   -to HDMI_SCLK
+set_location_assignment PIN_M1   -to HDMI_I2S0
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to UART_TX
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to UART_RX
+set_location_assignment PIN_J1   -to UART_TX
+set_location_assignment PIN_BH10 -to UART_RX
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to I2C_SCL
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to I2C_SDA
+set_location_assignment PIN_M2   -to I2C_SCL
+set_location_assignment PIN_N2   -to I2C_SDA
+
+# IS42VM32160G Table 7: maximum input capacitance, in pF.
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_CLK}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_CKE}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_CS_n}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_RAS_n}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_CAS_n}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_WE_n}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_ADDR[*]}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_BA[*]}
+set_instance_assignment -name OUTPUT_PIN_LOAD 4 -to {DRAM_DQM[*]}
+set_instance_assignment -name OUTPUT_PIN_LOAD 5 -to {DRAM_DQ[*]}

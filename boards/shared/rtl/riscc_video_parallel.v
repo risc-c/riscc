@@ -1,12 +1,14 @@
-// atum_fb_hdmi.v : SDRAM framebuffer and TFP410 scanout pipeline.
+// riscc_video_parallel.v : SDRAM framebuffer and parallel RGB scanout pipeline.
 
 `timescale 1ns/1ps
 `default_nettype none
 
-// 1920x1080p60 timing for the TFP410 parallel transmitter. It scales the
-// RISC-C 320x180 framebuffer by 6 in both directions, so no
-// resampling RAM or second framebuffer is required.
-module atum_fb_hdmi (
+// 1080p60 or 720p60 timing for parallel RGB transmitters. Integer scaling
+// of the RISC-C 320x180 framebuffer in both directions needs no
+// resampling RAM or second framebuffer.
+module riscc_video_parallel #(
+    parameter integer SCALE = 6 // 6: 1080p60, 4: 720p60
+) (
     input wire cpu_clk, palette_we,
     input wire [7:0] palette_addr,
     input wire [23:0] palette_wdata,
@@ -18,21 +20,21 @@ module atum_fb_hdmi (
     output wire underrun,
     input  wire pix_clk,
     input  wire rst,
-    output wire pix_clk_out,
     output wire hdmi_hs,
     output wire hdmi_vs,
     output wire hdmi_de,
     output wire [23:0] hdmi_rgb
 );
-    localparam [11:0] H_TOTAL = 12'd2200;
-    localparam [11:0] H_SYNC = 12'd44;
-    localparam [11:0] H_ACTIVE_START = 12'd192;
-    localparam [11:0] H_ACTIVE_END = 12'd2112;
-    localparam [10:0] V_TOTAL = 11'd1125;
+    localparam [11:0] H_TOTAL = SCALE == 4 ? 12'd1650 : 12'd2200;
+    localparam [11:0] H_SYNC = SCALE == 4 ? 12'd40 : 12'd44;
+    localparam [11:0] H_ACTIVE_START = SCALE == 4 ? 12'd260 : 12'd192;
+    localparam [11:0] H_ACTIVE_END = SCALE == 4 ? 12'd1540 : 12'd2112;
+    localparam [10:0] V_TOTAL = SCALE == 4 ? 11'd750 : 11'd1125;
     localparam [10:0] V_SYNC = 11'd5;
-    localparam [10:0] V_ACTIVE_START = 11'd41;
-    localparam [10:0] V_ACTIVE_END = 11'd1121;
+    localparam [10:0] V_ACTIVE_START = SCALE == 4 ? 11'd25 : 11'd41;
+    localparam [10:0] V_ACTIVE_END = SCALE == 4 ? 11'd745 : 11'd1121;
 
+    localparam [2:0] LAST_REPEAT = SCALE[2:0] - 3'd1;
     reg [11:0] h_count;
     reg [10:0] v_count;
     reg [8:0] source_x;
@@ -43,7 +45,7 @@ module atum_fb_hdmi (
                   (v_count >= V_ACTIVE_START) && (v_count < V_ACTIVE_END);
     wire hsync = h_count >= H_SYNC;
     wire vsync = v_count >= V_SYNC;
-    // Repeat counters advance source_x every six pixels and source_y every six lines.
+    // Repeat counters advance source_x every SCALE pixels and source_y every SCALE lines.
     reg active_q;
     reg hsync_q;
     reg vsync_q;
@@ -89,7 +91,7 @@ module atum_fb_hdmi (
                 h_repeat <= 3'd0;
             end else if ((h_count >= H_ACTIVE_START) &&
                          (h_count < H_ACTIVE_END)) begin
-                if (h_repeat == 3'd5) begin
+                if (h_repeat == LAST_REPEAT) begin
                     source_x <= source_x + 1'b1;
                     h_repeat <= 3'd0;
                 end else begin
@@ -103,7 +105,7 @@ module atum_fb_hdmi (
                     v_repeat <= 3'd0;
                 end else if ((v_count >= V_ACTIVE_START) &&
                              (v_count < V_ACTIVE_END)) begin
-                    if (v_repeat == 3'd5) begin
+                    if (v_repeat == LAST_REPEAT) begin
                         source_y <= source_y + 1'b1;
                         v_repeat <= 3'd0;
                     end else begin
@@ -154,8 +156,6 @@ module atum_fb_hdmi (
         end
     end
 
-    // The TFP410 samples data on the opposite edge of the pixel clock.
-    assign pix_clk_out = ~pix_clk;
     assign hdmi_hs = hsync_d;
     assign hdmi_vs = vsync_d;
     assign hdmi_de = active_d;

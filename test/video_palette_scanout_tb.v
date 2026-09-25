@@ -1,10 +1,22 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// Exercise the complete Atum scanout/palette path.  The SDRAM model returns
-// indexed pixels from row/word addresses; the checker observes the delayed
-// HDMI stream and verifies the first 320-pixel source row after 6x scaling.
-module video_palette_scanout_tb;
+// Exercise the shared scanout/palette path. The SDRAM model returns indexed
+// pixels from row/word addresses; the checker observes the delayed parallel
+// stream and verifies the first 320-pixel source row at either supported
+// integer scale.
+module video_palette_scanout_tb #(
+    parameter integer SCALE = 6
+);
+    localparam integer H_TOTAL = SCALE == 4 ? 1650 : 2200;
+    localparam integer H_SYNC = SCALE == 4 ? 40 : 44;
+    localparam integer H_ACTIVE_START = SCALE == 4 ? 260 : 192;
+    localparam integer H_ACTIVE_END = SCALE == 4 ? 1540 : 2112;
+    localparam integer V_TOTAL = SCALE == 4 ? 750 : 1125;
+    localparam integer V_SYNC = 5;
+    localparam integer V_ACTIVE_START = SCALE == 4 ? 25 : 41;
+    localparam integer V_ACTIVE_END = SCALE == 4 ? 745 : 1121;
+    localparam integer ACTIVE_PIXELS = 320 * SCALE;
     reg cpu_clk = 1'b0;
     reg memory_clk = 1'b0;
     reg pix_clk = 1'b0;
@@ -24,10 +36,10 @@ module video_palette_scanout_tb;
     reg memory_ack = 1'b0;
     reg [31:0] memory_rdata = 32'd0;
     wire underrun;
-    wire pix_clk_out, hdmi_hs, hdmi_vs, hdmi_de;
+    wire hdmi_hs, hdmi_vs, hdmi_de;
     wire [23:0] hdmi_rgb;
 
-    atum_fb_hdmi dut (
+    riscc_video_parallel #(.SCALE(SCALE)) dut (
         .cpu_clk(cpu_clk), .palette_we(palette_we),
         .palette_addr(palette_addr), .palette_wdata(palette_wdata),
         .memory_clk(memory_clk), .memory_rst(memory_rst),
@@ -35,7 +47,7 @@ module video_palette_scanout_tb;
         .memory_cyc(memory_cyc), .memory_stb(memory_stb),
         .memory_stall(memory_stall), .memory_ack(memory_ack),
         .memory_rdata(memory_rdata), .underrun(underrun),
-        .pix_clk(pix_clk), .rst(rst), .pix_clk_out(pix_clk_out),
+        .pix_clk(pix_clk), .rst(rst),
         .hdmi_hs(hdmi_hs), .hdmi_vs(hdmi_vs), .hdmi_de(hdmi_de),
         .hdmi_rgb(hdmi_rgb)
     );
@@ -135,6 +147,8 @@ module video_palette_scanout_tb;
     integer i;
     integer displayed;
     integer guard;
+    integer line_cycles;
+    integer h_sample;
     initial begin
         // Populate every palette entry, including values above the old 4-bit
         // framebuffer range, while video remains in reset.
@@ -146,29 +160,84 @@ module video_palette_scanout_tb;
         memory_rst = 1'b0;
         rst = 1'b0;
 
-        // Wait for the first delayed HDMI active interval, then verify all
-        // 1920 output pixels of the first 320-pixel source row.
-        displayed = 0;
+        // Wait for the first delayed active interval, then verify all output
+        // pixels of the first 320-pixel source row.
         guard = 0;
-        while (displayed < 1920) begin
+        while (!hdmi_de) begin
             @(posedge pix_clk);
             #1;
             guard = guard + 1;
             if (guard > 3000000)
                 $fatal(1, "timed out waiting for HDMI active output");
-            if (hdmi_de) begin
-                if (hdmi_rgb !== palette_color(pixel_index(0, displayed / 6)))
-                    $fatal(1, "HDMI pixel %0d: got %h expected %h", displayed,
-                           hdmi_rgb, palette_color(pixel_index(0, displayed / 6)));
-                displayed = displayed + 1;
-            end
+        end
+        if (hdmi_vs !== 1'b1)
+            $fatal(1, "active video started during vertical sync");
+        if (hdmi_hs !== 1'b1)
+            $fatal(1, "active video started during horizontal sync");
+
+        // Check the active row's palette alignment and then its blanking
+        // interval. The cycle count catches accidental use of 1080p timing
+        // for the 720p mode (or vice versa).
+        for (displayed = 0; displayed < ACTIVE_PIXELS;
+             displayed = displayed + 1) begin
+            if (!hdmi_de)
+                $fatal(1, "active video ended at pixel %0d", displayed);
+            if (hdmi_hs !== (H_ACTIVE_START + displayed >= H_SYNC))
+                $fatal(1, "horizontal sync alignment at pixel %0d", displayed);
+            if (hdmi_rgb !== palette_color(pixel_index(0, displayed / SCALE)))
+                $fatal(1, "HDMI pixel %0d: got %h expected %h", displayed,
+                       hdmi_rgb, palette_color(pixel_index(0, displayed / SCALE)));
+            @(posedge pix_clk);
+            #1;
+        end
+        if (hdmi_de)
+            $fatal(1, "active video did not end at the expected width");
+
+        line_cycles = ACTIVE_PIXELS;
+        h_sample = H_ACTIVE_END;
+        while (!hdmi_de) begin
+            if (hdmi_hs !== (h_sample >= H_SYNC))
+                $fatal(1, "horizontal sync alignment in blanking at cycle %0d",
+                       line_cycles);
+            @(posedge pix_clk);
+            #1;
+            line_cycles = line_cycles + 1;
+            h_sample = h_sample + 1;
+            if (h_sample == H_TOTAL)
+                h_sample = 0;
+            if (line_cycles > H_TOTAL)
+                $fatal(1, "horizontal line exceeded expected period");
+        end
+        if (line_cycles != H_TOTAL)
+            $fatal(1, "horizontal period %0d expected %0d",
+                   line_cycles, H_TOTAL);
+
+        // Check one complete following line, including the low horizontal
+        // sync pulse at its beginning and the active/de transition.
+        h_sample = H_ACTIVE_START;
+        for (line_cycles = 0; line_cycles < H_TOTAL;
+             line_cycles = line_cycles + 1) begin
+            if (hdmi_de !== (h_sample >= H_ACTIVE_START &&
+                             h_sample < H_ACTIVE_END))
+                $fatal(1, "data enable alignment at horizontal cycle %0d",
+                       line_cycles);
+            if (hdmi_hs !== (h_sample >= H_SYNC))
+                $fatal(1, "horizontal sync width at cycle %0d", line_cycles);
+            if (hdmi_vs !== 1'b1)
+                $fatal(1, "vertical sync asserted in active frame");
+            @(posedge pix_clk);
+            #1;
+            h_sample = h_sample + 1;
+            if (h_sample == H_TOTAL)
+                h_sample = 0;
         end
         if (underrun)
             $fatal(1, "unexpected scanout underrun");
         if (memory_max_pending < 2 || memory_pipelined == 0)
             $fatal(1, "scanout did not pipeline reads (max_pending=%0d pipelined=%0d)",
                    memory_max_pending, memory_pipelined);
-        $display("PASS Atum video palette scanout: 256 colors, 320 pixels, 6x HDMI scaling (max %0d outstanding)",
+        $display("PASS video palette scanout: scale %0d (%0dx%0d), active %0d pixels, line %0d cycles (max %0d outstanding)",
+                 SCALE, H_TOTAL, V_TOTAL, ACTIVE_PIXELS, H_TOTAL,
                  memory_max_pending);
         $finish;
     end

@@ -1,9 +1,9 @@
-// atum_a3_nano_soc.v : RISC-C demo SoC for the Atum A3 Nano board.
+// riscc_demo_soc.v : RC32 demo SoC shared by the Agilex 3 boards.
 
 `timescale 10ns/10ns
 `default_nettype none
 
-module atum_a3_nano_soc #(
+module riscc_demo_soc #(
     parameter MEM_HEX = "mem/demo.memh",
     parameter integer UART_CLK_DIV = 1736,
     parameter integer TIMER_TICK_DIV = 200000
@@ -56,6 +56,7 @@ module atum_a3_nano_soc #(
     // SDRAM request selection for the external memory fabric.
     wire periph_region = &mem_addr[29:4];
     wire sdram_sel;
+    wire mem_accept = mem_cyc && mem_stb && !mem_stall && !rst;
     reg sdram_pending_q;
     // Shared-port backpressure is independent of the offered address.
     // MMIO also waits for bridge capacity, keeping address classification
@@ -75,7 +76,6 @@ module atum_a3_nano_soc #(
         end
     end
     wire mmio_sel = periph_region && mem_addr[3];
-    wire mem_accept = mem_cyc && mem_stb && !mem_stall && !rst;
     // CYC/STB acceptance is sampled on the clock edge; registered MMIO ACK
     // and read data are consumed by the CPU on the following cycle.
     wire cpu_write_commit = mem_accept && mem_we;
@@ -162,7 +162,7 @@ module atum_a3_nano_soc #(
         .irq(timer_irq)
     );
 
-    // Register the IRQ path to meet the Atum CPU clock.
+    // Register the IRQ path to meet the 200 MHz CPU clock.
     riscc_irq_ctrl #(
         .DATA_WIDTH(32),
         .REGISTER_IRQ(1)

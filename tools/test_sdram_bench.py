@@ -33,7 +33,8 @@ def build(root: Path, verilator: str, build_dir: Path, data_bits: int,
           full_bits: int = 10, corrupt_read: int = 0,
           read_delay: int = 0, direct_capture: int = 0,
           io_capture: int = 0, max_refresh_gap: int = 132,
-          forward_phase: str = "0.0") -> tuple[bool, Path]:
+          forward_phase: str = "0.0", agilex_wrapper: int = 0,
+          capture_retime: int = 0, capture_phase: str = "0.0") -> tuple[bool, Path]:
     build_dir.mkdir(parents=True, exist_ok=True)
     command = [verilator, "--binary", "--timing", "-j", "8",
                "-Wno-UNOPTFLAT", "-Wno-WIDTHTRUNC", "-Wno-WIDTHEXPAND",
@@ -46,13 +47,16 @@ def build(root: Path, verilator: str, build_dir: Path, data_bits: int,
                f"-GREAD_DELAY={read_delay}",
                f"-GDIRECT_CAPTURE={direct_capture}",
                f"-GIO_CAPTURE={io_capture}",
+               f"-GCAPTURE_RETIME={capture_retime}",
+               f"-GCAPTURE_PHASE_NS={capture_phase}",
+               f"-GAGILEX_WRAPPER={agilex_wrapper}",
                f"-GFORWARD_PHASE_NS={forward_phase}",
                "-GRANDOM_BITS=8", f"-GCORRUPT_READ={corrupt_read}",
                "--Mdir", str(build_dir),
                str(root / "boards/shared/rtl/riscc_sdram.v"),
                str(root / "boards/shared/test/sdram/riscc_sdram_bench.v"),
                str(root / "boards/icepi_zero/rtl/icepi_sdram.v"),
-               str(root / "boards/atum_a3_nano/rtl/atum_sdram.v"),
+               str(root / "boards/shared/rtl/agilex3_sdram.v"),
                str(root / "test/riscc_sdram_model.v"),
                str(root / "test/riscc_sdram_bench_tb.v")]
     result = run(command, cwd=root, timeout=180)
@@ -138,7 +142,23 @@ def main() -> int:
         if not ok or not execute(root, binary, build_dir, run_seeds):
             return 1
 
-    # Atum can return data after two additional complete controller periods.
+    # Exercise the optional raw x32 wrapper at 50 MHz. With
+    # IO_CAPTURE disabled, agilex3_sdram forwards the inverted controller
+    # clock and captures DQ on the controller's falling edge.
+    raw_wrapper_configurations = (
+        ("5.8", "50-x32-agilex-raw-tac5p8"),
+        ("1.8", "50-x32-agilex-raw-tac1p8"),
+    )
+    for tac, tag in raw_wrapper_configurations:
+        build_dir = build_root / tag
+        ok, binary = build(root, args.verilator, build_dir, 32, 50,
+                            "20.0", "10.0", tac, 10, 0,
+                            read_delay=0, max_refresh_gap=1000,
+                            agilex_wrapper=1)
+        if not ok or not execute(root, binary, build_dir, seeds):
+            return 1
+
+    # Agilex can return data after two additional complete controller periods.
     # Increase the model tAC by those periods while retaining the underlying
     # 5.8 ns nominal and 1.8 ns early return points.  These cases exercise the
     # controller's explicit read-return delay rather than changing traffic.
@@ -215,6 +235,24 @@ def main() -> int:
                             # the controller's CLK_MHZ-derived default.
                             max_refresh_gap=1300,
                             forward_phase="-0.666667")
+        if not ok or not execute(root, binary, build_dir, seeds):
+            return 1
+    # The 125 MHz board samples at +6 ns, then uses one full capture-clock
+    # cycle before transferring into the controller domain. These return
+    # delays exercise pipeline alignment, including aggregate pin latency;
+    # physical setup/hold closure is checked separately by Quartus STA.
+    for tac, full_bits, corrupt_read, tag in (
+        ("4.0", 10, 0, "125-x32-io-early"),
+        ("10.5", 10, 0, "125-x32-io-late"),
+        ("5.8", 16, 0, "125-x32-io-long"),
+        ("5.8", 10, 1, "125-x32-io-fault"),
+    ):
+        build_dir = build_root / tag
+        ok, binary = build(root, args.verilator, build_dir, 32, 125,
+                            "8.0", "4.0", tac, full_bits, corrupt_read,
+                            read_delay=1, io_capture=1,
+                            max_refresh_gap=1100, forward_phase="-1.0625",
+                            capture_retime=1, capture_phase="6.0")
         if not ok or not execute(root, binary, build_dir, seeds):
             return 1
     print("SDRAM queued benchmark checks PASS")

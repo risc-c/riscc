@@ -1,0 +1,40 @@
+# Common settings for the A3CZ135BB18AE7S demo systems.
+set_global_assignment -name DEVICE_FILTER_PACKAGE VPBGA
+set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name NUM_PARALLEL_PROCESSORS $::env(RISCC_BUILD_JOBS)
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
+set_global_assignment -name STRATIXV_CONFIGURATION_SCHEME "ACTIVE SERIAL X4"
+set_global_assignment -name ACTIVE_SERIAL_CLOCK AS_FREQ_100MHZ
+set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ
+set_global_assignment -name USE_CONF_DONE SDM_IO16
+
+# Leave unconnected board peripherals undriven.
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS "AS INPUT TRI-STATED"
+set_global_assignment -name IP_FILE ip/agilex3_config_reset.ip
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/agilex3_demo_system.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/agilex3_sdram.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/agilex3_sdram_pll.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/agilex3_video_pll.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/agilex3_reset_release.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_demo_soc.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_video_parallel.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_i2c_reg.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_uart_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_timer_mmio.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_irq_ctrl.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_fabric.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_scanout.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_bridge.v
+set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_video_palette.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_cached.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_fast.v
+
+# Pack SDRAM launch registers into the output and output-enable I/O cells.
+set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|sd_dq_o[*]"
+set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|sd_addr[*]"
+set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|sd_ba[*]"
+set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|sd_dqm[*]"
+set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|command_q[*]"
+set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to "system|memory|controller|sd_dq_oe"

@@ -755,6 +755,8 @@ module riscc_cached_pipe #(
     wire x_redirect = normal_x &&
         ((x_branch && x_branch_taken) || x_indirect || (x_jall && d_valid));
     wire [31:0] x_long_target = {11'b0, x_instr_q[10:6], d_instr};
+    wire [XLEN-2:0] relative_branch_target;
+    wire shift_feedback;
     wire [XLEN-2:0] x_branch_target = REGISTER_FETCH ?
         relative_branch_target : alu_result[XLEN-1:1];
     wire [XLEN-2:0] x_redirect_pc = x_jall ? x_long_target[XLEN-1:1] :
@@ -940,7 +942,7 @@ module riscc_cached_pipe #(
     endgenerate
 
     // Shifts reuse the completion result; RF reads only belong to Decode.
-    wire shift_feedback = core_advance &&
+    assign shift_feedback = core_advance &&
         (x_shift_start || (in_shift && !shift_finish));
     riscc_fast_rf #(.XLEN(XLEN)) regs (
         .clk(clk),
@@ -988,7 +990,7 @@ module riscc_cached_pipe #(
     wire relative_from_execute = x_valid_q && x_branch && x_branch_taken;
     wire [7:0] relative_displacement = relative_from_execute ?
         {x_imm_sign_q, x_instr_q[7:1]} : {d_instr[0], d_instr[7:1]};
-    wire [XLEN-2:0] relative_branch_target = x_pc_next_q +
+    assign relative_branch_target = x_pc_next_q +
         {{(XLEN-9){relative_displacement[7]}}, relative_displacement} +
         {{(XLEN-2){1'b0}}, !relative_from_execute};
     wire late_redirect = take_irq || (x_redirect && !x_early_redirect_q);

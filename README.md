@@ -125,16 +125,17 @@ openFPGALoader -cft231X --pins=7:3:5:6 build/icepi_zero/demo.bit
 The `make` command only produces the bitstream. `openFPGALoader` temporarily
 configures the FPGA without overwriting its flash.
 
-The demonstration also runs on the Atum A3 Nano board. If Quartus Pro is
-available, provide its `quartus_sh` executable to build the FPGA image:
+The demonstration also supports Atum A3 Nano and DE23-Lite. With Quartus Pro,
+provide its `quartus_sh` executable to build the FPGA image:
 
 ```sh
 make -j16 QUARTUS_SH=/path/to/quartus/bin/quartus_sh atum-a3-demo
+make -j16 QUARTUS_SH=/path/to/quartus/bin/quartus_sh de23-lite-demo
 ```
 
 This produces the Intel configuration file without programming the board. See
-the [Hardware manual](doc/HARDWARE.md#terasic-atum-a3-nano) for programming
-commands.
+[Atum programming](doc/HARDWARE.md#terasic-atum-a3-nano) and
+[DE23-Lite board details](doc/HARDWARE.md#terasic-de23-lite) in the Hardware manual.
 
 ## Documentation
 
@@ -185,6 +186,8 @@ make -j16 test-all
 | `make icepi-zero-demo-bit` | Builds the Icepi Zero demo bitstream only; it does not program hardware. |
 | `make atum-a3-demo-iss` | Builds and runs the Atum A3 Nano demo in the Fast DSP multiplier ISS model with its display window. |
 | `make QUARTUS_SH=/path/to/quartus/bin/quartus_sh atum-a3-demo` | Builds the Atum A3 Nano Intel configuration file (`.sof`); firmware-only changes update the fitted on-chip memory image and reassemble, while RTL or project changes run the full Quartus flow. Quartus Pro must be provided and the command does not program hardware. |
+| `make de23-lite-demo-rtlsim` | Builds the shared RC32 demo with DE23-Lite firmware and checks UART/framebuffer activity. |
+| `make QUARTUS_SH=/path/to/quartus/bin/quartus_sh de23-lite-demo` | Builds the DE23-Lite `.sof` without programming hardware; see [board details](doc/HARDWARE.md#terasic-de23-lite). |
 
 See the Hardware manual before running FPGA flows or programming a board, and
 the Programming manual before building an application image.

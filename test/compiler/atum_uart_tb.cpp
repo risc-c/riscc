@@ -1,4 +1,4 @@
-#include "Vatum_a3_nano_soc_sim.h"
+#include "Vriscc_demo_soc_sim.h"
 #include "verilated.h"
 
 #include <cstdint>
@@ -55,7 +55,7 @@ struct TxCapture
     }
 };
 
-static void tick(Vatum_a3_nano_soc_sim *top, TxCapture &capture)
+static void tick(Vriscc_demo_soc_sim *top, TxCapture &capture)
 {
     top->clk = 0;
     top->eval();
@@ -67,7 +67,7 @@ static void tick(Vatum_a3_nano_soc_sim *top, TxCapture &capture)
 int main(int argc, char **argv)
 {
     Verilated::commandArgs(argc, argv);
-    auto *top = new Vatum_a3_nano_soc_sim;
+    auto *top = new Vriscc_demo_soc_sim;
     TxCapture capture;
 
     top->clk = 0;

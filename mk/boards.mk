@@ -1,4 +1,4 @@
-BOARD_RULES := Makefile mk/boards.mk mk/firmware.mk
+BOARD_RULES := Makefile mk/boards.mk mk/agilex3-board.mk mk/firmware.mk
 
 .PHONY: test-board-map
 test-board-map:
@@ -65,17 +65,6 @@ icepi-zero-test-bit: icepi-zero-demo-bit icepi-zero-test-bin tools/update_ecp5_b
 	  --from-hex $(ICEPI_MEMH) --to-hex build/icepi_zero_test/test.memh
 	$(ECPPACK) --compress build/icepi_zero_test/test.config build/icepi_zero_test/test.bit
 	@printf 'Icepi test bitstream: %s\n' 'build/icepi_zero_test/test.bit'
-
-atum-a3-test-bin:
-	+$(MAKE) ATUM_BUILD=build/atum_a3_nano_test \
-	  ATUM_PROGRAM=boards/shared/test/sdram/hardware_test.cpp \
-	  atum-a3-demo-bin
-
-atum-a3-test:
-	+$(MAKE) ATUM_BUILD=build/atum_a3_nano_test \
-	  ATUM_PROGRAM=boards/shared/test/sdram/hardware_test.cpp atum-a3-demo
-	cp build/atum_a3_nano_test/quartus/output_files/atum_a3_nano.sof \
-	  build/atum_a3_nano_test/test.sof
 
 DEMO_RAM_LENGTH ?= 0x4000
 # Board images use RC32 Full and compact libraries, independent of application
@@ -261,129 +250,18 @@ $(ICEPI_VIDEO_TEST_BIT): $(ICEPI_VIDEO_TEST_CONFIG)
 
 icepi-zero-video-test-bit: $(ICEPI_VIDEO_TEST_BIT)
 
-# Terasic Atum A3 Nano
-
-.PHONY: atum-a3-demo-bin atum-a3-demo-iss atum-a3-demo-rtlsim atum-a3-demo
-
-ATUM_DIR := boards/atum_a3_nano
-ATUM_BUILD := build/atum_a3_nano
-ATUM_BIN := $(ATUM_BUILD)/demo.bin
-ATUM_PROGRAM ?= $(DEMO_PROGRAM)
-ATUM_OBJ := $(ATUM_BUILD)/demo.o
-ATUM_PROGRAM_SELECTION := $(ATUM_BUILD)/demo.program
-ATUM_ELF := $(ATUM_BUILD)/demo.elf
-ATUM_MEMH := $(ATUM_BUILD)/mem/demo.memh
-ATUM_MIF := $(ATUM_MEMH).mif
-ATUM_RTLSIM := $(ATUM_BUILD)/rtlsim/Vatum_a3_nano_soc_sim
-ATUM_QUARTUS_BUILD := $(ATUM_BUILD)/quartus
-ATUM_QUARTUS_QPF := $(ATUM_QUARTUS_BUILD)/atum_a3_nano.qpf
-ATUM_QUARTUS_QSF := $(ATUM_QUARTUS_BUILD)/atum_a3_nano.qsf
-ATUM_RESET_IP := $(ATUM_QUARTUS_BUILD)/ip/atum_config_reset.ip
-ATUM_IPGENERATE = $(patsubst %quartus_sh,%quartus_ipgenerate,$(QUARTUS_SH))
-ATUM_QUARTUS_MEM := $(ATUM_QUARTUS_BUILD)/mem
-ATUM_FULL_BUILD_STAMP := $(ATUM_QUARTUS_BUILD)/.full-build
-ATUM_SOF := $(ATUM_QUARTUS_BUILD)/output_files/atum_a3_nano.sof
-ATUM_SOC_RTL := \
-  $(DEMO_PERIPH_RTL) \
-  $(ATUM_DIR)/rtl/atum_a3_nano_soc.v
-ATUM_SIM_RTL := \
-  $(DEMO_MEMORY_SIM_RTL) \
-  $(ATUM_DIR)/rtl/atum_fb_hdmi.v \
-  $(ATUM_DIR)/rtl/atum_a3_nano_soc_sim.v \
-  $(ATUM_SOC_RTL) \
-  rtl/riscc_cached.v \
-  rtl/riscc_fast.v
-ATUM_HW_RTL := \
-  $(ATUM_DIR)/rtl/top.v \
-  $(DEMO_SDRAM_RTL) \
-  $(ATUM_DIR)/rtl/atum_sdram.v \
-  $(ATUM_DIR)/rtl/atum_sdram_pll.v \
-  $(ATUM_DIR)/rtl/atum_hdmi_pll.v \
-  $(ATUM_DIR)/rtl/atum_reset_release.v \
-  $(ATUM_SOC_RTL) \
-  $(ATUM_DIR)/rtl/atum_fb_hdmi.v \
-  $(ATUM_DIR)/rtl/atum_tfp410_init.v \
-  rtl/riscc_cached.v \
-  rtl/riscc_fast.v
-ATUM_PROJECT_FILES := \
-  $(ATUM_DIR)/atum_a3_nano.qpf \
-  $(ATUM_DIR)/atum_a3_nano.qsf \
-  $(ATUM_DIR)/atum_a3_nano.sdc \
-  $(ATUM_HW_RTL)
-ATUM_FULL_BUILD_DEPS := \
-  $(ATUM_PROJECT_FILES) \
-  $(ATUM_QUARTUS_QPF) \
-  $(ATUM_QUARTUS_QSF) \
-  $(ATUM_RESET_IP) \
-  $(RISCC_RF_RTL) \
-  $(BOARD_RULES)
-
-$(ATUM_MEMH): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
-	@mkdir -p $(@D)
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --width 32 --depth 4096
-
-$(ATUM_MIF): $(ATUM_BIN) tools/bin_to_memh.py $(BOARD_RULES)
-	@mkdir -p $(@D)
-	$(PYTHON) tools/bin_to_memh.py $< -o $@ --width 32 --depth 4096 --format mif
-
-atum-a3-demo-bin: $(ATUM_BIN) $(ATUM_MEMH) $(ATUM_MIF)
-
-atum-a3-demo-iss: $(ATUM_BIN) $(RISCC_SIM)
-	$(RISCC_SIM) $< --rc32-full --board-rc32 --uart --fb-window --fb-scale 4 --mhz 200 --max-insns 0
-
-$(ATUM_RTLSIM): $(ATUM_MEMH) $(ATUM_SIM_RTL) $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp $(BOARD_RULES)
-	@mkdir -p $(@D)
-	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
-	  --top-module atum_a3_nano_soc_sim --prefix Vatum_a3_nano_soc_sim \
-	  -Mdir $(@D) -GTIMER_TICK_DIV=4 -I$(abspath rtl) \
-	  -CFLAGS "$(TB_CXXFLAGS)" -o Vatum_a3_nano_soc_sim \
-	  $(abspath $(ATUM_SIM_RTL)) $(abspath $(ATUM_DIR)/sim/atum_a3_nano_soc_tb.cpp)
-
-atum-a3-demo-rtlsim: $(ATUM_RTLSIM)
-	$(ATUM_RTLSIM)
-
-$(ATUM_QUARTUS_QPF): $(ATUM_DIR)/atum_a3_nano.qpf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(ATUM_QUARTUS_QSF): $(ATUM_DIR)/atum_a3_nano.qsf
-	@mkdir -p $(@D)
-	cp $< $@
-
-$(ATUM_QUARTUS_MEM): | $(ATUM_QUARTUS_QSF)
-	ln -sfn ../mem $@
-
-$(ATUM_RESET_IP): $(BOARD_RULES)
-	@mkdir -p $(@D)
-	@quartus_bin=$$(dirname "$$(command -v "$(QUARTUS_SH)")"); \
-	  "$$quartus_bin/../sopc_builder/bin/ip-deploy" \
-	    --component-name=altera_s10_user_rst_clkgate \
-	    --output-name=atum_config_reset --output-directory="$(abspath $(@D))" \
-	    --part=A3CZ135BB18AE7S
-
-$(ATUM_FULL_BUILD_STAMP): $(ATUM_FULL_BUILD_DEPS) | \
-		$(ATUM_MIF) $(ATUM_QUARTUS_MEM)
-	cd $(ATUM_QUARTUS_BUILD) && \
-	  RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) \
-	  $(ATUM_IPGENERATE) --generate_ip_file --synthesis=verilog \
-	    --ip_file=ip/atum_config_reset.ip atum_a3_nano
-	cd $(ATUM_QUARTUS_BUILD) && \
-	  RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) \
-	  $(QUARTUS_SH) $(QUARTUS_FLOW_ARGS) --flow compile \
-	  atum_a3_nano
-	@test -f $(ATUM_SOF)
-	@touch $@
-
-$(ATUM_SOF): $(ATUM_FULL_BUILD_STAMP) $(ATUM_MIF)
-	cd $(ATUM_QUARTUS_BUILD) && \
-	  RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) \
-	  $(QUARTUS_CDB) --update_mif atum_a3_nano
-	cd $(ATUM_QUARTUS_BUILD) && \
-	  RISCC_BUILD_JOBS=$(RISCC_BUILD_JOBS) \
-	  $(QUARTUS_ASM) atum_a3_nano
-	@printf 'Atum A3 Nano SOF: %s\n' '$@'
-
-atum-a3-demo: $(ATUM_SOF)
+# Board metadata; both boards use the same hardware/firmware build recipe.
+ATUM_VIDEO_SCALE := 6
+ATUM_CPU_MHZ := 200
+ATUM_NAME := Atum A3 Nano
+ATUM_DEFINES := -DRISCC_ATUM_A3
+ATUM_TRANSMITTER_RTL := boards/atum_a3_nano/rtl/atum_tfp410_init.v
+DE23_VIDEO_SCALE := 4
+DE23_CPU_MHZ := 200
+DE23_NAME := DE23-Lite
+DE23_DEFINES := -DRISCC_DE23_LITE
+DE23_TRANSMITTER_RTL := boards/de23_lite/rtl/adv7513_init.v
+include mk/agilex3-board.mk
 
 # Board firmware uses the same freestanding C++ subset as applications.
 DEMO_CXXFLAGS := $(filter-out -O%,$(RISCC_CXXFLAGS)) -O2 -Ifirmware/include
@@ -397,12 +275,7 @@ $(ICEPI_PROGRAM_SELECTION): demo-program-selection-check
 	@printf '%s\n' '$(abspath $(ICEPI_PROGRAM))' > $@.tmp
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
-$(ATUM_PROGRAM_SELECTION): demo-program-selection-check
-	@mkdir -p $(@D)
-	@printf '%s\n' '$(abspath $(ATUM_PROGRAM))' > $@.tmp
-	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
-
--include $(ICEPI_OBJ:.o=.d) $(ATUM_OBJ:.o=.d)
+-include $(ICEPI_OBJ:.o=.d)
 
 $(ICEPI_OBJ): $(ICEPI_PROGRAM) $(ICEPI_PROGRAM_SELECTION) $(LIBC_HEADERS) $(BOARD_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
@@ -421,23 +294,6 @@ $(ICEPI_ELF): $(DEMO_VECTORS) $(DEMO_CRT0) \
 $(ICEPI_BIN): $(ICEPI_ELF) $(RISCC_OBJCOPY)
 	$(RISCC_OBJCOPY) -O binary $< $@
 
-$(ATUM_OBJ): $(ATUM_PROGRAM) $(ATUM_PROGRAM_SELECTION) $(LIBC_HEADERS) $(BOARD_RULES) $(RISCC_CLANG)
-	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(DEMO_TARGET_FLAGS) $(DEMO_CXXFLAGS) \
-	  -DRISCC_ATUM_A3 -MMD -MP -c $< -o $@
-
-$(ATUM_ELF): $(DEMO_VECTORS) $(DEMO_CRT0) \
-		$(ATUM_OBJ) $(DEMO_LIBS) $(DEMO_LINKER_SCRIPT) \
-		$(RISCC_CLANG) $(RISCC_LLD)
-	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(DEMO_TARGET_FLAGS) $(RISCC_LDFLAGS) -fuse-ld=lld -nostdlib \
-	  -Wl,-T,$(abspath $(DEMO_LINKER_SCRIPT)) $(DEMO_LD_FLAGS) -Wl,-Map,$(@:.elf=.map) \
-	  $(DEMO_VECTORS) $(DEMO_CRT0) $(ATUM_OBJ) \
-	  $(DEMO_LIBS) -o $@
-
-$(ATUM_BIN): $(ATUM_ELF) $(RISCC_OBJCOPY)
-	$(RISCC_OBJCOPY) -O binary $< $@
-
 .PHONY: test-sdram-write-stream
 test-sdram-write-stream:
 	@mkdir -p build/test-sdram-write-stream
@@ -450,3 +306,8 @@ test-sdram-write-stream:
 	    boards/shared/rtl/riscc_sdram_bridge.v boards/shared/rtl/riscc_sdram_fabric.v \
 	    test/sdram_write_stream_tb.v && vvp $$output || exit $$?; \
 	done
+
+.PHONY: test-board-i2c
+
+test-board-i2c:
+	$(PYTHON) tools/test_board_i2c.py

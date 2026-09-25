@@ -317,7 +317,7 @@ Cached uses local SRAM or cache hits, with room for write-through stores.
 `L = XLEN`, `W` = serial datapath width, `S = L/W`, `H = L/16`, `n = 1–8`.
 `P = S` for RC16 Min/Sys `/8` and RC32 `/8` or `/16`; otherwise `P = 0`.
 
-\* Cached control transfers cost 3 with `REGISTER_FETCH` (both boards), otherwise 2.
+\* Cached control transfers cost 3 with `REGISTER_FETCH` (all board demos), otherwise 2.
 With local SRAM enabled, instruction-cache fetches take at least 2 CPI even
 on hits. Cached adds one cycle for an immediate load consumer or a store
 followed by a load of the same cached word; these penalties can combine.
@@ -658,7 +658,7 @@ state, use `make trace PROFILE=full WIDTH=4`, `make trace-nano`, or
 
 ## 5. Board builds and demos
 
-Both board demos use RC32 Cached with a flat address space and provide:
+The board demos use RC32 Cached with a flat address space and provide:
 
 - 16 KiB directly attached program/data SRAM and cached SDRAM;
 - an 8-bit indexed framebuffer in SDRAM and board-local video output;
@@ -671,13 +671,13 @@ The shared software-visible map is:
 |---:|---|
 | `0x00000000..0x00003fff` | 16 KiB program/data SRAM |
 | `0x10000000..0x11ffffff` | Icepi: 32 MiB cached SDRAM |
-| `0x10000000..0x13ffffff` | Atum: 64 MiB cached SDRAM |
+| `0x10000000..0x13ffffff` | Atum and DE23-Lite: 64 MiB cached SDRAM |
 | `0x10000000..0x1000e0ff` | Framebuffer within SDRAM: 320×180, one byte per pixel |
 | `0xfffff800..0xfffffbff` | Write-only palette: 256 aligned `0x00RRGGBB` words |
 | `0xffffffe0..0xffffffe4` | UART; see the [Programming manual](PROGRAMMING.md#bsp-services-and-mmio) for register semantics |
 | `0xffffffe8` | timer: write a non-zero 1 kHz delay to arm/rearm; read the free-running 16-bit millisecond tick counter |
 | `0xffffffec` | interrupt state: read pending UART/timer bits 0/1; write enable mask |
-| `0xfffffff0` | LED output; Icepi uses five low bits and Atum uses four |
+| `0xfffffff0` | LED register; Icepi uses five low bits, Atum and DE23 use four |
 | Other addresses | Unmapped; reads return zero, writes are ignored |
 
 [`<riscc/platform.h>`](../firmware/include/riscc/platform.h) defines the shared
@@ -685,6 +685,7 @@ C interface. Board builds select RC32 Full firmware automatically. SDRAM
 uses a flat physical mapping with no bank register or uncached alias.
 SRAM uses separate CPU instruction and data ports and bypasses the caches
 and SDRAM clock crossing. Only SDRAM accesses wait for SDRAM initialization.
+Atum and DE23 expose register bits 0–2 on LEDs; LED3 shows transmitter status.
 
 MMIO registers are 32-bit and four-byte aligned; peripheral values occupy the low bits.
 
@@ -701,8 +702,9 @@ Credits return as the controller captures commands, without a round-trip
 handshake for each write. Writes stream until reads or video need the port,
 then physical write completions drain before switching. Read grants contain
 up to 16 words.
-SDRAM runs at 166⅔ MHz; CPU clocks are 66.67 MHz on Icepi and 200 MHz on
-Atum. Both use separate PLL output dividers for CPU and memory.
+SDRAM runs at 166⅔ MHz on Icepi and 125 MHz on Atum and DE23-Lite.
+CPU clocks are 66.67 MHz on Icepi and 200 MHz on Atum and DE23-Lite.
+All use separate PLL output dividers for CPU and memory.
 
 Video fetches 320-byte source rows into two line buffers and reuses each row
 for vertical scaling. The CPU is the only framebuffer writer; write-through
@@ -713,11 +715,15 @@ uses one EBR/M20K block, written by the CPU and read on the pixel clock.
 | Board | Wrapper | Memory | Open-row throughput | Test clock |
 | --- | --- | ---: | ---: | ---: |
 | Icepi Zero | [icepi_sdram.v](../boards/icepi_zero/rtl/icepi_sdram.v) | 32 MiB, x16 | 1 word / 2 clocks | 166⅔ MHz |
-| Atum A3 Nano | [atum_sdram.v](../boards/atum_a3_nano/rtl/atum_sdram.v) | 64 MiB, x32 | 1 word / clock | 166⅔ MHz |
+| Atum A3 Nano | [agilex3_sdram.v](../boards/shared/rtl/agilex3_sdram.v) | 64 MiB, x32 | 1 word / clock | 125 MHz |
+| DE23-Lite | [agilex3_sdram.v](../boards/shared/rtl/agilex3_sdram.v) | 64 MiB, x32 | 1 word / clock | 125 MHz |
 
 Both cache fills and video fetches queue reads without waiting for each word's
 response. The controller streams these using its existing BL2 (x16) or BL1
 (x32) SDRAM commands, at the open-row rates above.
+
+Atum and DE23 use IS42VM32160G-6BLI SDRAM at 125 MHz, CAS latency 3,
+with registered I/O. Both meet the SDRAM timing constraints in Quartus.
 
 Shared test logic: [boards/shared/test/sdram](../boards/shared/test/sdram).
 
@@ -742,6 +748,7 @@ Both use `cached_access_checks.h` for CPU/cache checks.
 ```sh
 make icepi-zero-test-bit
 make atum-a3-test QUARTUS_SH=/path/to/quartus_sh
+make de23-lite-test QUARTUS_SH=/path/to/quartus_sh
 ```
 
 Program the board as described below and read its UART at 115200 baud, 8N1.
@@ -756,25 +763,23 @@ access loop separately. Video scanout remains active.
 Progress appears on UART, followed by repeated `CPU SDRAM PASS` or
 `CPU SDRAM FAIL`.
 Test images are `build/icepi_zero_test/test.bit` and
-`build/atum_a3_nano_test/test.sof`.
+`build/atum_a3_nano_test/test.sof`; the DE23-Lite equivalent is
+`build/de23_lite_test/test.sof`.
 The Julia demo builds remain separate.
 
-Measured CPU throughput with video active before the early-branch changes
-(KiB/s):
+Measured on DE23-Lite with a 200 MHz CPU, 125 MHz SDRAM, and video active
+(2026-09-26):
 
-| Access | Icepi, CPU 66.67 MHz | Atum, CPU 200 MHz |
-|---|---:|---:|
-| Warm-cache read, 1 KiB | 193,170 | 579,619 |
-| Sequential read, 1 MiB | 68,982 | 161,118 |
-| Scattered read, 1 MiB | 3,916 | 8,523 |
-| Cached write-through, 1 KiB | 155,103 | 303,805 |
-| Sequential write, 1 MiB | 170,325 | 322,588 |
-| Scattered write, 1 MiB | 11,832 | 35,224 |
+| Access | KiB/s |
+|---|---:|
+| Warm-cache read, 1 KiB | 607,836 |
+| Sequential read, 1 MiB | 139,288 |
+| Scattered read, 1 MiB | 8,224 |
+| Cached write-through, 1 KiB | 264,650 |
+| Sequential write, 1 MiB | 278,016 |
+| Scattered write, 1 MiB | 39,400 |
 
-Both boards passed the full-memory pattern checks and benchmark verification.
-
-SDRAM runs at 166⅔ MHz on both boards. Both pass internal timing. External
-SDRAM I/O timing is hardware-tested but not fully closed by static analysis.
+The full 64 MiB pattern checks and benchmark verification passed.
 
 ### Icepi Zero
 
@@ -818,9 +823,9 @@ make icepi-zero-demo-bit
 The default shared source is
 [`demo.cpp`](../boards/shared/sw/demo.cpp), compiled as freestanding C++
 without a C++ standard library, exceptions, RTTI, or constructors. Set
-`DEMO_PROGRAM` to use another C++ source on both boards, or `ICEPI_PROGRAM`
-or `ATUM_PROGRAM` to override one board. Julia arithmetic uses native 32-bit
-products with 14 fractional bits; both demos use the DSP multiplier.
+`DEMO_PROGRAM` to use another C++ source on all boards, or `ICEPI_PROGRAM`,
+`ATUM_PROGRAM`, or `DE23_PROGRAM` to override one board. Julia arithmetic uses
+native 32-bit products with 14 fractional bits; all demos use the DSP multiplier.
 The Julia renderer allows 254 iterations. A square-root colour curve brightens
 early escapes, with black interiors and no dithering.
 
@@ -863,12 +868,9 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-The Quartus Pro 26.1 demo build uses 1,369 ALMs, 1,942 registers,
-15 M20Ks, two DSP blocks, and two IOPLLs. Restricted Fmax is 201.53 MHz
-for the CPU, 172.38 MHz for SDRAM, and 316.66 MHz for video. The CPU
-pipeline uses 542.0 ALMs including RF, versus 563.9 before early branches
-(3.9% lower). Across 288 unchanged compiler-image/RF benchmark runs, geometric
-mean cycle savings are 1.26–2.09% by configuration, with no cycle regressions.
+Quartus Pro 26.1: 1,410 ALMs, 2,232 registers, 15 M20Ks, two DSPs, two PLLs.
+CPU and SDRAM timing pass; minimum SDRAM slack is 0.013 ns.
+HDMI output timing is unconstrained.
 
 Persistent QSPI programming is outside the normal flow; see Terasic's
 [Atum A3 Nano documentation](https://www.terasic.com.tw/cgi-bin/page/archive.pl?CategoryNo=44&Language=English&No=1373&PartNo=4).
@@ -876,3 +878,23 @@ Persistent QSPI programming is outside the normal flow; see Terasic's
 ![Video capture of RISC-C running on Atum A3 Nano](riscc_on_atum-a3.jpg)
 
 *Video capture of RISC-C running on the Atum-A3-Nano FPGA board.*
+
+### Terasic DE23-Lite
+
+The [DE23-Lite demo](../boards/de23_lite) runs RC32 Cached at 200 MHz with
+64 MiB SDRAM at 125 MHz. The ADV7513 outputs 1280×720p60 video from the
+320×180 framebuffer. It shares the SoC and firmware with Atum A3 Nano.
+Pin assignments are in [de23_lite.qsf](../boards/de23_lite/de23_lite.qsf).
+
+Build with Quartus Pro:
+
+```sh
+make de23-lite-demo QUARTUS_SH=/path/to/quartus_sh
+```
+
+Output: `build/de23_lite/quartus/output_files/de23_lite.sof`.
+UART uses the onboard FT2232H at 115200 baud, 8N1. KEY0 resets the system;
+LEDR0–2 show application status and LEDR3 shows HDMI configuration status.
+
+Quartus Pro 26.1: 1,477 ALMs, 2,195 registers, 15 M20Ks, two DSPs, two PLLs.
+CPU, SDRAM, and HDMI timing pass; minimum SDRAM slack is 0.012 ns.

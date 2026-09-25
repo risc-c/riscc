@@ -15,13 +15,19 @@ def main():
     for board, led_bits in (("atum_a3_nano", 4), ("icepi_zero", 5)):
         output = args.build_dir.resolve() / board
         output.mkdir(parents=True, exist_ok=True)
+        if board == "atum_a3_nano":
+            soc_name = "riscc_demo_soc"
+            soc_source = ROOT / "boards/shared/rtl/riscc_demo_soc.v"
+        else:
+            soc_name = f"{board}_soc"
+            soc_source = ROOT / f"boards/{board}/rtl/{board}_soc.v"
         sources = [ROOT / "boards/shared/test/rc32_map_tb.v",
-                   ROOT / f"boards/{board}/rtl/{board}_soc.v"]
+                   soc_source]
         sources += [ROOT / f"boards/shared/rtl/riscc_{name}.v"
                     for name in ("uart_mmio", "timer_mmio", "irq_ctrl")]
         command = [args.verilator, "--binary", "--timing", "-j", "4",
                    "--top-module", "board_map_tb", "--Mdir", str(output),
-                   f"-DSOC_NAME={board}_soc",
+                   f"-DSOC_NAME={soc_name}",
                    f"-DLED_BITS={led_bits}",
                    "-DSDRAM_END=32\'h" + ("14000000" if board == "atum_a3_nano" else "12000000"), *map(str, sources)]
         with (output / "build.log").open("w") as log:

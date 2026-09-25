@@ -1,13 +1,15 @@
-// atum_sdram.v : Atum SDRAM geometry, clock forwarding, and input capture.
+// agilex3_sdram.v : Agilex 3 x32 SDRAM geometry, clock forwarding, and input capture.
 // Low-speed capture uses the controller's falling-edge sampler. IO_CAPTURE
-// adds a rising-edge input I/O register and a core entry register; capture_clk
-// is synchronous with clk, while forward_clk sets the SDRAM pin phase.
+// adds a rising-edge input I/O register and a core entry register.
+// CAPTURE_RETIME gives the I/O-to-fabric path a full capture-clock cycle
+// before the phase crossing to clk. All three clocks come from one PLL.
 `timescale 1ns/1ps
 `default_nettype none
-module atum_sdram #(
+module agilex3_sdram #(
     parameter integer CLK_MHZ = 125,
     parameter integer READ_DELAY = 0,
     parameter integer IO_CAPTURE = 0,
+    parameter integer CAPTURE_RETIME = 0,
     parameter integer INIT_CYCLES = CLK_MHZ * 200,
     parameter integer FIFO_BITS = 3
 ) (
@@ -35,7 +37,13 @@ module atum_sdram #(
             reg [31:0] sample_q;
             always @(posedge capture_clk) sample_q <= sd_dq;
             reg [31:0] response_q;
-            always @(posedge clk) response_q <= sample_q;
+            if (CAPTURE_RETIME != 0) begin : g_retime
+                reg [31:0] handoff_q;
+                always @(posedge capture_clk) handoff_q <= sample_q;
+                always @(posedge clk) response_q <= handoff_q;
+            end else begin : g_same_clock
+                always @(posedge clk) response_q <= sample_q;
+            end
             assign captured_dq = sample_q;
             assign mem_rdata = response_q;
         end else begin : g_raw_capture
@@ -63,8 +71,9 @@ module atum_sdram #(
     assign sd_clk = ~pin_clk;
 `endif
     assign sd_dq = dq_oe ? dq_out : {32{1'bz}};
-    // IO_CAPTURE supplies the input pipeline here; response_q returns data at
-    // the matching depth while the controller provides valid and recovery timing.
+    // The capture phase and optional handoff stage must match READ_DELAY.
+    // The 125 MHz board uses capture at +6 ns, a full-cycle handoff, and
+    // READ_DELAY=1: response_q and the read acknowledgement update together.
     riscc_sdram #(
         .DATA_BITS(32),
         .ROW_BITS(13),

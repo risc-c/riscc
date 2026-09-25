@@ -12,7 +12,7 @@ COMPILER_SMOKE_OBJS := $(COMPILER_SMOKE).o $(COMPILER_BUILD)/helper.o
 COMPILER_UART := build/compiler/board-rc32/smoke-uart
 COMPILER_STDIO := $(COMPILER_BUILD)/stdio-smoke
 COMPILER_ICEPI_SIM := $(COMPILER_BUILD)/icepi-rtlsim/Vicepi_zero_soc_sim
-COMPILER_ATUM_SIM := $(COMPILER_BUILD)/atum-rtlsim/Vatum_a3_nano_soc_sim
+COMPILER_ATUM_SIM := $(COMPILER_BUILD)/atum-rtlsim/Vriscc_demo_soc_sim
 COMPILER_IRQ := $(COMPILER_BUILD)/irq-smoke
 COMPILER_IRQ_OBJS := $(COMPILER_IRQ).o $(COMPILER_IRQ)-main.o
 COMPILER_IRQ_CUSTOM := $(COMPILER_BUILD)/irq-custom-smoke
@@ -182,10 +182,10 @@ $(COMPILER_ATUM_SIM): $(COMPILER_UART).memh \
 		$(ATUM_SIM_RTL) test/compiler/atum_uart_tb.cpp $(COMPILER_RULES)
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
-	  --top-module atum_a3_nano_soc_sim --prefix Vatum_a3_nano_soc_sim \
+	  --top-module riscc_demo_soc_sim --prefix Vriscc_demo_soc_sim \
 	  -Mdir $(@D) -I$(abspath rtl) \
 	  -GMEM_HEX='"$(abspath $(COMPILER_UART).memh)"' \
-	  -CFLAGS "$(TB_CXXFLAGS)" -o Vatum_a3_nano_soc_sim \
+	  -CFLAGS "$(TB_CXXFLAGS)" -o Vriscc_demo_soc_sim \
 	  $(abspath $(ATUM_SIM_RTL)) $(abspath test/compiler/atum_uart_tb.cpp)
 
 compiler-smoke: $(COMPILER_SMOKE).bin $(COMPILER_SMOKE).memh $(RISCC_SIM) \

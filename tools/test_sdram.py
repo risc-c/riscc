@@ -132,7 +132,8 @@ def run_cache(root: Path, verilator: str, build_root: Path, data_bits: int,
 def lint_wrappers(root: Path, verilator: str, build_root: Path) -> bool:
     checks = (
         ("icepi-wrapper", "icepi_sdram", root / "boards/icepi_zero/rtl/icepi_sdram.v"),
-        ("atum-wrapper", "atum_sdram", root / "boards/atum_a3_nano/rtl/atum_sdram.v"),
+        ("agilex3-wrapper", "agilex3_sdram",
+         root / "boards/shared/rtl/agilex3_sdram.v"),
     )
     for name, top, wrapper in checks:
         log_dir = build_root / name

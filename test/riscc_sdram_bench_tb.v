@@ -24,6 +24,9 @@ module riscc_sdram_bench_tb #(
     parameter integer READ_DELAY = 1,
     parameter integer DIRECT_CAPTURE = 0,
     parameter integer IO_CAPTURE = 0,
+    parameter integer CAPTURE_RETIME = 0,
+    parameter realtime CAPTURE_PHASE_NS = 0.0,
+    parameter integer AGILEX_WRAPPER = 0,
     parameter realtime FORWARD_PHASE_NS = 0.0,
     parameter integer CORRUPT_READ = 0,
     parameter integer CORRUPT_INDEX = 1025
@@ -40,6 +43,12 @@ module riscc_sdram_bench_tb #(
     reg sd_clk_phase = 1'b0;
     reg forward_clk_phase = 1'b0;
     reg rst = 1'b1;
+    reg capture_clk_phase = 1'b0;
+    initial begin
+        #(CLOCK_PERIOD_NS / 2.0 + CAPTURE_PHASE_NS);
+        capture_clk_phase = 1'b1;
+        forever #(CLOCK_PERIOD_NS / 2.0) capture_clk_phase = ~capture_clk_phase;
+    end
     always #(CLOCK_PERIOD_NS / 2.0) clk = ~clk;
     initial begin
         #(CLOCK_PERIOD_NS / 2.0 + DEVICE_CLK_PHASE_NS);
@@ -49,9 +58,10 @@ module riscc_sdram_bench_tb #(
             sd_clk_phase = ~sd_clk_phase;
         end
     end
-    // IcePi presents a separately phased SDRAM clock. Atum's x32 wrapper
-    // forwards the complement of this clock through its DDR pin. A separate
-    // phase parameter models the board PLL's forwarded clock phase.
+    // IcePi presents a separately phased SDRAM clock. The Agilex x32 wrapper
+    // forwards the complement of the controller clock through its SDRAM pin
+    // when IO_CAPTURE is disabled. A separate phase parameter models the
+    // board PLL's forwarded clock phase for registered I/O cases.
     initial begin
         #(CLOCK_PERIOD_NS / 2.0 + FORWARD_PHASE_NS);
         forward_clk_phase = 1'b1;
@@ -89,8 +99,8 @@ module riscc_sdram_bench_tb #(
     wire [15:0] icepi_dq_bus;
     wire icepi_dq_oe;
 
-    // The x16 case instantiates the actual IcePi wrapper; the IO_CAPTURE
-    // x32 case uses the actual Atum wrapper.
+    // The x16 case instantiates the actual IcePi wrapper; AGILEX_WRAPPER
+    // selects the actual Agilex x32 wrapper for either raw or registered I/O.
     wire [31:0] atum_dq_out;
     wire atum_dq_oe;
     generate if (DATA_BITS == 16) begin : g_icepi_wrapper
@@ -113,17 +123,17 @@ module riscc_sdram_bench_tb #(
             .sd_we_n(dut_sd_we_n), .sd_addr(dut_sd_addr), .sd_ba(dut_sd_ba),
             .sd_dqm(dut_sd_dqm), .sd_dq(icepi_dq_bus)
         );
-    end else if (IO_CAPTURE != 0) begin : g_atum_wrapper
+    end else if (IO_CAPTURE != 0 || AGILEX_WRAPPER != 0) begin : g_agilex_wrapper
         wire [31:0] atum_sd_dq;
-        assign atum_dq_out = atum_wrapper.dq_out;
-        assign atum_dq_oe = atum_wrapper.dq_oe;
+        assign atum_dq_out = agilex_wrapper.dq_out;
+        assign atum_dq_oe = agilex_wrapper.dq_oe;
         assign atum_sd_dq = atum_dq_oe ? atum_dq_out : model_dq_o;
-        atum_sdram #(
+        agilex3_sdram #(
             .CLK_MHZ(CLK_MHZ), .READ_DELAY(READ_DELAY),
-            .IO_CAPTURE(IO_CAPTURE),
+            .IO_CAPTURE(IO_CAPTURE), .CAPTURE_RETIME(CAPTURE_RETIME),
             .INIT_CYCLES(INIT_CYCLES)
-        ) atum_wrapper (
-            .clk(clk), .rst(rst), .capture_clk(clk),
+        ) agilex_wrapper (
+            .clk(clk), .rst(rst), .capture_clk(capture_clk_phase),
             .forward_clk(forward_clk_phase),
             .mem_addr(mem_addr), .mem_wdata(mem_wdata),
             .mem_wmask(mem_wmask), .mem_we(mem_we), .mem_cyc(mem_cyc),
@@ -162,7 +172,7 @@ module riscc_sdram_bench_tb #(
         if (DATA_BITS == 16) begin : g_icepi_model_bus
             assign model_dq_i = icepi_dq_bus;
             assign model_dq_oe = icepi_dq_oe;
-        end else if (IO_CAPTURE != 0) begin : g_atum_model_bus
+        end else if (IO_CAPTURE != 0 || AGILEX_WRAPPER != 0) begin : g_agilex_model_bus
             assign model_dq_i = atum_dq_out;
             assign model_dq_oe = atum_dq_oe;
         end else begin : g_controller_model_bus
@@ -170,7 +180,8 @@ module riscc_sdram_bench_tb #(
             assign model_dq_oe = dut_sd_dq_oe;
         end
     endgenerate
-    wire model_sd_clk = DATA_BITS == 16 || IO_CAPTURE != 0 ? dut_sd_clk : sd_clk;
+    wire model_sd_clk = DATA_BITS == 16 || IO_CAPTURE != 0 ||
+                        AGILEX_WRAPPER != 0 ? dut_sd_clk : sd_clk;
 
     riscc_sdram_model #(
         .DATA_BITS(DATA_BITS), .ROW_BITS(ROW_BITS), .COL_BITS(COL_BITS),
