@@ -47,8 +47,12 @@
 #define RISCC_IRQ_UART 0x0001u
 #define RISCC_IRQ_TIMER 0x0002u
 
-/* The current demo boards use a 1 kHz timer/tick timebase. */
+/* Board ticks count display frames; other targets retain the 1 kHz timer. */
+#ifdef RISCC_BOARD_DEMO
+#define RISCC_TICK_HZ 60u
+#else
 #define RISCC_TICK_HZ 1000u
+#endif
 
 /* Write a non-zero delay to arm or rearm; read the free-running ticks. */
 #ifdef RISCC_BOARD_DEMO

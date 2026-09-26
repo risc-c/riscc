@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include <riscc/platform.h>
+#include <riscc/interrupt.h>
 
 namespace
 {
@@ -27,14 +28,18 @@ constexpr uint32_t kJuliaMirrorSumY =
 constexpr unsigned kFractionBits = 14;
 constexpr int32_t kFixedOne = 1 << kFractionBits;
 constexpr int32_t kViewStep = 192;
-constexpr int32_t kParameterStep = 16;
+// Independent prime periods, measured in completed Julia frames.
+constexpr uint32_t kPathPeriod = 2003u;
+constexpr uint32_t kRotationPeriod = 3001u;
+constexpr uint32_t kZoomPeriod = 4001u;
+constexpr uint32_t kSineSize = 512u;
 constexpr int32_t kEscapeComponent = 2 * kFixedOne;
 constexpr int32_t kEscapeRadiusSquared = 4 * kFixedOne * kFixedOne;
 constexpr uint32_t kJuliaTileSize = 3u;
 constexpr uint32_t kJuliaTileStep = kJuliaTileSize - 1u;
 constexpr uint32_t kMaxIterations = 254u;
 constexpr uint32_t kClockTicksPerSecond = RISCC_TICK_HZ;
-constexpr uint32_t kTickerPixelsPerSecond = 30u;
+constexpr uint32_t kTickerPixelsPerSecond = 60u;
 constexpr uint32_t kGlyphWidth = 5u;
 constexpr uint32_t kGlyphStride = kGlyphWidth + 1u;
 constexpr uint32_t kGlyphTop = 2u;
@@ -44,30 +49,6 @@ struct Point
 {
     int32_t x;
     int32_t y;
-};
-
-struct TickerCursor
-{
-    uint32_t glyph;
-    uint32_t column;
-};
-
-struct AxisStep
-{
-    int32_t whole;
-    uint32_t remainder;
-    uint32_t error;
-    int32_t direction;
-};
-
-struct JuliaPathState
-{
-    Point parameter;
-    uint32_t target;
-    uint32_t step_count;
-    uint32_t steps_left;
-    AxisStep x;
-    AxisStep y;
 };
 
 struct TickerState
@@ -81,7 +62,7 @@ volatile uint32_t *const framebuffer =
     reinterpret_cast<volatile uint32_t *>(RISCC_FRAMEBUFFER_BASE);
 
 // Palette indices 0..126: black to blue; 127..253: blue to white.
-// The iteration limit is black; index 255 is reserved for text and borders.
+// The iteration limit uses white (253); index 255 is white for text and borders.
 uint32_t palette_color(uint32_t index)
 {
     if (index < 127u)
@@ -203,23 +184,14 @@ constexpr uint32_t kTickerWidth = kTickerGlyphCount * kGlyphStride;
 
 // Julia animation
 
-// Samples of c(t) = 0.55 + 0.20 cos(t) + 0.36i sin(t), with 14 fractional
-// bits. This path stays outside the main cardioid and produces disconnected
-// Julia sets.
-const Point kJuliaControlPoints[] =
-{
-    {7372, 5108},   {6696, 4172},   {6172, 2948},   {5848, 1528},
-    {5736, 0},      {5848, -1528},  {6172, -2948},  {6696, -4172},
-    {7372, -5108},  {8164, -5696},  {9012, -5900},  {9860, -5696},
-    {10648, -5108}, {11328, -4172}, {11848, -2948}, {12176, -1528},
-    {12288, 0},     {12176, 1528},  {11848, 2948},  {11328, 4172},
-    {10648, 5108},  {9860, 5696},   {9012, 5900},   {8164, 5696},
-};
-constexpr uint32_t kJuliaPathCount =
-    static_cast<uint32_t>(sizeof(kJuliaControlPoints) /
-                          sizeof(kJuliaControlPoints[0]));
-
-JuliaPathState julia_path;
+// A tilted loop follows the region with varied intermediate escape counts.
+Point julia_parameter;
+uint32_t path_phase;
+uint32_t rotation_phase;
+uint32_t zoom_phase;
+int16_t sine_table[kSineSize + 1u];
+int32_t view_cos;
+int32_t view_sin;
 TickerState ticker;
 uint32_t next_julia_row;
 
@@ -228,13 +200,6 @@ uint32_t next_julia_row;
 uint8_t tile_iterations[kJuliaTileSize][RISCC_FRAMEBUFFER_WIDTH];
 
 // Julia arithmetic
-
-uint32_t magnitude(int32_t value)
-{
-    const uint32_t bits = static_cast<uint32_t>(value);
-
-    return value < 0 ? 0u - bits : bits;
-}
 
 // Keep 14 fractional bits so every product fits a native signed 32-bit MUL.
 // Reject components outside (-2, 2) before squaring; even the sum of both
@@ -265,12 +230,15 @@ uint32_t escape_time(uint32_t x, uint32_t y)
     int32_t zx = (static_cast<int32_t>(x) * 2 - kJuliaCenterX2) *
         (kViewStep / 2);
     int32_t zy = (static_cast<int32_t>(y) - kJuliaCenterY) * kViewStep;
+    const int32_t rotated_x = (zx * view_cos - zy * view_sin) >> kFractionBits;
+    zy = (zx * view_sin + zy * view_cos) >> kFractionBits;
+    zx = rotated_x;
     uint32_t iteration = 0;
 
     while (iteration < kMaxIterations)
     {
-        if (julia_step(zx, zy, julia_path.parameter.x,
-                       julia_path.parameter.y))
+        if (julia_step(zx, zy, julia_parameter.x,
+                       julia_parameter.y))
         {
             break;
         }
@@ -280,26 +248,28 @@ uint32_t escape_time(uint32_t x, uint32_t y)
     return iteration;
 }
 
-// round(253 * sqrt(iteration / 253)); brighten early escapes without dithering.
-const uint8_t kEscapeColors[kMaxIterations] =
+uint8_t escape_colors[kMaxIterations];
+
+void initialize_escape_colors()
 {
-    0u, 16u, 22u, 28u, 32u, 36u, 39u, 42u, 45u, 48u, 50u, 53u, 55u, 57u, 60u, 62u,
-    64u, 66u, 67u, 69u, 71u, 73u, 75u, 76u, 78u, 80u, 81u, 83u, 84u, 86u, 87u, 89u,
-    90u, 91u, 93u, 94u, 95u, 97u, 98u, 99u, 101u, 102u, 103u, 104u, 106u, 107u, 108u, 109u,
-    110u, 111u, 112u, 114u, 115u, 116u, 117u, 118u, 119u, 120u, 121u, 122u, 123u, 124u, 125u, 126u,
-    127u, 128u, 129u, 130u, 131u, 132u, 133u, 134u, 135u, 136u, 137u, 138u, 139u, 140u, 140u, 141u,
-    142u, 143u, 144u, 145u, 146u, 147u, 148u, 148u, 149u, 150u, 151u, 152u, 153u, 153u, 154u, 155u,
-    156u, 157u, 157u, 158u, 159u, 160u, 161u, 161u, 162u, 163u, 164u, 165u, 165u, 166u, 167u, 168u,
-    168u, 169u, 170u, 171u, 171u, 172u, 173u, 174u, 174u, 175u, 176u, 176u, 177u, 178u, 179u, 179u,
-    180u, 181u, 181u, 182u, 183u, 183u, 184u, 185u, 185u, 186u, 187u, 188u, 188u, 189u, 190u, 190u,
-    191u, 192u, 192u, 193u, 194u, 194u, 195u, 195u, 196u, 197u, 197u, 198u, 199u, 199u, 200u, 201u,
-    201u, 202u, 202u, 203u, 204u, 204u, 205u, 206u, 206u, 207u, 207u, 208u, 209u, 209u, 210u, 210u,
-    211u, 212u, 212u, 213u, 213u, 214u, 215u, 215u, 216u, 216u, 217u, 218u, 218u, 219u, 219u, 220u,
-    220u, 221u, 222u, 222u, 223u, 223u, 224u, 224u, 225u, 226u, 226u, 227u, 227u, 228u, 228u, 229u,
-    229u, 230u, 230u, 231u, 232u, 232u, 233u, 233u, 234u, 234u, 235u, 235u, 236u, 236u, 237u, 238u,
-    238u, 239u, 239u, 240u, 240u, 241u, 241u, 242u, 242u, 243u, 243u, 244u, 244u, 245u, 245u, 246u,
-    246u, 247u, 247u, 248u, 248u, 249u, 249u, 250u, 250u, 251u, 251u, 252u, 252u, 253u,
-};
+    for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration)
+    {
+        if (iteration <= 4u)
+        {
+            escape_colors[iteration] = static_cast<uint8_t>(iteration);
+            continue;
+        }
+
+        // 4 + 248*t*(1 + 4*t)/(1 + 4*t*t), t = (iteration - 4)/249.
+        // Evaluate with integer rounding; all intermediates fit in 32 bits.
+        const uint32_t d = iteration - 4u;
+        const uint32_t denominator = 249u * 249u + 4u * d * d;
+        const uint32_t numerator = 248u * d * (249u + 4u * d);
+        const uint32_t color = 4u + (numerator + denominator / 2u) / denominator;
+        // The curve ends at 252; only max-iteration interiors use full white.
+        escape_colors[iteration] = static_cast<uint8_t>(color);
+    }
+}
 
 uint8_t julia_color(uint32_t iteration, uint32_t x)
 {
@@ -309,9 +279,9 @@ uint8_t julia_color(uint32_t iteration, uint32_t x)
     }
     if (iteration == kMaxIterations)
     {
-        return 0u;
+        return 253u;
     }
-    return kEscapeColors[iteration];
+    return escape_colors[iteration];
 }
 
 // Frame and ticker
@@ -332,63 +302,46 @@ void draw_border()
     }
 }
 
-bool ticker_pixel(uint32_t y, const TickerCursor &cursor)
-{
-    if (y < kGlyphTop || y >= kGlyphBottom ||
-        cursor.column >= kGlyphWidth)
-    {
-        return false;
-    }
-    return (kGlyphs[kTickerText[cursor.glyph]][y - kGlyphTop] &
-            kBitMasks[cursor.column]) != 0;
-}
+// Three repeated pixels allow each four-byte load group to cross the wrap.
+uint8_t ticker_pixels[kJuliaFirstRow - 1u][kTickerWidth + 3u];
 
-void advance_ticker_cursor(TickerCursor &cursor)
-{
-    ++cursor.column;
-    if (cursor.column == kGlyphStride)
-    {
-        cursor.column = 0;
-        ++cursor.glyph;
-        if (cursor.glyph == kTickerGlyphCount)
-        {
-            cursor.glyph = 0;
-        }
-    }
-}
-
-bool next_ticker_pixel(uint32_t y, TickerCursor &cursor)
-{
-    const bool set = ticker_pixel(y, cursor);
-
-    advance_ticker_cursor(cursor);
-    return set;
-}
-
-void draw_ticker()
+void initialize_ticker()
 {
     for (uint32_t y = 1; y < kJuliaFirstRow; ++y)
     {
-        TickerCursor cursor = {0u, ticker.offset};
-        volatile uint32_t *const row = framebuffer + y * kWordsPerRow;
-
-        while (cursor.column >= kGlyphStride)
+        for (uint32_t x = 0; x < kTickerWidth + 3u; ++x)
         {
-            cursor.column -= kGlyphStride;
-            ++cursor.glyph;
+            const uint32_t position = x % kTickerWidth;
+            const uint32_t column = position % kGlyphStride;
+            const uint32_t glyph = position / kGlyphStride;
+            const bool set = y >= kGlyphTop && y < kGlyphBottom &&
+                column < kGlyphWidth &&
+                (kGlyphs[kTickerText[glyph]][y - kGlyphTop] & kBitMasks[column]);
+            ticker_pixels[y - 1u][x] = set ? 0xffu : 0u;
         }
+    }
+}
+
+void draw_ticker(bool initialize = false)
+{
+    // Padding rows are static; only write them during initialization.
+    const uint32_t first = initialize ? 1u : kGlyphTop;
+    const uint32_t end = initialize ? kJuliaFirstRow : kGlyphBottom;
+    for (uint32_t y = first; y < end; ++y)
+    {
+        uint32_t position = ticker.offset;
+        const uint8_t *const pixels = ticker_pixels[y - 1u];
+        volatile uint32_t *const row = framebuffer + y * kWordsPerRow;
 
         for (uint32_t word = 0; word < kWordsPerRow; ++word)
         {
-            uint32_t packed = 0u;
-
-            for (uint32_t lane = 0; lane < kPixelsPerWord; ++lane)
-            {
-                if (next_ticker_pixel(y, cursor))
-                {
-                    packed |= 0xffu << (lane * 8u);
-                }
-            }
+            uint32_t packed = static_cast<uint32_t>(pixels[position]) |
+                (static_cast<uint32_t>(pixels[position + 1u]) << 8) |
+                (static_cast<uint32_t>(pixels[position + 2u]) << 16) |
+                (static_cast<uint32_t>(pixels[position + 3u]) << 24);
+            position += kPixelsPerWord;
+            if (position >= kTickerWidth)
+                position -= kTickerWidth;
             if (word == 0)
             {
                 packed |= 0x000000ffu;
@@ -404,68 +357,58 @@ void draw_ticker()
 
 // Julia animation path
 
-void prepare_axis_step(AxisStep &axis, int32_t delta, uint32_t distance,
-                       uint32_t step_count)
+// Interpolate a periodic Q14 sine table without a discontinuity at wraparound.
+int32_t animation_sine(uint32_t phase, uint32_t period, uint32_t quarter = 0u)
 {
-    axis.whole = delta / static_cast<int32_t>(step_count);
-    axis.remainder = distance % step_count;
-    axis.error = 0u;
-    axis.direction = delta < 0 ? -1 : 1;
+    const uint32_t position = phase * kSineSize;
+    const uint32_t index = (position / period + quarter * (kSineSize / 4u)) % kSineSize;
+    const int32_t fraction = static_cast<int32_t>(position % period);
+    const int32_t a = sine_table[index];
+    const int32_t b = sine_table[index + 1u];
+    return a + (b - a) * fraction / static_cast<int32_t>(period);
 }
 
-void begin_path_segment()
+void update_julia_motion()
 {
-    const Point target = kJuliaControlPoints[julia_path.target];
-    const int32_t delta_x = target.x - julia_path.parameter.x;
-    const int32_t delta_y = target.y - julia_path.parameter.y;
-    const uint32_t distance_x = magnitude(delta_x);
-    const uint32_t distance_y = magnitude(delta_y);
-    const uint32_t distance = distance_x > distance_y ?
-        distance_x : distance_y;
+    const int32_t along = animation_sine(path_phase, kPathPeriod);
+    const int32_t across = animation_sine(path_phase, kPathPeriod, 1u);
+    // c = 0.385 + 0.010*sin(t) + 0.001*cos(t) + i*(0.12 + 0.030*sin(t)).
+    julia_parameter.x = 6308 + ((164 * along + 16 * across) >> kFractionBits);
+    julia_parameter.y = 1966 + ((492 * along) >> kFractionBits);
 
-    julia_path.step_count = (distance + kParameterStep - 1u) / kParameterStep;
-    julia_path.steps_left = julia_path.step_count;
-    prepare_axis_step(julia_path.x, delta_x, distance_x,
-                      julia_path.step_count);
-    prepare_axis_step(julia_path.y, delta_y, distance_y,
-                      julia_path.step_count);
+    // Vary the view scale by +/-18%, independently of path and rotation.
+    const int32_t scale = kFixedOne +
+        ((2949 * animation_sine(zoom_phase, kZoomPeriod)) >> kFractionBits);
+    view_cos = (scale * animation_sine(rotation_phase, kRotationPeriod, 1u)) >> kFractionBits;
+    view_sin = (scale * animation_sine(rotation_phase, kRotationPeriod)) >> kFractionBits;
 }
 
-void advance_axis(int32_t &value, AxisStep &axis, uint32_t step_count)
+void initialize_julia_motion()
 {
-    value += axis.whole;
-    axis.error += axis.remainder;
-    if (axis.error >= step_count)
+    for (uint32_t i = 0; i < kSineSize; ++i)
     {
-        value += axis.direction;
-        axis.error -= step_count;
+        // Bhaskara's sine approximation on each half-cycle, using only
+        // 32-bit integer arithmetic (maximum numerator is 2^30).
+        const uint32_t half_phase = i % (kSineSize / 2u);
+        const uint32_t product = half_phase * (kSineSize / 2u - half_phase);
+        const uint32_t denominator = 5u * 16384u - product;
+        const int32_t value = static_cast<int32_t>(
+            (4u * product * kFixedOne + denominator / 2u) / denominator);
+        sine_table[i] = static_cast<int16_t>(i < kSineSize / 2u ? value : -value);
     }
+    sine_table[kSineSize] = sine_table[0];
+    update_julia_motion();
 }
 
 void advance_julia_parameter()
 {
-    if (julia_path.steps_left == 0u)
-    {
-        begin_path_segment();
-    }
-
-    advance_axis(julia_path.parameter.x, julia_path.x,
-                 julia_path.step_count);
-    advance_axis(julia_path.parameter.y, julia_path.y,
-                 julia_path.step_count);
-
-    --julia_path.steps_left;
-    if (julia_path.steps_left != 0u)
-    {
-        return;
-    }
-
-    julia_path.parameter = kJuliaControlPoints[julia_path.target];
-    ++julia_path.target;
-    if (julia_path.target == kJuliaPathCount)
-    {
-        julia_path.target = 0u;
-    }
+    if (++path_phase == kPathPeriod)
+        path_phase = 0u;
+    if (++rotation_phase == kRotationPeriod)
+        rotation_phase = 0u;
+    if (++zoom_phase == kZoomPeriod)
+        zoom_phase = 0u;
+    update_julia_motion();
 }
 
 // Julia rendering
@@ -597,38 +540,27 @@ void draw_julia_strip(uint32_t y)
     }
 }
 
-void update_ticker()
+void frame_interrupt()
 {
+    // Acknowledge before drawing. The runtime keeps interrupts masked until
+    // return; the next vertical blank can then pend without being lost.
+    riscc_timer_set_ticks(1u);
     const uint16_t now = static_cast<uint16_t>(clock());
-    uint32_t elapsed = static_cast<uint16_t>(now - ticker.last_tick);
-    bool moved = false;
+    const uint16_t elapsed = static_cast<uint16_t>(now - ticker.last_tick);
+    if (elapsed == 0u)
+        return;
 
+    // Advance once per display frame; compensate if an interrupt was delayed.
     ticker.last_tick = now;
-    while (elapsed != 0u)
-    {
-        --elapsed;
-        ticker.tick_remainder += kTickerPixelsPerSecond;
-        if (ticker.tick_remainder < kClockTicksPerSecond)
-        {
-            continue;
-        }
-
-        ticker.tick_remainder -= kClockTicksPerSecond;
-        if (++ticker.offset == kTickerWidth)
-        {
-            ticker.offset = 0u;
-        }
-        moved = true;
-    }
-    if (moved)
-    {
-        draw_ticker();
-    }
+    const uint32_t advance = ticker.tick_remainder +
+        static_cast<uint32_t>(elapsed) * kTickerPixelsPerSecond;
+    ticker.tick_remainder = advance % kClockTicksPerSecond;
+    ticker.offset = (ticker.offset + advance / kClockTicksPerSecond) % kTickerWidth;
+    draw_ticker();
 }
 
 void draw_next_strip()
 {
-    update_ticker();
     draw_julia_strip(next_julia_row);
     if (next_julia_row + kJuliaTileStep >= kJuliaCenterY)
     {
@@ -652,22 +584,29 @@ int main()
 #else
     puts("RISC-C on Icepi Zero");
 #endif
-    julia_path.parameter = kJuliaControlPoints[0];
-    julia_path.target = 1u;
+    initialize_julia_motion();
     next_julia_row = kJuliaFirstRow;
-    ticker.last_tick = static_cast<uint16_t>(clock());
 
+    initialize_escape_colors();
     initialize_palette();
+    initialize_ticker();
     draw_border();
-    draw_ticker();
+    draw_ticker(true);
 
-    time_t t = clock();
+    ticker.last_tick = static_cast<uint16_t>(clock());
+    riscc_irq_set_handler(frame_interrupt);
+    riscc_timer_set_ticks(1u);
+    RISCC_MMIO_WORD(RISCC_IRQ_ENABLE) = RISCC_IRQ_TIMER;
+    riscc_irq_enable();
+
+    uint16_t t = static_cast<uint16_t>(clock());
     for (;;)
     {
         draw_next_strip();
-        if (clock() != t)
+        const uint16_t now = static_cast<uint16_t>(clock());
+        if (static_cast<uint16_t>(now - t) >= RISCC_TICK_HZ)
         {
-            t = clock();
+            t = now;
             putchar('.');
         }
     }

@@ -425,7 +425,7 @@ RC32 board-demo MMIO uses these byte addresses and 32-bit accesses:
 | `0xfffff800..0xfffffbff` | Write-only palette, 256 words of `0x00RRGGBB` |
 | `0xffffffe0` | UART data: write TX byte; read and consume RX byte |
 | `0xffffffe4` | UART status and IRQ-enable bits |
-| `0xffffffe8` | One-shot timer on write; free-running 1 kHz counter on read |
+| `0xffffffe8` | One-shot delay in display frames on write; free-running nominal 60 Hz frame counter on read |
 | `0xffffffec` | Timer/UART interrupt pending bits on read and enable mask on write |
 | `0xfffffff0` | Board LED output |
 
@@ -440,7 +440,16 @@ all three colour-byte enables. Palette changes take effect during scanout;
 software should avoid changing an entry while it is being displayed if a
 transient colour is unacceptable.
 
-`clock()` reads the wrapping 16-bit 1 kHz counter. `time()` is uptime in whole
+`clock()` reads the wrapping 16-bit hardware counter. Board RC32 demos count
+rising vertical blanking edges at nominally 60 Hz (`CLOCKS_PER_SEC` and
+`RISCC_TICK_HZ` are 60); other targets retain the 1 kHz timebase. The board BSP
+services a timer interrupt every display frame. Applications may instead install
+a custom handler with `riscc_irq_set_handler()`; the Julia demo uses this to
+redraw its scrolling text during blanking. A custom handler replaces the default
+uptime service and must acknowledge/rearm the timer before returning. The ISS
+approximates the board frame rate from its configured CPU frequency.
+
+`time()` is uptime in whole
 seconds, not wall-clock time. Its first call installs the default timer
 handler, so it is available only on Sys and Full and consumes the runtime's
 single C interrupt handler. Call `riscc_time_init()` when uptime should begin

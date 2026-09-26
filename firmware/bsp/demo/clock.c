@@ -1,4 +1,4 @@
-/* Default demo-BSP fast clock: direct read of the 1 kHz tick counter. */
+/* Default demo-BSP fast clock: direct read of the hardware tick/frame counter. */
 
 #include <riscc/platform.h>
 #include <time.h>

@@ -43,6 +43,7 @@ module icepi_video_timing_tb #(
         .pix_clk(pix_clk),
         .shift_clk(shift_clk),
         .rst(rst),
+        .vblank(),
         .tmds(tmds)
     );
 

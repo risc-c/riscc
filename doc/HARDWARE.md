@@ -662,7 +662,7 @@ The board demos use RC32 Cached with a flat address space and provide:
 
 - 16 KiB directly attached program/data SRAM and cached SDRAM;
 - an 8-bit indexed framebuffer in SDRAM and board-local video output;
-- a UART, a 1 kHz timer, and a two-source interrupt controller; and
+- a UART, a nominal 60 Hz display-frame timer, and a two-source interrupt controller; and
 - LED outputs and button inputs.
 
 The shared software-visible map is:
@@ -675,7 +675,7 @@ The shared software-visible map is:
 | `0x10000000..0x1000e0ff` | Framebuffer within SDRAM: 320×180, one byte per pixel |
 | `0xfffff800..0xfffffbff` | Write-only palette: 256 aligned `0x00RRGGBB` words |
 | `0xffffffe0..0xffffffe4` | UART; see the [Programming manual](PROGRAMMING.md#bsp-services-and-mmio) for register semantics |
-| `0xffffffe8` | timer: write a non-zero 1 kHz delay to arm/rearm; read the free-running 16-bit millisecond tick counter |
+| `0xffffffe8` | timer: write a non-zero frame delay to arm/rearm; read the free-running 16-bit display-frame counter |
 | `0xffffffec` | interrupt state: read pending UART/timer bits 0/1; write enable mask |
 | `0xfffffff0` | LED register; Icepi uses five low bits, Atum and DE23 use four |
 | Other addresses | Unmapped; reads return zero, writes are ignored |
@@ -804,14 +804,18 @@ The register file uses LUTRAM. Placement keeps the boot RAM bank beside
 the load-result registers and anchors SDRAM command state near its payload RAM.
 The SDRAM arbitration and command-control logic shares placement regions
 with its registers to keep request-path routing short.
-The demo build uses 3,861 LUT4 sites, 1,633 registers, 12 EBRs, and three DSP
-blocks. Post-route Fmax is 69.23 MHz for the CPU, 172.41 MHz for SDRAM,
-107.92 MHz for pixels, and 235.46 MHz for the serializer fabric. All internal
-clock targets pass. Compared with the pre-branch 3,529-site build, whole-board
-area is 9.4% higher. SDRAM output enable is registered active-low to drive
+The demo build uses 3,830 LUT4 sites, 1,620 registers, 12 EBRs, and three DSP
+blocks. With placement seed 1, post-route Fmax is 76.40 MHz for the CPU,
+171.00 MHz for SDRAM, 106.94 MHz for pixels, and 217.49 MHz for the serializer
+fabric. All internal clock targets pass. Compared with the previous 3,861-site
+build, area falls by 0.8% and CPU Fmax rises from 69.23 MHz; SDRAM, pixel, and
+serializer Fmax fall from 172.41, 107.92, and 235.46 MHz respectively, retaining
+margin above their targets. Compared with the pre-branch 3,529-site build,
+whole-board area is 8.5% higher. SDRAM output enable is registered active-low to drive
 the I/O tristate registers without a high-fanout inverter.
 Whole-board placement includes initialized boot RAM, so firmware changes can
-change routed timing.
+change routed timing. The SDRAM payload region leaves placement room for the
+bridge mux/register clusters while keeping them near command control.
 
 ```sh
 make icepi-zero-demo-iss
@@ -826,8 +830,24 @@ without a C++ standard library, exceptions, RTTI, or constructors. Set
 `DEMO_PROGRAM` to use another C++ source on all boards, or `ICEPI_PROGRAM`,
 `ATUM_PROGRAM`, or `DE23_PROGRAM` to override one board. Julia arithmetic uses
 native 32-bit products with 14 fractional bits; all demos use the DSP multiplier.
-The Julia renderer allows 254 iterations. A square-root colour curve brightens
-early escapes, with black interiors and no dithering.
+Rising vertical blanking edges cross into the CPU clock domain through a
+synchronizer and advance the timer once per display frame (nominally 60 Hz).
+The Julia demo installs a custom C interrupt handler that rearms the timer and
+scrolls the text one pixel per frame, redrawing only the text band during vertical
+blanking. Julia rendering stays in the main loop. The handler uses the hardware
+frame counter to skip stale positions if an interrupt is delayed. It owns the
+runtime's single C interrupt slot, so this demo does not install the default
+`time()` uptime service. Glyph pixels are prepared at startup; the handler copies
+only the seven glyph rows. At the board clock ratios, RTL simulation measured
+maximum redraw durations of 35,891 CPU cycles on DE23-Lite, 36,443 on Atum,
+and 37,547 on Icepi, all within vertical blanking.
+
+The Julia renderer allows 254 iterations. A colour lookup table computed at
+startup brightens intermediate escapes, with white interiors and no dithering.
+A smooth tilted parameter loop, rotation about the image centre, and sinusoidal
+view scaling use independent periods of 2003, 3001, and 4001 completed frames.
+The view scale varies by ±18%; motion uses an interpolated integer sine
+approximation. The combined phase repeats after 24,050,023,003 frames.
 
 The bit target only builds a bitstream. Load it temporarily through SRAM with:
 
@@ -868,7 +888,7 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-Quartus Pro 26.1: 1,410 ALMs, 2,232 registers, 15 M20Ks, two DSPs, two PLLs.
+Quartus Pro 26.1: 1,409 ALMs, 2,200 registers, 15 M20Ks, two DSPs, two PLLs.
 CPU and SDRAM timing pass; minimum SDRAM slack is 0.013 ns.
 HDMI output timing is unconstrained.
 
@@ -896,5 +916,5 @@ Output: `build/de23_lite/quartus/output_files/de23_lite.sof`.
 UART uses the onboard FT2232H at 115200 baud, 8N1. KEY0 resets the system;
 LEDR0–2 show application status and LEDR3 shows HDMI configuration status.
 
-Quartus Pro 26.1: 1,477 ALMs, 2,195 registers, 15 M20Ks, two DSPs, two PLLs.
+Quartus Pro 26.1: 1,462 ALMs, 2,187 registers, 15 M20Ks, two DSPs, two PLLs.
 CPU, SDRAM, and HDMI timing pass; minimum SDRAM slack is 0.012 ns.

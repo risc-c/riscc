@@ -58,8 +58,10 @@ struct TxCapture
 static void tick(Vriscc_demo_soc_sim *top, TxCapture &capture)
 {
     top->clk = 0;
+    top->pix_clk = 0;
     top->eval();
     top->clk = 1;
+    top->pix_clk = 1;
     top->eval();
     capture.sample(top->uart_tx);
 }
@@ -71,6 +73,7 @@ int main(int argc, char **argv)
     TxCapture capture;
 
     top->clk = 0;
+    top->pix_clk = 0;
     top->rst = 1;
     top->uart_rx = 1;
     for (int cycle = 0; cycle < 40; ++cycle)

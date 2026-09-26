@@ -130,6 +130,7 @@ include mk/rtl.mk
 include mk/serial.mk
 include mk/wide.mk
 include mk/boards.mk
+include mk/vblank-test.mk
 include mk/measure.mk
 include mk/compiler-tests.mk
 

@@ -364,8 +364,10 @@ struct Sim
                 cycle.direct_store = 6;
         }
         double timer_mhz = opts.mhz > 0.0 ? opts.mhz : DEFAULT_TIMER_MHZ;
+        const double tick_hz = opts.board_rc32 ? 60.0 :
+            static_cast<double>(TIMER_TICK_HZ);
         timer_cycles_per_tick = static_cast<uint64_t>(
-            std::llround(timer_mhz * static_cast<double>(TIMER_TICK_HZ)));
+            std::llround(timer_mhz * 1000000.0 / tick_hz));
         if (timer_cycles_per_tick == 0)
             timer_cycles_per_tick = 1;
         size_t limit = std::min<size_t>(image.size(), 65536);

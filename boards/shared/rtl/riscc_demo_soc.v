@@ -6,10 +6,12 @@
 module riscc_demo_soc #(
     parameter MEM_HEX = "mem/demo.memh",
     parameter integer UART_CLK_DIV = 1736,
+    parameter integer TIMER_EXTERNAL_TICK = 1,
     parameter integer TIMER_TICK_DIV = 200000
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        video_vblank,
     input  wire        uart_rx,
     input  wire [1:0]  button,
     output wire        uart_tx,
@@ -151,10 +153,12 @@ module riscc_demo_soc #(
 
     riscc_timer_mmio #(
         .DATA_WIDTH(32),
+        .EXTERNAL_TICK(TIMER_EXTERNAL_TICK),
         .TICK_DIV(TIMER_TICK_DIV)
     ) timer (
         .clk(clk),
         .rst(rst),
+        .video_vblank(video_vblank),
         .cpu_we(mmio_we),
         .cpu_addr(mem_addr[3:0]),
         .cpu_wdata(mem_wdata),

@@ -120,18 +120,19 @@ module agilex3_demo_system #(
 
 
     wire palette_we;
+    wire vblank;
     wire [7:0] palette_addr;
     wire [23:0] palette_wdata;
     riscc_demo_soc #(
         .MEM_HEX("mem/demo.memh"),
-        .UART_CLK_DIV((2000000000 + CPU_DIV * 57600) / (CPU_DIV * 115200)),
-        .TIMER_TICK_DIV((2000000 + CPU_DIV / 2) / CPU_DIV)
+        .UART_CLK_DIV((2000000000 + CPU_DIV * 57600) / (CPU_DIV * 115200))
     ) soc (
         .palette_we(palette_we),
         .palette_addr(palette_addr),
         .palette_wdata(palette_wdata),
         .clk(sys_clk),
         .rst(soc_rst),
+        .video_vblank(vblank),
         .uart_rx(FPGA_UART_RX),
         .button(button_sync),
         .uart_tx(FPGA_UART_TX),
@@ -171,6 +172,7 @@ module agilex3_demo_system #(
         .underrun(),
         .pix_clk(pix_clk),
         .rst(video_rst_sync[1]),
+        .vblank(vblank),
         .hdmi_hs(HDMI_TX_HS),
         .hdmi_vs(HDMI_TX_VS),
         .hdmi_de(HDMI_TX_DE),

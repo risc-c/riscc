@@ -4,15 +4,17 @@
 `default_nettype none
 
 // A free-running 16-bit low-rate tick counter plus a one-shot 16-bit timer.
-// TICK_DIV system clocks make one timer tick, so a board chooses its timebase
-// without adding an architecturally visible prescaler register.
+// EXTERNAL_TICK selects synchronized rising video blank edges; otherwise
+// TICK_DIV system clocks make one tick. The MMIO interface is unchanged.
 module riscc_timer_mmio #(
     parameter integer TICK_DIV = 1,
+    parameter integer EXTERNAL_TICK = 0,
     parameter integer DATA_WIDTH = 16,
     parameter integer PIPELINE_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        video_vblank,
     input  wire        cpu_we,
     // Word index: 2-byte spacing on RC16, 4-byte spacing on RC32 boards.
     input  wire [3:0]  cpu_addr,
@@ -50,7 +52,24 @@ module riscc_timer_mmio #(
             assign write_data = cpu_wdata[15:0];
         end
     endgenerate
-    wire tick_pulse = (TICK_DIV <= 1) || (div_q == {DIV_BITS{1'b0}});
+    // Synchronize the registered pixel-domain level before detecting its edge.
+    // Reset to blank: the first tick must follow an actual active frame.
+    (* async_reg = "true" *) reg vblank_meta_q, vblank_sync_q;
+    reg vblank_last_q;
+    always @(posedge clk) begin
+        if (rst) begin
+            vblank_meta_q <= 1'b1;
+            vblank_sync_q <= 1'b1;
+            vblank_last_q <= 1'b1;
+        end else begin
+            vblank_meta_q <= video_vblank;
+            vblank_sync_q <= vblank_meta_q;
+            vblank_last_q <= vblank_sync_q;
+        end
+    end
+    wire tick_pulse = EXTERNAL_TICK != 0 ?
+        (vblank_sync_q && !vblank_last_q) :
+        ((TICK_DIV <= 1) || (div_q == {DIV_BITS{1'b0}}));
     wire count_active = |count_q;
     wire count_last = count_q[0] && !(|count_q[15:1]);
 
@@ -65,11 +84,11 @@ module riscc_timer_mmio #(
             div_q <= TICK_DIV_LAST;
             ticks_q <= 16'd0;
         end else begin
-            if (tick_pulse) begin
-                div_q <= TICK_DIV_LAST;
+            if (tick_pulse)
                 ticks_q <= ticks_q + 1'b1;
-            end else begin
-                div_q <= div_q - 1'b1;
+            if (EXTERNAL_TICK == 0) begin
+                if (tick_pulse) div_q <= TICK_DIV_LAST;
+                else div_q <= div_q - 1'b1;
             end
 
             if (count_write) begin

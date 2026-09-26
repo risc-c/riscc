@@ -5,8 +5,7 @@
 
 module icepi_zero_soc_sim #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
-    parameter integer UART_CLK_DIV = 8,
-    parameter integer TIMER_TICK_DIV = 66667
+    parameter integer UART_CLK_DIV = 8
 ) (
     input  wire       clk,
     input  wire       pix_clk,
@@ -21,7 +20,10 @@ module icepi_zero_soc_sim #(
     output wire [3:0] dbg_fb_wmask,
     output wire [31:0] dbg_fb_writes,
     output wire [31:0] dbg_uart_tx_count,
-    output wire [31:0] dbg_uart_rx_count
+    output wire [31:0] dbg_uart_rx_count,
+    output wire [15:0] dbg_frame_count,
+    output wire dbg_vblank,
+    output wire dbg_timer_irq
 );
     wire        fb_we;
     wire [13:0] fb_addr;
@@ -61,13 +63,16 @@ module icepi_zero_soc_sim #(
     );
 
     assign dbg_fb_wmask = fb_wmask;
+    wire video_vblank;
+    assign dbg_frame_count = soc.timer.ticks_q;
+    assign dbg_vblank = video_vblank;
+    assign dbg_timer_irq = soc.timer_irq;
     wire palette_we;
     wire [7:0] palette_addr;
     wire [23:0] palette_wdata;
     icepi_zero_soc #(
         .MEM_HEX(MEM_HEX),
         .UART_CLK_DIV(UART_CLK_DIV),
-        .TIMER_TICK_DIV(TIMER_TICK_DIV),
         .PIPELINE_MMIO_WRITES(1)
     ) soc (
         .palette_we(palette_we),
@@ -75,6 +80,7 @@ module icepi_zero_soc_sim #(
         .palette_wdata(palette_wdata),
         .clk(clk),
         .rst(rst),
+        .video_vblank(video_vblank),
         .sdram_addr(sdram_addr),
         .sdram_wdata(sdram_wdata),
         .sdram_wmask(sdram_wmask),
@@ -98,6 +104,7 @@ module icepi_zero_soc_sim #(
     );
 
     icepi_fb_dvi video (
+        .vblank(video_vblank),
         .cpu_clk(clk),
         .palette_we(palette_we),
         .palette_addr(palette_addr),

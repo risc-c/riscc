@@ -68,7 +68,8 @@ module board_map_tb;
     end
     reg [31:0] result;
     integer checks = 0;
-    `SOC_NAME #(.MEM_HEX(""), .UART_CLK_DIV(8), .TIMER_TICK_DIV(10000)) dut (
+    `SOC_NAME #(.MEM_HEX(""), .UART_CLK_DIV(8), .TIMER_EXTERNAL_TICK(0), .TIMER_TICK_DIV(10000)) dut (
+        .video_vblank(1'b0),
         .clk(clk), .rst(rst), .uart_rx(1'b1), .button(2'b11),
         .uart_tx(), .led(led), .fb_we(fb_we), .fb_addr(fb_addr),
         .fb_wmask(fb_wmask), .fb_wdata(fb_wdata),

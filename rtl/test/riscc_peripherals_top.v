@@ -22,6 +22,7 @@ module riscc_peripherals_top #(
     riscc_timer_mmio #(
         .TICK_DIV(TICK_DIV)
     ) timer (
+        .video_vblank(1'b0),
         .clk(clk),
         .rst(rst),
         .cpu_we(cpu_we),

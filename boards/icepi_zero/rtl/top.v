@@ -56,18 +56,19 @@ module top #(
     end
 
     wire palette_we;
+    wire vblank;
     wire [7:0] palette_addr;
     wire [23:0] palette_wdata;
     icepi_zero_soc #(
         .MEM_HEX(MEM_HEX),
         .UART_CLK_DIV(579),
-        .TIMER_TICK_DIV(66667),
         .PIPELINE_MMIO_WRITES(1)
     ) soc (
         .palette_we(palette_we),
         .palette_addr(palette_addr),
         .palette_wdata(palette_wdata),
         .clk(cpu_clk),
+        .video_vblank(vblank),
 `ifdef ICEPI_VIDEO_TEST
         // The fixed-pattern test isolates video from CPU and SDRAM activity.
         .rst(1'b1),
@@ -118,6 +119,7 @@ module top #(
         .pix_clk(clkp),
         .shift_clk(clk5x),
         .rst(video_reset_sync[1]),
+        .vblank(vblank),
         .tmds(gpdi_dp)
     );
 

@@ -1,6 +1,8 @@
 # Keep row lookup, command control, and payload registers close together.
 ctx.createRectangularRegion('command_queue', 12, 1, 23, 12)
-ctx.createRectangularRegion('command_payload', 12, 1, 25, 18)
+# Leave placement room for bridge mux/FF clusters beside command control,
+# while keeping payload logic above the line-buffer and CPU-load regions.
+ctx.createRectangularRegion('command_payload', 10, 1, 27, 19)
 # EBRs occupy rows 25 and 37; keep the line buffer on the controller side.
 ctx.createRectangularRegion('line_buffer', 12, 20, 25, 26)
 # Keep load-result state alongside the boot RAM bank.

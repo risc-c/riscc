@@ -20,6 +20,7 @@ module riscc_video_parallel #(
     output wire underrun,
     input  wire pix_clk,
     input  wire rst,
+    output wire vblank,
     output wire hdmi_hs,
     output wire hdmi_vs,
     output wire hdmi_de,
@@ -49,6 +50,8 @@ module riscc_video_parallel #(
     reg active_q;
     reg hsync_q;
     reg vsync_q;
+    reg vblank_q;
+    assign vblank = vblank_q;
     wire [7:0] fb_index;
     wire fb_pixel_valid;
     riscc_sdram_scanout scanout (
@@ -83,6 +86,7 @@ module riscc_video_parallel #(
             active_q <= 1'b0;
             hsync_q <= 1'b0;
             vsync_q <= 1'b0;
+            vblank_q <= 1'b1;
         end else begin
             // Prime the source coordinate one cycle before active video so the
             // synchronous framebuffer read aligns with DE.
@@ -124,6 +128,7 @@ module riscc_video_parallel #(
             active_q <= active;
             hsync_q <= hsync;
             vsync_q <= vsync;
+            vblank_q <= (v_count < V_ACTIVE_START) || (v_count >= V_ACTIVE_END);
         end
     end
 

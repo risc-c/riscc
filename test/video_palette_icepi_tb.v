@@ -39,7 +39,8 @@ module video_palette_icepi_tb;
         .memory_cyc(memory_cyc), .memory_stb(memory_stb),
         .memory_stall(memory_stall), .memory_ack(memory_ack),
         .memory_rdata(memory_rdata), .underrun(underrun),
-        .pix_clk(pix_clk), .shift_clk(shift_clk), .rst(rst), .tmds(tmds)
+        .pix_clk(pix_clk), .shift_clk(shift_clk), .rst(rst), .tmds(tmds),
+        .vblank()
     );
 
     function [7:0] pixel_index(input integer row, input integer column);

@@ -6,10 +6,10 @@
 module riscc_demo_soc_sim #(
     parameter MEM_HEX = "build/atum_a3_nano/mem/demo.memh",
     parameter integer UART_CLK_DIV = 8,
-    parameter integer TIMER_TICK_DIV = 200000,
     parameter integer VIDEO_SCALE = 6
 ) (
     input  wire clk,
+    input  wire pix_clk,
     input  wire rst,
     input  wire uart_rx,
     output wire uart_tx,
@@ -20,7 +20,10 @@ module riscc_demo_soc_sim #(
     output wire [3:0] dbg_fb_wmask,
     output wire [31:0] dbg_fb_writes,
     output wire [31:0] dbg_uart_tx_count,
-    output wire [31:0] dbg_uart_rx_count
+    output wire [31:0] dbg_uart_rx_count,
+    output wire [15:0] dbg_frame_count,
+    output wire dbg_vblank,
+    output wire dbg_timer_irq
 );
     wire [3:0] fb_wmask;
 
@@ -52,19 +55,23 @@ module riscc_demo_soc_sim #(
     );
 
     assign dbg_fb_wmask = fb_wmask;
+    wire video_vblank;
+    assign dbg_frame_count = soc.timer.ticks_q;
+    assign dbg_vblank = video_vblank;
+    assign dbg_timer_irq = soc.timer_irq;
     wire palette_we;
     wire [7:0] palette_addr;
     wire [23:0] palette_wdata;
     riscc_demo_soc #(
         .MEM_HEX(MEM_HEX),
-        .UART_CLK_DIV(UART_CLK_DIV),
-        .TIMER_TICK_DIV(TIMER_TICK_DIV)
+        .UART_CLK_DIV(UART_CLK_DIV)
     ) soc (
         .palette_we(palette_we),
         .palette_addr(palette_addr),
         .palette_wdata(palette_wdata),
         .clk(clk),
         .rst(rst),
+        .video_vblank(video_vblank),
         .sdram_addr(sdram_addr),
         .sdram_wdata(sdram_wdata),
         .sdram_wmask(sdram_wmask),
@@ -87,6 +94,7 @@ module riscc_demo_soc_sim #(
         .dbg_uart_rx_count(dbg_uart_rx_count)
     );
     riscc_video_parallel #(.SCALE(VIDEO_SCALE)) video (
+        .vblank(video_vblank),
         .cpu_clk(clk),
         .palette_we(palette_we),
         .palette_addr(palette_addr),
@@ -101,7 +109,7 @@ module riscc_demo_soc_sim #(
         .memory_ack(video_ack),
         .memory_rdata(video_rdata),
         .underrun(),
-        .pix_clk(clk),
+        .pix_clk(pix_clk),
         .rst(rst),
         .hdmi_hs(),
         .hdmi_vs(),

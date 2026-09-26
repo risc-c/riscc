@@ -189,7 +189,7 @@ $(ICEPI_RTLSIM): $(ICEPI_MEMH) $(ICEPI_SIM_RTL) \
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module icepi_zero_soc_sim --prefix Vicepi_zero_soc_sim \
-	  -Mdir $(@D) $(ICEPI_CPU_DEFINES) -GTIMER_TICK_DIV=4 -I$(abspath rtl) \
+	  -Mdir $(@D) $(ICEPI_CPU_DEFINES) -I$(abspath rtl) \
 	  -CFLAGS "$(TB_CXXFLAGS)" -o Vicepi_zero_soc_sim \
 	  $(abspath $(ICEPI_SIM_RTL)) $(abspath $(ICEPI_DIR)/sim/icepi_zero_soc_tb.cpp)
 

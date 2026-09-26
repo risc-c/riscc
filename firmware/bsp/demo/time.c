@@ -1,4 +1,4 @@
-/* Default demo-BSP uptime service: one timer IRQ per second. */
+/* Demo uptime: one interrupt per display frame on boards, per second otherwise. */
 
 #include <riscc/interrupt.h>
 #include <riscc/platform.h>
@@ -7,15 +7,31 @@
 static volatile uint16_t seconds_low;
 static volatile uint16_t seconds_high;
 static volatile uint16_t time_started;
+#ifdef RISCC_BOARD_DEMO
+static uint16_t last_frame;
+static uint16_t second_frames;
+#define TIME_IRQ_TICKS 1u
+#else
+#define TIME_IRQ_TICKS RISCC_TICK_HZ
+#endif
 
 static void riscc_time_tick(void)
 {
+#ifdef RISCC_BOARD_DEMO
+    const uint16_t now = riscc_ticks();
+    const uint32_t elapsed = (uint16_t)(now - last_frame) + (uint32_t)second_frames;
+    last_frame = now;
+    second_frames = elapsed % RISCC_TICK_HZ;
+    uint16_t next = seconds_low + elapsed / RISCC_TICK_HZ;
+#else
     uint16_t next = seconds_low + 1u;
+#endif
+    const uint16_t previous = seconds_low;
 
     seconds_low = next;
-    if (next == 0)
+    if (next < previous)
         ++seconds_high;
-    riscc_timer_set_ticks(RISCC_TICK_HZ);
+    riscc_timer_set_ticks(TIME_IRQ_TICKS);
 }
 
 void riscc_time_init(void)
@@ -25,8 +41,12 @@ void riscc_time_init(void)
 
     seconds_low = 0;
     seconds_high = 0;
+#ifdef RISCC_BOARD_DEMO
+    last_frame = riscc_ticks();
+    second_frames = 0;
+#endif
     riscc_irq_set_handler(riscc_time_tick);
-    riscc_timer_set_ticks(RISCC_TICK_HZ);
+    riscc_timer_set_ticks(TIME_IRQ_TICKS);
     RISCC_MMIO_WORD(RISCC_IRQ_ENABLE) = RISCC_IRQ_TIMER;
     time_started = 1;
     riscc_irq_enable();

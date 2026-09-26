@@ -6,11 +6,13 @@
 module icepi_zero_soc #(
     parameter MEM_HEX = "build/icepi_zero/demo.memh",
     parameter integer UART_CLK_DIV = 579,
+    parameter integer TIMER_EXTERNAL_TICK = 1,
     parameter integer TIMER_TICK_DIV = 66667,
     parameter integer PIPELINE_MMIO_WRITES = 0
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        video_vblank,
     input  wire        uart_rx,
     input  wire [1:0]  button,
 
@@ -154,11 +156,13 @@ module icepi_zero_soc #(
 
     riscc_timer_mmio #(
         .DATA_WIDTH(32),
+        .EXTERNAL_TICK(TIMER_EXTERNAL_TICK),
         .TICK_DIV(TIMER_TICK_DIV),
         .PIPELINE_WRITES(PIPELINE_MMIO_WRITES)
     ) timer (
         .clk(clk),
         .rst(rst),
+        .video_vblank(video_vblank),
         .cpu_we(mmio_we),
         .cpu_addr(mem_addr[3:0]),
         .cpu_wdata(mem_wdata),

@@ -77,7 +77,7 @@ $$($(1)_RTLSIM): $$($(1)_MEMH) $$($(1)_SIM_RTL) boards/shared/test/riscc_demo_so
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_demo_soc_sim --prefix Vriscc_demo_soc_sim \
-	  -Mdir $$(@D) -GTIMER_TICK_DIV=4 -GVIDEO_SCALE=$$($(1)_VIDEO_SCALE) -GMEM_HEX='"$$($(1)_MEMH)"' -I$$(abspath rtl) \
+	  -Mdir $$(@D) -GVIDEO_SCALE=$$($(1)_VIDEO_SCALE) -GMEM_HEX='"$$($(1)_MEMH)"' -I$$(abspath rtl) \
 	  -CFLAGS "$$(TB_CXXFLAGS)" -o Vriscc_demo_soc_sim \
 	  $$(abspath $$($(1)_SIM_RTL)) $$(abspath boards/shared/test/riscc_demo_soc_tb.cpp)
 

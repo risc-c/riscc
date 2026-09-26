@@ -48,6 +48,7 @@ module video_palette_scanout_tb #(
         .memory_stall(memory_stall), .memory_ack(memory_ack),
         .memory_rdata(memory_rdata), .underrun(underrun),
         .pix_clk(pix_clk), .rst(rst),
+        .vblank(),
         .hdmi_hs(hdmi_hs), .hdmi_vs(hdmi_vs), .hdmi_de(hdmi_de),
         .hdmi_rgb(hdmi_rgb)
     );

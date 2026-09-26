@@ -17,6 +17,7 @@ module icepi_fb_dvi (
     input  wire        pix_clk,
     input  wire        shift_clk,
     input  wire        rst,
+    output wire        vblank,
     output wire [3:0]  tmds
 );
     localparam [10:0] H_ACTIVE = 11'd1280;
@@ -64,6 +65,8 @@ module icepi_fb_dvi (
     reg active_q;
     reg hsync_q;
     reg vsync_q;
+    reg vblank_q;
+    assign vblank = vblank_q;
 
     always @(posedge pix_clk) begin
         if (rst) begin
@@ -75,6 +78,7 @@ module icepi_fb_dvi (
             active_q <= 1'b0;
             hsync_q <= 1'b1;
             vsync_q <= 1'b1;
+            vblank_q <= 1'b1;
         end else begin
             if (h_count_q == H_TOTAL - 11'd1) begin
                 h_count_q <= 11'd0;
@@ -92,6 +96,7 @@ module icepi_fb_dvi (
             active_q <= active;
             hsync_q <= hsync;
             vsync_q <= vsync;
+            vblank_q <= v_count_q >= V_ACTIVE;
         end
     end
 

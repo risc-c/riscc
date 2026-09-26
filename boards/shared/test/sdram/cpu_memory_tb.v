@@ -15,7 +15,8 @@ module cpu_memory_tb #(
     wire cpu_we, cpu_cyc, cpu_stb, cpu_stall, cpu_ack, cpu_ready;
     wire memory_we, memory_cyc, memory_stb, memory_stall, memory_ack, memory_ready;
     wire [`LED_BITS-1:0] led;
-    `SOC_NAME #(.MEM_HEX(`FIRMWARE), .UART_CLK_DIV(8), .TIMER_TICK_DIV(10000)) dut (
+    `SOC_NAME #(.MEM_HEX(`FIRMWARE), .UART_CLK_DIV(8), .TIMER_EXTERNAL_TICK(0), .TIMER_TICK_DIV(10000)) dut (
+        .video_vblank(1'b0),
         .clk(cpu_clk), .rst(rst), .uart_rx(1'b1), .button(2'b11),
         .uart_tx(), .led(led), .palette_we(), .palette_addr(), .palette_wdata(), .fb_we(), .fb_addr(), .fb_wmask(), .fb_wdata(), .dbg_fb_writes(), .dbg_uart_tx_count(), .dbg_uart_rx_count(),
         .sdram_addr(cpu_addr), .sdram_wdata(cpu_wdata), .sdram_wmask(cpu_wmask),
