@@ -30,7 +30,7 @@ $(1)_SIM_RTL := \
   boards/shared/test/riscc_demo_soc_sim.v \
   $$($(1)_SOC_RTL) \
   rtl/riscc_cached.v \
-  rtl/riscc_fast.v
+  rtl/riscc_pipeline_shared.v
 $(1)_HW_RTL := \
   boards/shared/rtl/agilex3_demo_system.v \
   boards/shared/rtl/riscc_i2c_reg.v \
@@ -44,7 +44,7 @@ $(1)_HW_RTL := \
   boards/shared/rtl/riscc_video_parallel.v \
   $$($(1)_TRANSMITTER_RTL) \
   rtl/riscc_cached.v \
-  rtl/riscc_fast.v
+  rtl/riscc_pipeline_shared.v
 $(1)_PROJECT_FILES := \
   $$($(1)_DIR)/$(2).qpf \
   $$($(1)_DIR)/$(2).qsf \
@@ -71,13 +71,14 @@ $$($(1)_MIF): $$($(1)_BIN) tools/bin_to_memh.py $$(BOARD_RULES)
 $(3)-demo-bin: $$($(1)_BIN) $$($(1)_MEMH) $$($(1)_MIF)
 
 $(3)-demo-iss: $$($(1)_BIN) $$(RISCC_SIM)
-	$$(RISCC_SIM) $$< --rc32-full --board-rc32 --uart --fb-window --fb-scale 4 --mhz $$($(1)_CPU_MHZ) --max-insns 0
+	$$(RISCC_SIM) $$< --rc32-full --board-rc32 --uart --fb-window --fb-scale 2 --mhz $$($(1)_CPU_MHZ) --max-insns 0
 
-$$($(1)_RTLSIM): $$($(1)_MEMH) $$($(1)_SIM_RTL) boards/shared/test/riscc_demo_soc_tb.cpp $$(BOARD_RULES)
+$$($(1)_RTLSIM): $$($(1)_MEMH) $$($(1)_SIM_RTL) \
+		boards/shared/test/riscc_demo_soc_tb.cpp boards/shared/test/demo_checks.h $$(BOARD_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_demo_soc_sim --prefix Vriscc_demo_soc_sim \
-	  -Mdir $$(@D) -GVIDEO_SCALE=$$($(1)_VIDEO_SCALE) -GMEM_HEX='"$$($(1)_MEMH)"' -I$$(abspath rtl) \
+	  -Mdir $$(@D) -GMEM_HEX='"$$($(1)_MEMH)"' -I$$(abspath rtl) \
 	  -CFLAGS "$$(TB_CXXFLAGS)" -o Vriscc_demo_soc_sim \
 	  $$(abspath $$($(1)_SIM_RTL)) $$(abspath boards/shared/test/riscc_demo_soc_tb.cpp)
 

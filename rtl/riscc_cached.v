@@ -324,7 +324,7 @@ endmodule
 // an immediate load consumer waits one clock for the RF's write-first bypass.
 // A memory response can retire while Execute issues the next request.
 //
-// Shifts and multiplication hold Execute until complete. MUL uses a registered
+// Immediate shifts complete in Execute. MUL holds Execute and uses a registered
 // DSP by default; RISCC_FAST_SOFT_MUL selects iterative fabric multiplication.
 // The instruction port transfers 16 bits, the data port 32 bits with byte
 // enables. Requests are captured when STB is high and STALL is low; they
@@ -367,17 +367,14 @@ module riscc_cached_pipe #(
             $error("riscc_cached: XLEN must be 16 or 32");
     end
 
-    // Execute states: ordinary instructions, shifts, and multiplication.
-    localparam [2:0] ST_RUN   = 3'd0;
-    localparam [2:0] ST_SHIFT = 3'd1;
-    localparam [2:0] ST_MUL   = 3'd2;
+    // Execute states: ordinary instructions and multiplication.
+    localparam [1:0] ST_RUN = 2'd0;
+    localparam [1:0] ST_MUL = 2'd1;
 `ifndef RISCC_FAST_SOFT_MUL
-    localparam [2:0] ST_MUL_CALC = 3'd3;
-    localparam [2:0] ST_MUL_PIPE = 3'd4;
+    localparam [1:0] ST_MUL_CALC = 2'd2;
 `endif
-    (* syn_encoding = "user" *) reg [2:0] state_q;
+    (* syn_encoding = "user" *) reg [1:0] state_q;
     wire in_run   = state_q == ST_RUN;
-    wire in_shift = state_q == ST_SHIFT;
     wire in_mul   = state_q == ST_MUL;
 
     reg interrupt_enable_q;
@@ -506,9 +503,9 @@ module riscc_cached_pipe #(
     reg x_branch_q;
     reg x_imm_alu_q;
     reg x_multiply_q;
-    // Immediate shifts reuse the one-bit shifter until their count expires.
+    // Immediate shifts complete in one Execute cycle.
     reg x_bitop_q;
-    reg x_shift_nonzero_q;
+    reg [2:0] x_shift_offset_q;
     reg x_shift_left_q;
     reg x_imm_sign_q, x_imm_bit0_q;
     reg x_alu_a_pc_q;
@@ -522,7 +519,7 @@ module riscc_cached_pipe #(
     reg x_jall_q;
     reg x_early_redirect_q;
     reg x_late_branch_q;
-    reg x_move_q;
+    reg [2:0] x_logic_table_q;
     reg x_ie_write_q;
     // Decode also registers the result and arithmetic operand selects.
     reg x_run_short_imm_q;
@@ -537,7 +534,6 @@ module riscc_cached_pipe #(
 `endif
     wire [1:0] x_aaa = x_instr_q[9:8];
     wire [2:0] x_f3 = x_instr_q[5:3];
-    wire [2:0] x_bbb = x_instr_q[2:0];
 
     wire x_branch = x_branch_q;
     wire x_imm_alu = x_imm_alu_q;
@@ -552,7 +548,6 @@ module riscc_cached_pipe #(
     wire x_signed_byte = x_signed_byte_q;
     wire x_indirect = x_indirect_q;
     wire x_jall = x_jall_q;
-    wire x_move = x_move_q;
     wire x_ie_write = x_ie_write_q;
 
     wire [XLEN-1:0] rf_read_a, rf_read_b;
@@ -578,42 +573,42 @@ module riscc_cached_pipe #(
         {x_instr_q[7:2], 2'b00} : x_instr_q[7:0];
     wire [XLEN-1:0] x_imm_s = {{(XLEN-8){x_imm_sign_q}}, immediate_byte};
     wire [XLEN-1:0] x_imm_u = {{(XLEN-16){1'b0}}, x_instr_q[7:0], 8'h00};
+`ifdef RISCC_FAST_SOFT_MUL
     reg [XLEN-1:0] side_data_q;
+`endif
 
-    wire [1:0] x_logic_op = x_move ? 2'b11 :
-        x_imm_alu ? x_aaa[1:0] : x_f3[1:0];
-    wire [XLEN-1:0] x_logic_rhs = x_imm_alu ? x_imm_z : rf_b;
-    wire [XLEN-1:0] x_logic_result = !x_logic_op[1] ?
-        (x_logic_op[0] ? (rf_a | x_logic_rhs) :
-                         (rf_a & x_logic_rhs)) :
-        (x_logic_op[0] ? rf_a : (rf_a ^ x_logic_rhs));
+    wire [1:0] d_logic_op = d_move ? 2'b11 :
+        d_imm_alu ? d_aaa[1:0] : d_f5[1:0];
+    wire d_short_imm = d_imm_alu && !d_aaa[2] && !d_aaa[1];
+    // Bitwise truth table for (A,B) = (1,1), (1,0), and (0,1).
+    // All operations return zero for (0,0); immediate loads select B.
+    wire [2:0] d_logic_table = d_short_imm ? 3'b101 :
+        d_logic_op == 0 ? 3'b100 : d_logic_op == 1 ? 3'b111 :
+        d_logic_op == 2 ? 3'b011 : 3'b110;
+    wire [XLEN-1:0] x_logic_immediate =
+        (x_run_short_imm_q && x_aaa[0]) ? x_imm_u : x_imm_z;
+    wire [XLEN-1:0] x_logic_rhs = x_imm_alu ? x_logic_immediate : rf_b;
+    wire [XLEN-1:0] x_logic_result;
+    genvar logic_bit;
+    generate
+        for (logic_bit = 0; logic_bit < XLEN; logic_bit = logic_bit + 1) begin : g_logic
+            assign x_logic_result[logic_bit] = rf_a[logic_bit] ?
+                (x_logic_rhs[logic_bit] ? x_logic_table_q[2] : x_logic_table_q[1]) :
+                (x_logic_rhs[logic_bit] && x_logic_table_q[0]);
+        end
+    endgenerate
 
-    // One-bit shift hardware is shared by the initial X step and ST_SHIFT.
 `ifdef RISCC_FAST_SOFT_MUL
     localparam integer COUNT_BITS = $clog2(XLEN/2);
-`else
-    localparam integer COUNT_BITS = 3;
-`endif
-`ifdef RISCC_FAST_SOFT_MUL
-    // The multiplier's digit counter stays separate from instruction decode.
     reg [COUNT_BITS-1:0] side_count_q;
-`else
-    // With DSP multiplication only shifts count; their source index is dead.
-    wire [COUNT_BITS-1:0] side_count_q = x_instr_q[2:0];
 `endif
 
-    // Shifts feed the completion value back for their next step. IRQs stay
-    // deferred until the final step; every write uses the ordinary RF port.
-    wire [XLEN-1:0] side_shift_source = rf_a;
-    wire side_shift_left = x_shift_left;
-    wire side_shift_endpoint = x_instr_q[7] ? rf_b[0] :
-                               (x_f3[0] & side_shift_source[XLEN-1]);
-    wire [XLEN-1:0] side_shift_step = side_shift_left ?
-        {side_shift_source[XLEN-2:0], x_instr_q[7] & rf_b[XLEN-1]} :
-        {side_shift_endpoint, side_shift_source[XLEN-1:1]};
-    wire [XLEN-1:0] x_shift_step = side_shift_step;
-    wire [XLEN-1:0] shift_step = side_shift_step;
-    wire shift_finish = in_shift & (side_count_q == 1);
+    wire [XLEN-1:0] x_shift_step;
+    riscc_fast_shift #(.XLEN(XLEN)) shifter (
+        .value(rf_a), .other(rf_b), .offset(x_shift_offset_q),
+        .left(x_shift_left), .arithmetic(x_f3[0]),
+        .funnel(x_instr_q[7]), .result(x_shift_step)
+    );
 
 `ifdef RISCC_FAST_SOFT_MUL
     // MUL visits XLEN/2 radix-4 Booth digits, from high to low. Each step
@@ -635,9 +630,9 @@ module riscc_cached_pipe #(
     wire [XLEN-1:0] mul_step = alu_result;
     wire mul_finish = in_mul && !(|side_count_q);
 `else
-    // Four Execute clocks: capture operands, multiply, assemble, and commit.
+    // Three Execute clocks: capture operands, multiply, and commit the sum.
     reg [XLEN-1:0] mul_a_q, mul_b_q;
-    wire [XLEN-1:0] mul_write_data = side_data_q;
+    wire [XLEN-1:0] mul_write_data;
     always @(posedge clk) begin
         if (x_mul_start) begin
             mul_a_q <= rf_a;
@@ -646,8 +641,8 @@ module riscc_cached_pipe #(
     end
     generate
         if (XLEN == 32) begin : g_wide_multiply
-            // Three half-width products supply the low 32 bits. Their sum uses
-            // the existing final multiply stage, avoiding a DSP cascade.
+            // Three half-width products supply the low 32 bits. Commit their
+            // sum directly to writeback, avoiding a separate assembly register.
             reg [31:0] low_q;
             reg [15:0] cross_a_q, cross_b_q;
             always @(posedge clk) begin
@@ -656,16 +651,15 @@ module riscc_cached_pipe #(
                     cross_a_q <= mul_a_q[31:16] * mul_b_q[15:0];
                     cross_b_q <= mul_a_q[15:0] * mul_b_q[31:16];
                 end
-                if (state_q == ST_MUL_PIPE)
-                    side_data_q <= {low_q[31:16] + cross_a_q + cross_b_q,
-                                    low_q[15:0]};
             end
+            assign mul_write_data = {low_q[31:16] + cross_a_q + cross_b_q,
+                                     low_q[15:0]};
         end else begin : g_narrow_multiply
             reg [XLEN-1:0] product_q;
             always @(posedge clk) begin
                 if (state_q == ST_MUL_CALC) product_q <= mul_a_q * mul_b_q;
-                if (state_q == ST_MUL_PIPE) side_data_q <= product_q;
             end
+            assign mul_write_data = product_q;
         end
     endgenerate
 `endif
@@ -680,13 +674,10 @@ module riscc_cached_pipe #(
     wire [XLEN-1:0] ordinary_alu_a = (irq_alu || x_alu_a_pc_q) ?
         {x_pc_next_q, 1'b0} : rf_a;
 
-    wire [XLEN-1:0] immediate_result = x_aaa[0] ? x_imm_u : x_imm_z;
-    wire run_short_imm = x_run_short_imm_q;
     // These instruction classes are mutually exclusive. Arithmetic operands
     // never select this bypass path, including in the soft multiplier build.
     wire run_shift = x_bitop;
-    wire [XLEN-1:0] run_result = run_short_imm ? immediate_result :
-        run_shift ? x_shift_step : x_logic_result;
+    wire [XLEN-1:0] run_result = run_shift ? x_shift_step : x_logic_result;
     // Decode supplies the two arithmetic operand selects. Logical, move
     // and shift results do not pass through this mux or the carry chain.
     // Branch/LDPC immediates encode their sign in bit 0. Clear it before
@@ -738,17 +729,15 @@ module riscc_cached_pipe #(
         x_ddd[2] | ((x_ddd[1] ? r0_negative_q : r0_zero_q) ^ x_ddd[0]);
 
     // Execute completion, control transfers, and issue from Decode.
-    wire x_shift_start = normal_x & x_shift_nonzero_q;
     assign x_mul_start = normal_x & x_multiply;
-    wire x_side_start = x_shift_start | x_mul_start;
-    wire run_commit = normal_x && !x_side_start &&
+    wire run_commit = normal_x && !x_mul_start &&
         (!x_memory || data_accept) && (!x_jall || d_valid);
 `ifdef RISCC_FAST_SOFT_MUL
     wire mul_commit = mul_finish;
 `else
     wire mul_commit = in_mul;
 `endif
-    wire x_complete = core_advance && (run_commit | shift_finish | mul_commit);
+    wire x_complete = core_advance && (run_commit | mul_commit);
     wire commit_valid = x_finish;
     // Control transfers are RUN instructions with no side state or data
     // transaction. Their redirect does not depend on memory completion logic.
@@ -756,7 +745,6 @@ module riscc_cached_pipe #(
         ((x_branch && x_branch_taken) || x_indirect || (x_jall && d_valid));
     wire [31:0] x_long_target = {11'b0, x_instr_q[10:6], d_instr};
     wire [XLEN-2:0] relative_branch_target;
-    wire shift_feedback;
     wire [XLEN-2:0] x_branch_target = REGISTER_FETCH ?
         relative_branch_target : alu_result[XLEN-1:1];
     wire [XLEN-2:0] x_redirect_pc = x_jall ? x_long_target[XLEN-1:1] :
@@ -862,16 +850,22 @@ module riscc_cached_pipe #(
     wire run_push_ready = irq_alu ||
         (!x_multiply && (!x_memory || !dmem_stall) && (!x_jall || d_valid));
     wire w_push = core_advance &&
-        (in_shift || mul_commit ||
+        (mul_commit ||
          (in_run && x_valid_q && !(data_pending_q && irq_waiting) && run_push_ready));
     wire x_write = take_irq || x_we_q;
     // IRQ saves the interrupted PC. Calls and arithmetic share the ALU;
     // short and long calls save PC+1 and PC+2 halfwords respectively.
     wire compare_value = x_f3[0] ? unsigned_less : signed_less;
     wire write_arithmetic = pc_write || x_alu_kind_q[0];
-    wire [XLEN-1:0] x_result = (take_irq || write_arithmetic) ? alu_result :
-        in_mul ? mul_write_data :
-        x_compare ? {{(XLEN-1){1'b0}}, compare_value} : run_result;
+    // Acceptance gates writeback; the data mux only needs the RUN IRQ condition.
+    wire result_alu = (in_run && irq_alu) || write_arithmetic;
+    // Encode four sources with two shared selects so adjacent result bits
+    // can share the selector inputs of a fractured LUT.
+    wire result_high = !result_alu && !in_mul;
+    wire result_low = !result_alu && (in_mul || !x_compare);
+    wire [XLEN-1:0] x_result = result_high ?
+        (result_low ? run_result : {{(XLEN-1){1'b0}}, compare_value}) :
+        (result_low ? mul_write_data : alu_result);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -901,8 +895,6 @@ module riscc_cached_pipe #(
                 x_alu_b_register_q <= d_alu_rf_b;
                 x_alu_b_imm_q <= !d_alu_rf_b && d_alu_immediate;
                 x_forward_b_q <= forward_b;
-            end else if (shift_feedback) begin
-                x_forward_a_q <= 1;
             end
         end
     end
@@ -914,7 +906,7 @@ module riscc_cached_pipe #(
     // r0-producing ALU operations cannot redirect, so their enable need not
     // wait for fetch acceptance or the control-transfer writeback path.
     wire flags_from_execute = core_advance && x_we_q && !x_memory && !(|x_dst_q) &&
-        (in_shift || mul_commit ||
+        (mul_commit ||
          (in_run && x_valid_q && !irq_waiting && !x_multiply));
     always @(posedge clk) begin
         if (rf_we && data_pending_q && !(|rf_waddr)) begin
@@ -941,9 +933,6 @@ module riscc_cached_pipe #(
         end
     endgenerate
 
-    // Shifts reuse the completion result; RF reads only belong to Decode.
-    assign shift_feedback = core_advance &&
-        (x_shift_start || (in_shift && !shift_finish));
     riscc_fast_rf #(.XLEN(XLEN)) regs (
         .clk(clk),
         .read_en_a(d_issue && !rst),
@@ -1088,7 +1077,8 @@ module riscc_cached_pipe #(
                 x_imm_alu_q <= d_imm_alu;
                 x_multiply_q <= d_multiply;
                 x_bitop_q <= d_shift | d_funnel;
-                x_shift_nonzero_q <= d_shift & (|d_bbb);
+                x_shift_offset_q <= (d_shift ? d_bbb : 3'b000) ^
+                    {3{d_f5[1] | (d_f5[4] & ~d_bbb[0])}};
                 x_shift_left_q <= d_f5[1] | (d_f5[4] & ~d_bbb[0]);
                 // Predecode the address/PC controls before the ALU input muxes.
                 x_imm_sign_q <= (d_branch || d_ldpc) ? d_instr[0] :
@@ -1105,7 +1095,7 @@ module riscc_cached_pipe #(
                 x_jall_q <= d_jall;
                 x_early_redirect_q <= d_redirected_q || d_early_redirect;
                 x_late_branch_q <= d_flag_wait;
-                x_move_q <= d_move;
+                x_logic_table_q <= d_logic_table;
                 x_ie_write_q <= d_ie_write;
                 x_run_short_imm_q <= d_imm_alu & ~d_aaa[2] & ~d_aaa[1];
                 x_alu_kind_q <= {
@@ -1116,18 +1106,13 @@ module riscc_cached_pipe #(
                 };
             end
 
-            // Issue replaces a completed slot; unfinished shifts and multiplies
+            // Issue replaces a completed slot; unfinished multiplies
             // keep it valid. IRQ entry cancels the current instruction. Keep
             // this independent of the multi-cycle state-selection priority.
             if (take_irq || x_slot_available)
                 x_valid_q <= d_issue;
             if (frontend_flush) begin
                 state_q <= ST_RUN;
-            end else if (x_shift_start) begin
-                state_q <= ST_SHIFT;
-`ifdef RISCC_FAST_SOFT_MUL
-                side_count_q <= {{(COUNT_BITS-3){1'b0}}, x_bbb};
-`endif
             end else if (x_mul_start) begin
 `ifdef RISCC_FAST_SOFT_MUL
                 state_q <= ST_MUL;
@@ -1136,20 +1121,12 @@ module riscc_cached_pipe #(
 `else
                 state_q <= ST_MUL_CALC;
             end else if (state_q == ST_MUL_CALC) begin
-                state_q <= ST_MUL_PIPE;
-            end else if (state_q == ST_MUL_PIPE) begin
                 state_q <= ST_MUL;
 `endif
 `ifdef RISCC_FAST_SOFT_MUL
             end else if (in_mul & ~mul_finish) begin
                 side_data_q <= mul_step;
                 side_count_q <= side_count_q - 1'b1;
-`endif
-            end else if (in_shift & ~shift_finish) begin
-`ifdef RISCC_FAST_SOFT_MUL
-                side_count_q <= side_count_q - 1'b1;
-`else
-                x_instr_q[2:0] <= side_count_q - 1'b1;
 `endif
             end else if (x_finish | ~x_valid_q) begin
                 state_q <= ST_RUN;

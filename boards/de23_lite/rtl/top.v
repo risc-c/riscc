@@ -24,8 +24,7 @@ module top (
     wire video_de;
     // 200 MHz CPU, 125 MHz SDRAM, 720p60.
     agilex3_demo_system #(
-        .CPU_DIV(10), .VIDEO_PHASE_PS(2449), .VIDEO_PHASE_STEPS(32),
-        .VIDEO_SCALE(4)
+        .CPU_DIV(10), .VIDEO_PHASE_PS(2449), .VIDEO_PHASE_STEPS(32)
     ) system (
         .CLOCK0_50(CLOCK0_50), .CLOCK1_50(CLOCK1_50), .KEY(KEY),
         .FPGA_UART_TX(UART_TX), .FPGA_UART_RX(UART_RX), .LED(led_raw),

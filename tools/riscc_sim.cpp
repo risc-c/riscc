@@ -293,7 +293,7 @@ struct Opts
 FramebufferLayout framebuffer_layout(const Opts &opts)
 {
     if (opts.board_rc32)
-        return {0x08000000u, 320, 180, true};
+        return {0x08000000u, 640, 360, true};
     if (opts.fb_icepi)
         return {0x4000u, 320, 180, false};
     if (opts.fast)
@@ -739,7 +739,7 @@ struct Sim
                 {
                     if (!opts.has_full())
                         throw std::runtime_error("MUL without the full profile");
-                    res = static_cast<uint16_t>(a * b);
+                    res = static_cast<uint16_t>(static_cast<uint32_t>(a) * b);
                 }
                 r[rd] = res;
                 instr_cycles = (func == 0x07) ? cycle.mul :

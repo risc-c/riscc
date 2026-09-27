@@ -3,9 +3,9 @@
 `default_nettype none
 
 // Agilex 3 IOPLL: the board's 50 MHz HDMI oscillator to the approximately
-// 148.5 MHz (1080p) or 74.25 MHz (720p) parallel video clock.
+// 74.25 MHz (720p) parallel video clock.
 module agilex3_video_pll #(
-    parameter integer PIXEL_DIV = 11, // 11: 1080p60, 22: 720p60
+    parameter integer PIXEL_DIV = 22,
     parameter integer FORWARD_PHASE_PS = 0,
     parameter integer FORWARD_PHASE_STEPS = 0
 ) (

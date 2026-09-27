@@ -145,9 +145,9 @@ def write_project(directory: Path, name: str, profile: str, root: Path,
         f'set_global_assignment -name OPTIMIZATION_MODE "{optimization}"',
         'set_global_assignment -name LAST_QUARTUS_VERSION "26.1.0 Pro Edition"',
     ]
-    if name.startswith("cached"):
-        # Cached shares the synchronous RF helper defined with Fast.
-        qsf.append(f"set_global_assignment -name VERILOG_FILE {root / 'rtl/riscc_fast.v'}")
+    if name.startswith(("fast", "cached")):
+        # Both pipelined cores use the shared synchronous register file.
+        qsf.append(f"set_global_assignment -name VERILOG_FILE {root / 'rtl/riscc_pipeline_shared.v'}")
     qsf.extend(f"set_global_assignment -name VERILOG_MACRO {macro}"
                for macro in macros)
     (directory / f"{name}.qsf").write_text("\n".join(qsf) + "\n")

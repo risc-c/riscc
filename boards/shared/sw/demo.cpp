@@ -1,4 +1,4 @@
-// Animated Julia set and scrolling board name for the 320x180 demo display.
+// Animated Julia set and scrolling board name for the board demo display.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -27,7 +27,7 @@ constexpr uint32_t kJuliaMirrorSumY =
     kJuliaFirstRow + kJuliaEndRow - 1u;
 constexpr unsigned kFractionBits = 14;
 constexpr int32_t kFixedOne = 1 << kFractionBits;
-constexpr int32_t kViewStep = 192;
+constexpr int32_t kViewStep = 192 * 320 / RISCC_FRAMEBUFFER_WIDTH;
 // Independent prime periods, measured in completed Julia frames.
 constexpr uint32_t kPathPeriod = 2003u;
 constexpr uint32_t kRotationPeriod = 3001u;
@@ -199,6 +199,10 @@ uint32_t next_julia_row;
 // becomes the first row for the next strip.
 uint8_t tile_iterations[kJuliaTileSize][RISCC_FRAMEBUFFER_WIDTH];
 
+// Unrounded transformed coordinates for each row in the active strip.
+Point strip_origin[kJuliaTileSize];
+Point pixel_step;
+
 // Julia arithmetic
 
 // Keep 14 fractional bits so every product fits a native signed 32-bit MUL.
@@ -225,14 +229,12 @@ bool julia_step(int32_t &x, int32_t &y, int32_t cx, int32_t cy)
     return false;
 }
 
-uint32_t escape_time(uint32_t x, uint32_t y)
+uint32_t escape_time(uint32_t x, uint32_t row)
 {
-    int32_t zx = (static_cast<int32_t>(x) * 2 - kJuliaCenterX2) *
-        (kViewStep / 2);
-    int32_t zy = (static_cast<int32_t>(y) - kJuliaCenterY) * kViewStep;
-    const int32_t rotated_x = (zx * view_cos - zy * view_sin) >> kFractionBits;
-    zy = (zx * view_sin + zy * view_cos) >> kFractionBits;
-    zx = rotated_x;
+    int32_t zx = (strip_origin[row].x +
+        static_cast<int32_t>(x) * pixel_step.x) >> kFractionBits;
+    int32_t zy = (strip_origin[row].y +
+        static_cast<int32_t>(x) * pixel_step.y) >> kFractionBits;
     uint32_t iteration = 0;
 
     while (iteration < kMaxIterations)
@@ -248,7 +250,8 @@ uint32_t escape_time(uint32_t x, uint32_t y)
     return iteration;
 }
 
-uint8_t escape_colors[kMaxIterations];
+// Replicate each colour into all four lanes so packing needs masks, not shifts.
+uint32_t escape_colors[kMaxIterations + 1u];
 
 void initialize_escape_colors()
 {
@@ -256,7 +259,7 @@ void initialize_escape_colors()
     {
         if (iteration <= 4u)
         {
-            escape_colors[iteration] = static_cast<uint8_t>(iteration);
+            escape_colors[iteration] = iteration * 0x01010101u;
             continue;
         }
 
@@ -267,21 +270,9 @@ void initialize_escape_colors()
         const uint32_t numerator = 248u * d * (249u + 4u * d);
         const uint32_t color = 4u + (numerator + denominator / 2u) / denominator;
         // The curve ends at 252; only max-iteration interiors use full white.
-        escape_colors[iteration] = static_cast<uint8_t>(color);
+        escape_colors[iteration] = color * 0x01010101u;
     }
-}
-
-uint8_t julia_color(uint32_t iteration, uint32_t x)
-{
-    if (x == 0u || x == RISCC_FRAMEBUFFER_WIDTH - 1u)
-    {
-        return 0xffu;
-    }
-    if (iteration == kMaxIterations)
-    {
-        return 253u;
-    }
-    return escape_colors[iteration];
+    escape_colors[kMaxIterations] = 0xfdfdfdfdu;
 }
 
 // Frame and ticker
@@ -302,22 +293,28 @@ void draw_border()
     }
 }
 
-// Three repeated pixels allow each four-byte load group to cross the wrap.
-uint8_t ticker_pixels[kJuliaFirstRow - 1u][kTickerWidth + 3u];
+// Prepack every pixel alignment so an IRQ copies each output word with one load.
+uint32_t ticker_pixels[kJuliaFirstRow - 1u][kTickerWidth];
 
 void initialize_ticker()
 {
     for (uint32_t y = 1; y < kJuliaFirstRow; ++y)
     {
-        for (uint32_t x = 0; x < kTickerWidth + 3u; ++x)
+        for (uint32_t x = 0; x < kTickerWidth; ++x)
         {
-            const uint32_t position = x % kTickerWidth;
-            const uint32_t column = position % kGlyphStride;
-            const uint32_t glyph = position / kGlyphStride;
-            const bool set = y >= kGlyphTop && y < kGlyphBottom &&
-                column < kGlyphWidth &&
-                (kGlyphs[kTickerText[glyph]][y - kGlyphTop] & kBitMasks[column]);
-            ticker_pixels[y - 1u][x] = set ? 0xffu : 0u;
+            uint32_t packed = 0;
+            for (uint32_t lane = 0; lane < kPixelsPerWord; ++lane)
+            {
+                const uint32_t position = (x + lane) % kTickerWidth;
+                const uint32_t column = position % kGlyphStride;
+                const uint32_t glyph = position / kGlyphStride;
+                const bool set = y >= kGlyphTop && y < kGlyphBottom &&
+                    column < kGlyphWidth &&
+                    (kGlyphs[kTickerText[glyph]][y - kGlyphTop] & kBitMasks[column]);
+                if (set)
+                    packed |= 0xffu << (lane * 8u);
+            }
+            ticker_pixels[y - 1u][x] = packed;
         }
     }
 }
@@ -330,15 +327,12 @@ void draw_ticker(bool initialize = false)
     for (uint32_t y = first; y < end; ++y)
     {
         uint32_t position = ticker.offset;
-        const uint8_t *const pixels = ticker_pixels[y - 1u];
+        const uint32_t *const pixels = ticker_pixels[y - 1u];
         volatile uint32_t *const row = framebuffer + y * kWordsPerRow;
 
         for (uint32_t word = 0; word < kWordsPerRow; ++word)
         {
-            uint32_t packed = static_cast<uint32_t>(pixels[position]) |
-                (static_cast<uint32_t>(pixels[position + 1u]) << 8) |
-                (static_cast<uint32_t>(pixels[position + 2u]) << 16) |
-                (static_cast<uint32_t>(pixels[position + 3u]) << 24);
+            uint32_t packed = pixels[position];
             position += kPixelsPerWord;
             if (position >= kTickerWidth)
                 position -= kTickerWidth;
@@ -381,6 +375,8 @@ void update_julia_motion()
         ((2949 * animation_sine(zoom_phase, kZoomPeriod)) >> kFractionBits);
     view_cos = (scale * animation_sine(rotation_phase, kRotationPeriod, 1u)) >> kFractionBits;
     view_sin = (scale * animation_sine(rotation_phase, kRotationPeriod)) >> kFractionBits;
+    pixel_step.x = (2 * (kViewStep / 2)) * view_cos;
+    pixel_step.y = (2 * (kViewStep / 2)) * view_sin;
 }
 
 void initialize_julia_motion()
@@ -413,54 +409,47 @@ void advance_julia_parameter()
 
 // Julia rendering
 
-uint32_t pack_pixels(uint8_t p0, uint8_t p1, uint8_t p2, uint8_t p3,
-                     uint32_t x)
-{
-    return static_cast<uint32_t>(julia_color(p0, x)) |
-           (static_cast<uint32_t>(julia_color(p1, x + 1u)) << 8) |
-           (static_cast<uint32_t>(julia_color(p2, x + 2u)) << 16) |
-           (static_cast<uint32_t>(julia_color(p3, x + 3u)) << 24);
-}
+// Stage the mirrored row so both framebuffer writes remain sequential.
+uint32_t mirrored_words[kWordsPerRow];
 
 void write_cached_rows(uint32_t top_y)
 {
-    for (uint32_t cache_row = 0; cache_row < kJuliaTileSize; ++cache_row)
+    // Later strips share their first row with the already displayed strip.
+    const uint32_t first = top_y == kJuliaFirstRow ? 0u : 1u;
+    for (uint32_t cache_row = first; cache_row < kJuliaTileSize; ++cache_row)
     {
         const uint32_t y = top_y + cache_row;
         const uint32_t mirror_y = kJuliaMirrorSumY - y;
-        volatile uint32_t *const output =
-            framebuffer + y * kWordsPerRow;
-
-        for (uint32_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; x += 4u)
+        volatile uint32_t *const output = framebuffer + y * kWordsPerRow;
+        const uint8_t *const samples = tile_iterations[cache_row];
+        for (uint32_t word = 0; word < kWordsPerRow; ++word)
         {
-            output[x / 4u] = pack_pixels(
-                tile_iterations[cache_row][x],
-                tile_iterations[cache_row][x + 1u],
-                tile_iterations[cache_row][x + 2u],
-                tile_iterations[cache_row][x + 3u], x);
+            const uint32_t x = word * kPixelsPerWord;
+            uint32_t c0 = escape_colors[samples[x]];
+            const uint32_t c1 = escape_colors[samples[x + 1u]];
+            const uint32_t c2 = escape_colors[samples[x + 2u]];
+            uint32_t c3 = escape_colors[samples[x + 3u]];
+            if (word == 0u)
+                c0 = 0xffffffffu;
+            if (word == kWordsPerRow - 1u)
+                c3 = 0xffffffffu;
+            output[word] = (c0 & 0x000000ffu) | (c1 & 0x0000ff00u) |
+                (c2 & 0x00ff0000u) | (c3 & 0xff000000u);
+            mirrored_words[kWordsPerRow - 1u - word] =
+                (c3 & 0x000000ffu) | (c2 & 0x0000ff00u) |
+                (c1 & 0x00ff0000u) | (c0 & 0xff000000u);
         }
-
         if (mirror_y != y)
         {
             volatile uint32_t *const output_mirror =
                 framebuffer + mirror_y * kWordsPerRow;
-
-            for (uint32_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; x += 4u)
-            {
-                const uint32_t mirror_x =
-                    RISCC_FRAMEBUFFER_WIDTH - x - 4u;
-
-                output_mirror[x / 4u] = pack_pixels(
-                    tile_iterations[cache_row][mirror_x + 3u],
-                    tile_iterations[cache_row][mirror_x + 2u],
-                    tile_iterations[cache_row][mirror_x + 1u],
-                    tile_iterations[cache_row][mirror_x], x);
-            }
+            for (uint32_t word = 0; word < kWordsPerRow; ++word)
+                output_mirror[word] = mirrored_words[word];
         }
     }
 }
 
-void sample_tile(uint32_t x, uint32_t y, uint32_t width)
+void sample_tile(uint32_t x, uint32_t width)
 {
     const uint32_t right = x + width - 1u;
 
@@ -469,14 +458,14 @@ void sample_tile(uint32_t x, uint32_t y, uint32_t width)
         for (uint32_t row = 1; row < kJuliaTileSize; ++row)
         {
             tile_iterations[row][0] = static_cast<uint8_t>(
-                escape_time(0u, y + row));
+                escape_time(0u, row));
         }
     }
     const uint8_t top_left = tile_iterations[0][x];
     const uint8_t top_right = tile_iterations[0][right];
     const uint8_t bottom_left = tile_iterations[kJuliaTileSize - 1u][x];
     const uint8_t bottom_right = static_cast<uint8_t>(
-        escape_time(right, y + kJuliaTileSize - 1u));
+        escape_time(right, kJuliaTileSize - 1u));
 
     tile_iterations[kJuliaTileSize - 1u][right] = bottom_right;
     const bool uniform = top_left == top_right && top_left == bottom_left &&
@@ -500,25 +489,36 @@ void sample_tile(uint32_t x, uint32_t y, uint32_t width)
             for (uint32_t column = 1; column < width; ++column)
             {
                 tile_iterations[row][x + column] = static_cast<uint8_t>(
-                    escape_time(x + column, y + row));
+                    escape_time(x + column, row));
             }
         }
         for (uint32_t column = 1; column + 1u < width; ++column)
         {
             tile_iterations[kJuliaTileSize - 1u][x + column] =
                 static_cast<uint8_t>(escape_time(
-                    x + column, y + kJuliaTileSize - 1u));
+                    x + column, kJuliaTileSize - 1u));
         }
     }
 }
 
 void draw_julia_strip(uint32_t y)
 {
+    // Keep full product precision here; round only when sampling a pixel.
+    const int32_t zx = -kJuliaCenterX2 * (kViewStep / 2);
+    const int32_t zy = (static_cast<int32_t>(y) - kJuliaCenterY) * kViewStep;
+    strip_origin[0].x = zx * view_cos - zy * view_sin;
+    strip_origin[0].y = zx * view_sin + zy * view_cos;
+    for (uint32_t row = 1; row < kJuliaTileSize; ++row)
+    {
+        strip_origin[row].x = strip_origin[row - 1u].x - kViewStep * view_sin;
+        strip_origin[row].y = strip_origin[row - 1u].y + kViewStep * view_cos;
+    }
+
     if (y == kJuliaFirstRow)
     {
         for (uint32_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH; ++x)
         {
-            tile_iterations[0][x] = static_cast<uint8_t>(escape_time(x, y));
+            tile_iterations[0][x] = static_cast<uint8_t>(escape_time(x, 0u));
         }
     }
     for (uint32_t x = 0; x < RISCC_FRAMEBUFFER_WIDTH;
@@ -527,7 +527,7 @@ void draw_julia_strip(uint32_t y)
         const uint32_t width = RISCC_FRAMEBUFFER_WIDTH - x < kJuliaTileSize ?
             RISCC_FRAMEBUFFER_WIDTH - x : kJuliaTileSize;
 
-        sample_tile(x, y, width);
+        sample_tile(x, width);
     }
     write_cached_rows(y);
     if (y + kJuliaTileStep < kJuliaCenterY)

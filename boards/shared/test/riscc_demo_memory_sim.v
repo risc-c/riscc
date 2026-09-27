@@ -1,7 +1,9 @@
 // Fast backing RAM for demo smoke tests. Pin-level SDRAM is tested separately.
 `timescale 1ns/1ps
 `default_nettype none
-module riscc_demo_memory_sim (
+module riscc_demo_memory_sim #(
+    parameter integer ADDRESS_BITS = 14
+) (
     input wire clk, rst,
     input wire [23:0] cpu_addr,
     input wire [31:0] cpu_wdata,
@@ -21,9 +23,9 @@ module riscc_demo_memory_sim (
     reg ack;
     reg [31:0] rdata;
     // Enough for the complete framebuffer; reject out-of-range smoke accesses.
-    reg [31:0] words [0:16383];
+    reg [31:0] words [0:(1 << ADDRESS_BITS)-1];
     integer i;
-    initial for (i = 0; i < 16384; i = i+1) words[i] = 0;
+    initial for (i = 0; i < (1 << ADDRESS_BITS); i = i+1) words[i] = 0;
     riscc_sdram_fabric fabric (
         .cpu_clk(clk), .cpu_rst(rst), .memory_clk(clk), .memory_rst(rst),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_wdata), .cpu_wmask(cpu_wmask),
@@ -38,13 +40,13 @@ module riscc_demo_memory_sim (
     always @(posedge clk) begin
         ack <= !rst && cyc && stb;
         if (!rst && cyc && stb) begin
-            if (addr >= 16384) $fatal(1, "demo backing RAM address out of range: %h", addr);
-            rdata <= words[addr[13:0]];
+            if (addr >= (1 << ADDRESS_BITS)) $fatal(1, "demo backing RAM address out of range: %h", addr);
+            rdata <= words[addr[ADDRESS_BITS-1:0]];
             if (we) begin
-                if (wmask[0]) words[addr[13:0]][7:0] <= wdata[7:0];
-                if (wmask[1]) words[addr[13:0]][15:8] <= wdata[15:8];
-                if (wmask[2]) words[addr[13:0]][23:16] <= wdata[23:16];
-                if (wmask[3]) words[addr[13:0]][31:24] <= wdata[31:24];
+                if (wmask[0]) words[addr[ADDRESS_BITS-1:0]][7:0] <= wdata[7:0];
+                if (wmask[1]) words[addr[ADDRESS_BITS-1:0]][15:8] <= wdata[15:8];
+                if (wmask[2]) words[addr[ADDRESS_BITS-1:0]][23:16] <= wdata[23:16];
+                if (wmask[3]) words[addr[ADDRESS_BITS-1:0]][31:24] <= wdata[31:24];
             end
         end
     end

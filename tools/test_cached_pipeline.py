@@ -8,10 +8,10 @@ split instruction/data memory contract (the data side is one native-word
 request). CASE=3 checks JALL's literal, link, and target timing;
 CASE=4 checks dependent r0 zero/negative flags, taken/fall-through branches,
 and one-bubble redirects. CASE=8 checks RC32 native loads whose destination
-aliases the base or index register. CASE=10 checks MUL destination aliases,
-back-to-back dependent MUL, and dependent ALU/store consumers,
-including an IRQ before the indexed load. CASE=9 withdraws IRQ while an older
-fetch delays interrupt entry. CASE=11 raises IRQ during soft MUL and checks
+aliases the base or index register, including an IRQ before the indexed load.
+CASE=9 withdraws IRQ while an older fetch delays interrupt entry.
+CASE=10 checks MUL destination aliases, back-to-back dependent MUL, and
+dependent ALU/store consumers. CASE=11 raises IRQ during soft MUL and checks
 deferred entry plus the dependent result. CASE=16 checks ALU- and load-dependent
 JALR/RET link targets and wrong-path stores. CASE=17 checks an RC32 LDPC
 producer and its immediate dependent ALU consumer. CASE=18 schedules useful
@@ -79,7 +79,7 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         f"-GREGISTER_FETCH={int(register_fetch)}",
         "--Mdir", str(mdir), *defines,
         str(rtl_source),
-        str(root / "rtl/riscc_fast.v"),
+        str(root / "rtl/riscc_pipeline_shared.v"),
         str(root / "test/riscc_cached_pipeline_tb.v"),
     ]
     built = run(compile_command, cwd=root, timeout=120)

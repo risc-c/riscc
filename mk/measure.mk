@@ -84,7 +84,7 @@ CACHED_FMAX_OPTIONS_cached_soft := -abc2 -dff
 CACHED_FMAX_OPTIONS_cached_dsp := -abc2
 CACHED_FMAX_OPTIONS_cached32_soft :=
 CACHED_FMAX_OPTIONS_cached32_dsp := -abc2 -dff
-CACHED_MEASURE_RTL := $(abspath rtl/riscc_cached.v rtl/riscc_fast.v)
+CACHED_MEASURE_RTL := $(abspath rtl/riscc_cached.v rtl/riscc_pipeline_shared.v)
 
 # Agilex tables consume only generated Quartus results. Published snapshots
 # belong in the hardware documentation, not in build logic.
@@ -180,11 +180,11 @@ endef
 
 $(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
   $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-lutram/$(pipeline)/$(multiplier).resources, \
-    -DRISCC_ECP5 $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    -DRISCC_ECP5 $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v rtl/riscc_pipeline_shared.v, \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_LUTRAM_OPTIONS_$(pipeline)_$(multiplier)),riscc_fast, \
     $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;))) \
   $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-block/$(pipeline)/$(multiplier).resources, \
-    -DRISCC_FAST_BLOCK_RF $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    -DRISCC_FAST_BLOCK_RF $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v rtl/riscc_pipeline_shared.v, \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_BLOCK_OPTIONS_$(pipeline)_$(multiplier)),riscc_fast, \
     $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 
@@ -321,7 +321,7 @@ $(foreach extension,$(EXTENSIONS), \
 $(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/$(pipeline)/$(multiplier).mhz, \
     -DRISCC_FMAX_$(if $(filter fast32,$(pipeline)),FAST32,FAST) -DRISCC_FAST_BLOCK_RF \
-    $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v, \
+    $(FAST_DEFINES_$(multiplier)) rtl/riscc_fast.v rtl/riscc_pipeline_shared.v, \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_$(pipeline)_$(multiplier)),40,, \
     $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 

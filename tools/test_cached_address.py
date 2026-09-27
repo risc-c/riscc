@@ -81,7 +81,7 @@ def main() -> int:
                    f"-GXLEN={xlen}", f"-GRESET_PC=0x{reset_pc:x}",
                    f"-GDCACHE_UNCACHED_BIT={uncached_bit}",
                    "--Mdir", str(mdir), str(source),
-                   str(root / "rtl/riscc_fast.v"), str(tb)]
+                   str(root / "rtl/riscc_pipeline_shared.v"), str(tb)]
         built = run(command, cwd=root, timeout=120)
         if built.returncode or not binary.exists():
             sys.stderr.write(f"address {name}: Verilator build failed\n{built.stdout}")

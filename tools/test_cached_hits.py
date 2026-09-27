@@ -43,7 +43,7 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         "--top-module", "riscc_cached_hits_tb", f"-GXLEN={xlen}",
         f"-GREGISTER_FETCH={int(register_fetch)}",
         "--Mdir", str(mdir), *defines,
-        str(root / "rtl/riscc_fast.v"),
+        str(root / "rtl/riscc_pipeline_shared.v"),
         str(root / "rtl/riscc_cached.v"),
         str(root / "test/riscc_cached_hits_tb.v"),
     ]

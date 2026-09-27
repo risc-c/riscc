@@ -53,7 +53,7 @@ def main() -> int:
         "-Wno-UNOPTFLAT", "-Wno-WIDTH", "-Wno-TIMESCALEMOD",
         "--top-module", "riscc_cached_sram_tb", "-GSRAM_ADDR_BITS=14",
         f'-GSRAM_HEX="{image}"', "--Mdir", str(mdir),
-        str(root / "rtl/riscc_fast.v"),
+        str(root / "rtl/riscc_pipeline_shared.v"),
         str(wrapper),
         str(root / "test/riscc_cached_sram_tb.v"),
     ]

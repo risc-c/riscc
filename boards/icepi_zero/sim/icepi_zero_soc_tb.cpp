@@ -1,61 +1,13 @@
 #include "Vicepi_zero_soc_sim.h"
+#include "../../shared/test/demo_checks.h"
 #include "verilated.h"
 
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 #include <vector>
 
-static constexpr int BAUD_DIV = 8;
-
-struct TxCapture
-{
-    enum State
-    {
-        IDLE,
-        DATA,
-        STOP
-    } state = IDLE;
-    int wait = 0;
-    int bit = 0;
-    uint8_t cur = 0;
-    std::string out;
-
-    void sample(int tx)
-    {
-        switch (state)
-        {
-        case IDLE:
-            if (!tx)
-        {
-                state = DATA;
-                wait = BAUD_DIV + BAUD_DIV / 2;
-                bit = 0;
-                cur = 0;
-        }
-            break;
-        case DATA:
-            if (--wait <= 0)
-        {
-                if (tx)
-                    cur |= uint8_t(1u << bit);
-                bit++;
-                wait = BAUD_DIV;
-                if (bit == 8)
-                    state = STOP;
-        }
-            break;
-        case STOP:
-            if (--wait <= 0)
-        {
-                out.push_back(char(cur));
-                state = IDLE;
-        }
-            break;
-        }
-    }
-};
+using namespace demo_test;
 
 struct RxDrive
 {
@@ -109,7 +61,7 @@ struct RxDrive
 
 // The 74.286 MHz pixel clock runs at 39/35 of the 66.667 MHz CPU.
 static unsigned pixel_phase = 0;
-static void tick(Vicepi_zero_soc_sim *top, TxCapture &txcap, uint64_t)
+static void tick(Vicepi_zero_soc_sim *top, TxCapture &txcap)
 {
     for (unsigned phase = 0; phase < 4; ++phase)
     {
@@ -126,74 +78,6 @@ static void tick(Vicepi_zero_soc_sim *top, TxCapture &txcap, uint64_t)
     txcap.sample(top->uart_tx);
 }
 
-struct FrameMonitor
-{
-    unsigned frame = 0;
-    unsigned edges = 0;
-    unsigned redraws = 0;
-    unsigned checked = 0;
-    unsigned irq_acks = 0;
-    unsigned cycle = 0;
-    unsigned redraw_start = 0;
-    unsigned max_redraw_cycles = 0;
-    bool drawing = false;
-    bool outside_blank = false;
-    bool last_blank = true;
-    bool last_irq = false;
-    bool irq_seen = false;
-    bool failed = false;
-
-    template<class Top> void sample(const Top *top)
-    {
-        ++cycle;
-        if (top->dbg_vblank && !last_blank)
-            ++edges;
-        last_blank = top->dbg_vblank;
-        if (top->dbg_frame_count != frame)
-        {
-            if (top->dbg_frame_count != frame + 1 || edges != frame + 1)
-                failed = true;
-            if (frame != 0)
-            {
-                if (redraws != 1 || drawing || !irq_seen || irq_acks != 1)
-                    failed = true;
-                ++checked;
-            }
-            frame = top->dbg_frame_count;
-            redraws = 0;
-            irq_acks = 0;
-            irq_seen = false;
-        }
-        irq_seen |= bool(top->dbg_timer_irq);
-        if (last_irq && !top->dbg_timer_irq)
-            ++irq_acks;
-        last_irq = top->dbg_timer_irq;
-        // Address 160 starts the seven glyph rows of an IRQ redraw. Ignore
-        // startup border/ticker initialization before the first real frame.
-        if (frame != 0 && top->dbg_fb_we && top->dbg_fb_addr == 160)
-        {
-            drawing = true;
-            redraw_start = cycle;
-            if (++redraws > 1)
-                failed = true;
-        }
-        if (drawing && top->dbg_fb_we && top->dbg_fb_addr >= 160 &&
-            top->dbg_fb_addr < 720)
-        {
-            if (!top->dbg_vblank)
-                outside_blank = true;
-            if (top->dbg_fb_addr == 719)
-            {
-                const unsigned duration = cycle - redraw_start + 1;
-                if (duration > max_redraw_cycles)
-                    max_redraw_cycles = duration;
-                drawing = false;
-                failed |= outside_blank;
-            }
-        }
-    }
-};
-
 int main(int argc, char **argv)
 {
     Verilated::commandArgs(argc, argv);
@@ -207,9 +91,8 @@ int main(int argc, char **argv)
     top->rst = 1;
     top->uart_rx = 1;
 
-    uint64_t sim_cycle = 0;
     for (int i = 0; i < 40; i++)
-        tick(top, txcap, sim_cycle++);
+        tick(top, txcap);
     top->rst = 0;
 
     bool injecting = false;
@@ -222,7 +105,7 @@ int main(int argc, char **argv)
         if (!injecting && txcap.out.find("RISC-C on Icepi Zero") != std::string::npos)
             injecting = true;
         top->uart_rx = injecting ? rxdrv.value() : 1;
-        tick(top, txcap, sim_cycle++);
+        tick(top, txcap);
 
         // Julia rows start at framebuffer row 10. Ignore the first and last
         // packed word of each row because those contain the white border.
@@ -231,11 +114,14 @@ int main(int argc, char **argv)
             break;
         if (top->dbg_fb_we)
         {
-            if (top->dbg_fb_addr >= 800)
+            if (top->dbg_fb_addr >= FRAMEBUFFER_WORDS)
+                frames.failed = true;
+            if (top->dbg_fb_addr >= JULIA_FIRST_WORD &&
+                top->dbg_fb_addr < FRAMEBUFFER_WORDS)
             {
-                const unsigned column = unsigned(top->dbg_fb_addr) % 80;
+                const unsigned column = unsigned(top->dbg_fb_addr) % WORDS_PER_ROW;
 
-                if (column > 0 && column < 79)
+                if (column > 0 && column + 1 < WORDS_PER_ROW)
                 {
                     julia_writes++;
                     const uint32_t byte_mask =
@@ -249,6 +135,8 @@ int main(int argc, char **argv)
             }
         }
 
+        if (frames.failed)
+            break;
         if (txcap.out.find("RISC-C on Icepi Zero") != std::string::npos &&
             julia_writes >= 38 && julia_nonzero > 0 &&
             top->dbg_uart_rx_count >= 3 && frames.checked >= 3)

@@ -48,7 +48,7 @@ def main():
             soc_name = f'{board}_soc'
             soc_source = ROOT / f'boards/{board}/rtl/{board}_soc.v'
         sources = [source / 'cpu_memory_tb.v', soc_source,
-                   ROOT / 'rtl/riscc_cached.v', ROOT / 'rtl/riscc_fast.v', ROOT / 'test/riscc_sdram_model.v']
+                   ROOT / 'rtl/riscc_cached.v', ROOT / 'rtl/riscc_pipeline_shared.v', ROOT / 'test/riscc_sdram_model.v']
         sources += [ROOT / f'boards/shared/rtl/riscc_{name}.v' for name in
                     ('uart_mmio','timer_mmio','irq_ctrl','sdram','sdram_fabric','sdram_bridge')]
         rf_defines = ['-DRISCC_ECP5'] if board == 'icepi_zero' else ['-DRISCC_FAST_BLOCK_RF']

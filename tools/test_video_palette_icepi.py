@@ -46,7 +46,7 @@ def main() -> int:
     run_log = build_dir / "simulation.log"
     result = subprocess.run([args.vvp, str(vvp_file)], cwd=root, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            timeout=60)
+                            timeout=180)
     run_log.write_text(result.stdout)
     print(result.stdout, end="")
     if result.returncode or "PASS IcePi video palette scanout" not in result.stdout:

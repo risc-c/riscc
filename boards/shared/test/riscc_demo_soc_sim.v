@@ -5,8 +5,7 @@
 
 module riscc_demo_soc_sim #(
     parameter MEM_HEX = "build/atum_a3_nano/mem/demo.memh",
-    parameter integer UART_CLK_DIV = 8,
-    parameter integer VIDEO_SCALE = 6
+    parameter integer UART_CLK_DIV = 8
 ) (
     input  wire clk,
     input  wire pix_clk,
@@ -15,7 +14,7 @@ module riscc_demo_soc_sim #(
     output wire uart_tx,
     output wire [3:0] led,
     output wire dbg_fb_we,
-    output wire [13:0] dbg_fb_addr,
+    output wire [15:0] dbg_fb_addr,
     output wire [31:0] dbg_fb_wdata,
     output wire [3:0] dbg_fb_wmask,
     output wire [31:0] dbg_fb_writes,
@@ -33,7 +32,7 @@ module riscc_demo_soc_sim #(
     wire sdram_we, sdram_cyc, sdram_stb, sdram_stall, sdram_ack;
     wire video_cyc, video_stb, video_stall, video_ack;
     // One backing model serves both CPU and video memory ports.
-    riscc_demo_memory_sim backing (
+    riscc_demo_memory_sim #(.ADDRESS_BITS(16)) backing (
         .clk(clk),
         .rst(rst),
         .cpu_addr(sdram_addr),
@@ -93,7 +92,7 @@ module riscc_demo_soc_sim #(
         .dbg_uart_tx_count(dbg_uart_tx_count),
         .dbg_uart_rx_count(dbg_uart_rx_count)
     );
-    riscc_video_parallel #(.SCALE(VIDEO_SCALE)) video (
+    riscc_video_parallel video (
         .vblank(video_vblank),
         .cpu_clk(clk),
         .palette_we(palette_we),

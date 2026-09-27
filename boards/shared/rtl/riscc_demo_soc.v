@@ -17,7 +17,7 @@ module riscc_demo_soc #(
     output wire        uart_tx,
     output wire [3:0]  led,
     output wire        fb_we,
-    output wire [13:0] fb_addr,
+    output wire [15:0] fb_addr,
     output wire [3:0]  fb_wmask,
     output wire [31:0] fb_wdata,
     output wire palette_we,
@@ -127,9 +127,9 @@ module riscc_demo_soc #(
     end
 
     // Observe framebuffer stores for simulation; video reads SDRAM independently.
-    wire fb_store = cpu_write_commit && sdram_sel && (sdram_addr < 24'd14400);
+    wire fb_store = cpu_write_commit && sdram_sel && (sdram_addr < 24'd57600);
     assign fb_we = fb_store;
-    assign fb_addr = mem_addr[13:0];
+    assign fb_addr = mem_addr[15:0];
     assign fb_wmask = mem_wmask;
     assign fb_wdata = mem_wdata;
 

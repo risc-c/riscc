@@ -11,8 +11,7 @@ module agilex3_demo_system #(
     parameter integer MEMORY_IO_CAPTURE = 1,
     parameter integer MEMORY_READ_DELAY = 1,
     parameter integer MEMORY_PHASE_PS = 6938,
-    parameter integer MEMORY_PHASE_STEPS = 111,
-    parameter integer VIDEO_SCALE = 6
+    parameter integer MEMORY_PHASE_STEPS = 111
 ) (
     output wire sd_clk, sd_cke, sd_cs_n, sd_ras_n, sd_cas_n, sd_we_n,
     output wire [12:0] sd_addr,
@@ -43,7 +42,7 @@ module agilex3_demo_system #(
     wire sys_clk;
     wire pix_pll_locked;
     agilex3_video_pll #(
-        .PIXEL_DIV(VIDEO_SCALE == 4 ? 22 : 11),
+        .PIXEL_DIV(22),
         .FORWARD_PHASE_PS(VIDEO_PHASE_PS),
         .FORWARD_PHASE_STEPS(VIDEO_PHASE_STEPS)
     ) hdmi_pll (
@@ -155,7 +154,7 @@ module agilex3_demo_system #(
         .dbg_uart_rx_count()
     );
 
-    riscc_video_parallel #(.SCALE(VIDEO_SCALE)) video (
+    riscc_video_parallel video (
         .cpu_clk(sys_clk),
         .palette_we(palette_we),
         .palette_addr(palette_addr),

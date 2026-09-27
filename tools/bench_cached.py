@@ -39,7 +39,7 @@ def main():
                     if memory == 'ecp5-block':
                         command.append('-DRISCC_FAST_BLOCK_RF')
                     command += [str(root / source) for source in (
-                        'rtl/riscc_fast.v', 'rtl/riscc_cached.v',
+                        'rtl/riscc_pipeline_shared.v', 'rtl/riscc_cached.v',
                         'test/riscc_cached_bench_tb.v')]
                     with (out / 'build.log').open('w') as log:
                         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)

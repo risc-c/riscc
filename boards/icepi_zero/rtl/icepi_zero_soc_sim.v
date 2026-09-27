@@ -15,7 +15,7 @@ module icepi_zero_soc_sim #(
     output wire       uart_tx,
     output wire [4:0] led,
     output wire       dbg_fb_we,
-    output wire [13:0] dbg_fb_addr,
+    output wire [15:0] dbg_fb_addr,
     output wire [31:0] dbg_fb_wdata,
     output wire [3:0] dbg_fb_wmask,
     output wire [31:0] dbg_fb_writes,
@@ -26,7 +26,7 @@ module icepi_zero_soc_sim #(
     output wire dbg_timer_irq
 );
     wire        fb_we;
-    wire [13:0] fb_addr;
+    wire [15:0] fb_addr;
     wire [3:0]  fb_wmask;
     wire [31:0] fb_wdata;
     wire [3:0]  tmds;
@@ -41,7 +41,7 @@ module icepi_zero_soc_sim #(
     wire sdram_we, sdram_cyc, sdram_stb, sdram_stall, sdram_ack;
     wire video_cyc, video_stb, video_stall, video_ack;
     // One backing model serves both CPU and video memory ports.
-    riscc_demo_memory_sim backing (
+    riscc_demo_memory_sim #(.ADDRESS_BITS(16)) backing (
         .clk(clk),
         .rst(rst),
         .cpu_addr(sdram_addr),

@@ -66,7 +66,7 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
         "-Wno-WIDTH", "-Wno-INITIALDLY",
         "--top-module", "riscc_fast_pipeline_tb", f"-GXLEN={xlen}",
         "--Mdir", str(mdir), *defines,
-        str(rtl_source),
+        str(rtl_source), str(root / "rtl/riscc_pipeline_shared.v"),
         str(root / "test/riscc_fast_pipeline_tb.v"),
     ]
     built = run(compile_command, cwd=root, timeout=120)

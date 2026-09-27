@@ -21,6 +21,8 @@ def main():
         else:
             soc_name = f"{board}_soc"
             soc_source = ROOT / f"boards/{board}/rtl/{board}_soc.v"
+        fb_words = 57600
+        fb_addr_bits = 16
         sources = [ROOT / "boards/shared/test/rc32_map_tb.v",
                    soc_source]
         sources += [ROOT / f"boards/shared/rtl/riscc_{name}.v"
@@ -29,6 +31,8 @@ def main():
                    "--top-module", "board_map_tb", "--Mdir", str(output),
                    f"-DSOC_NAME={soc_name}",
                    f"-DLED_BITS={led_bits}",
+                   f"-DFB_WORDS={fb_words}",
+                   f"-DFB_ADDR_BITS={fb_addr_bits}",
                    "-DSDRAM_END=32\'h" + ("14000000" if board == "atum_a3_nano" else "12000000"), *map(str, sources)]
         with (output / "build.log").open("w") as log:
             subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)

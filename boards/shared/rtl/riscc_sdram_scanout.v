@@ -1,7 +1,12 @@
 // Two source-line buffers shared by SDRAM fetch and scaled video scanout.
 `timescale 1ns/1ps
 `default_nettype none
-module riscc_sdram_scanout (
+module riscc_sdram_scanout #(
+    parameter integer WIDTH = 320,
+    parameter integer HEIGHT = 180,
+    parameter integer X_BITS = $clog2(WIDTH),
+    parameter integer Y_BITS = $clog2(HEIGHT)
+) (
     input wire memory_clk, memory_rst, memory_ready,
     output wire [23:0] memory_addr,
     output wire memory_cyc, memory_stb,
@@ -9,15 +14,27 @@ module riscc_sdram_scanout (
     input wire [31:0] memory_rdata,
     input wire pix_clk, rst,
     input wire visible, line_start,
-    input wire [8:0] source_x,
-    input wire [7:0] source_y,
+    input wire [X_BITS-1:0] source_x,
+    input wire [Y_BITS-1:0] source_y,
     output wire [7:0] pixel,
     output reg pixel_valid,
     output reg underrun
 );
+    // Supported widths are 320 * 2**n pixels, with an even height.
+    // Each row contains a whole number of 16-word SDRAM bursts.
+    localparam integer WORDS = WIDTH / 4;
+    localparam integer WORD_BITS = $clog2(WORDS);
+    localparam integer BLOCK_BITS = $clog2(WORDS / 16);
+    localparam integer ADDRESS_BITS = $clog2(WORDS * HEIGHT);
+
+    localparam integer LAST_ROW = HEIGHT - 1;
+    localparam integer LAST_WORD = WORDS - 1;
+    localparam integer LAST_BLOCK = WORDS / 16 - 1;
+    localparam integer STRIDE_SHIFT = $clog2(WIDTH / 20);
+
     // Each mailbox holds its row stable until the memory domain acknowledges.
     reg [1:0] request_q, requested_q;
-    reg [7:0] row0_q, row1_q;
+    reg [Y_BITS-1:0] row0_q, row1_q;
     reg started_q, line_valid_q;
     (* async_reg = "true" *) reg [1:0] done_meta_q, done_sync_q;
     reg [1:0] done_q;
@@ -26,7 +43,7 @@ module riscc_sdram_scanout (
         (done_sync_q[bank] == request_q[bank]) &&
         ((bank ? row1_q : row0_q) == source_y);
     wire valid_now = line_start ? available : line_valid_q;
-    wire [7:0] next_row = source_y == 8'd179 ? 8'd0 : source_y + 1'b1;
+    wire [Y_BITS-1:0] next_row = source_y == LAST_ROW[Y_BITS-1:0] ? {Y_BITS{1'b0}} : source_y + 1'b1;
     wire next_bank = next_row[0];
     reg [31:0] read_word_q;
     reg [1:0] lane_q;
@@ -35,10 +52,10 @@ module riscc_sdram_scanout (
 `else
     (* ramstyle = "M20K, no_rw_check" *)
 `endif
-    reg [31:0] lines [0:255];
+    reg [31:0] lines [0:(2 << WORD_BITS)-1];
 
     always @(posedge pix_clk) begin
-        read_word_q <= lines[{bank, source_x[8:2]}];
+        read_word_q <= lines[{bank, source_x[X_BITS-1:2]}];
         lane_q <= source_x[1:0];
         if (rst) begin
             request_q <= 0;
@@ -80,12 +97,14 @@ module riscc_sdram_scanout (
 
     (* async_reg = "true" *) reg [1:0] request_meta_q, request_sync_q;
     reg busy_q, issuing_q, fetch_bank_q, setup_q;
-    reg [7:0] fetch_row_q;
-    reg [6:0] word_q;
-    reg [2:0] block_q;
-    reg [13:0] address_q;
-    wire [7:0] fetch_row = (request_sync_q[0] != done_q[0]) ? row0_q : row1_q;
-    assign memory_addr = {10'd0, address_q};
+    reg [Y_BITS-1:0] fetch_row_q;
+    reg [WORD_BITS-1:0] word_q;
+    reg [BLOCK_BITS-1:0] block_q;
+    reg [ADDRESS_BITS-1:0] address_q;
+    wire [Y_BITS-1:0] fetch_row = (request_sync_q[0] != done_q[0]) ? row0_q : row1_q;
+    wire [ADDRESS_BITS-1:0] row_address =
+        {{(ADDRESS_BITS-Y_BITS){1'b0}}, fetch_row_q};
+    assign memory_addr = {{(24-ADDRESS_BITS){1'b0}}, address_q};
     assign memory_cyc = busy_q && !setup_q;
     assign memory_stb = issuing_q;
     always @(posedge memory_clk) begin
@@ -114,7 +133,7 @@ module riscc_sdram_scanout (
             end
             // Begin the fetch after selecting the requested mailbox row.
             if (setup_q) begin
-                address_q <= ({6'd0, fetch_row_q} << 6) + ({6'd0, fetch_row_q} << 4);
+                address_q <= (row_address << (STRIDE_SHIFT + 2)) + (row_address << STRIDE_SHIFT);
                 setup_q <= 0;
                 issuing_q <= 1;
             end
@@ -122,14 +141,14 @@ module riscc_sdram_scanout (
                 // The address already counts words within each 16-word block.
                 if (&address_q[3:0]) begin
                     block_q <= block_q + 1'b1;
-                    if (block_q == 3'd4)
+                    if (block_q == LAST_BLOCK[BLOCK_BITS-1:0])
                         issuing_q <= 0;
                 end
                 address_q <= address_q + 1'b1;
             end
             if (busy_q && memory_ack) begin
                 lines[{fetch_bank_q, word_q}] <= memory_rdata;
-                if (word_q == 7'd79) begin
+                if (word_q == LAST_WORD[WORD_BITS-1:0]) begin
                     done_q[fetch_bank_q] <= request_sync_q[fetch_bank_q];
                     busy_q <= 0;
                 end else begin

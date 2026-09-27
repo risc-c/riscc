@@ -33,13 +33,13 @@ module icepi_fb_dvi (
     wire vsync = v_count_q >= 10'd725 && v_count_q < 10'd730;
     wire [10:0] active_x = h_count_q;
     wire [9:0] active_y = v_count_q;
-    // Repeat each framebuffer pixel across a 4x4 square in the 720p raster.
-    wire [8:0] sx = active_x[10:2];
+    // Repeat each framebuffer pixel across a 2x2 square in the 720p raster.
+    wire [9:0] sx = active_x[10:1];
     wire [9:0] fb_y = active_y;
-    wire [7:0] sy = fb_y[9:2];
+    wire [8:0] sy = fb_y[9:1];
     wire [7:0] fb_index;
     wire fb_pixel_valid;
-    riscc_sdram_scanout scanout (
+    riscc_sdram_scanout #(.WIDTH(640), .HEIGHT(360)) scanout (
         .memory_clk(memory_clk),
         .memory_rst(memory_rst),
         .memory_ready(memory_ready),
@@ -52,7 +52,7 @@ module icepi_fb_dvi (
         .pix_clk(pix_clk),
         .rst(rst),
         .visible(active),
-        .line_start(active && active_x == 0 && fb_y[1:0] == 0),
+        .line_start(active && active_x == 0 && fb_y[0] == 0),
         .source_x(sx),
         .source_y(sy),
         .pixel(fb_index),

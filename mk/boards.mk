@@ -150,7 +150,7 @@ ICEPI_SYNTH_RTL := \
   $(ICEPI_SOC_RTL) \
   $(ICEPI_DVI_RTL) \
   rtl/riscc_cached.v \
-  rtl/riscc_fast.v
+  rtl/riscc_pipeline_shared.v
 DEMO_MEMORY_SIM_RTL := \
   boards/shared/rtl/riscc_sdram_bridge.v \
   boards/shared/rtl/riscc_sdram_fabric.v \
@@ -165,7 +165,7 @@ ICEPI_SIM_RTL := \
   $(ICEPI_DIR)/rtl/icepi_tmds_ddr.v \
   $(ICEPI_DIR)/rtl/icepi_tmds_encoder.v \
   rtl/riscc_cached.v \
-  rtl/riscc_fast.v
+  rtl/riscc_pipeline_shared.v
 
 $(ICEPI_MEMH): $(ICEPI_BIN) tools/bin_to_memh.py $(BOARD_RULES)
 	$(PYTHON) tools/bin_to_memh.py $< -o $@ --width 32 --depth 4096
@@ -185,7 +185,7 @@ icepi-zero-demo-iss-test: $(ICEPI_BIN) $(RISCC_SIM)
 	@echo "ISS UART expect PASS"
 
 $(ICEPI_RTLSIM): $(ICEPI_MEMH) $(ICEPI_SIM_RTL) \
-		$(ICEPI_DIR)/sim/icepi_zero_soc_tb.cpp $(BOARD_RULES)
+		$(ICEPI_DIR)/sim/icepi_zero_soc_tb.cpp boards/shared/test/demo_checks.h $(BOARD_RULES)
 	@mkdir -p $(@D)
 	+$(VERILATOR) -cc --exe --build $(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module icepi_zero_soc_sim --prefix Vicepi_zero_soc_sim \
@@ -251,12 +251,10 @@ $(ICEPI_VIDEO_TEST_BIT): $(ICEPI_VIDEO_TEST_CONFIG)
 icepi-zero-video-test-bit: $(ICEPI_VIDEO_TEST_BIT)
 
 # Board metadata; both boards use the same hardware/firmware build recipe.
-ATUM_VIDEO_SCALE := 6
 ATUM_CPU_MHZ := 200
 ATUM_NAME := Atum A3 Nano
 ATUM_DEFINES := -DRISCC_ATUM_A3
 ATUM_TRANSMITTER_RTL := boards/atum_a3_nano/rtl/atum_tfp410_init.v
-DE23_VIDEO_SCALE := 4
 DE23_CPU_MHZ := 200
 DE23_NAME := DE23-Lite
 DE23_DEFINES := -DRISCC_DE23_LITE

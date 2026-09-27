@@ -2,6 +2,13 @@
 `timescale 1ns/1ps
 `default_nettype none
 
+`ifndef FB_WORDS
+`define FB_WORDS 57600
+`endif
+`ifndef FB_ADDR_BITS
+`define FB_ADDR_BITS 16
+`endif
+
 // Backend bus driver replacing only the CPU/cache instance for this test.
 module riscc_cached #(
     parameter integer XLEN = 32,
@@ -38,7 +45,7 @@ module board_map_tb;
     reg [3:0] wmask = 0;
     reg we = 0, request = 0;
     wire fb_we;
-    wire [13:0] fb_addr;
+    wire [`FB_ADDR_BITS-1:0] fb_addr;
     wire [3:0] fb_wmask;
     wire [31:0] fb_wdata;
     wire palette_we;
@@ -68,6 +75,8 @@ module board_map_tb;
     end
     reg [31:0] result;
     integer checks = 0;
+    integer expected_fb_count;
+    wire [31:0] fb_addr_value = {{(32-`FB_ADDR_BITS){1'b0}}, fb_addr};
     `SOC_NAME #(.MEM_HEX(""), .UART_CLK_DIV(8), .TIMER_EXTERNAL_TICK(0), .TIMER_TICK_DIV(10000)) dut (
         .video_vblank(1'b0),
         .clk(clk), .rst(rst), .uart_rx(1'b1), .button(2'b11),
@@ -203,11 +212,26 @@ module board_map_tb;
         access(32'h10000008, 1, 4'h8, 32'hd7000000, 1);
         if (fb_addr != 2 || fb_wmask != 4'h8 || fb_wdata != 32'hd7000000)
             $fatal(1, "Framebuffer upper-byte translation failed");
-        access(32'h1000e0fc, 1, 4'hf, 32'hcafe9876, 1);
-        if (fb_addr != 14399 || fb_wmask != 4'hf || fb_wdata != 32'hcafe9876)
+        access(32'h10000000 + (`FB_WORDS - 1) * 4, 1, 4'hf,
+               32'hcafe9876, 1);
+        if (fb_addr_value != `FB_WORDS - 1 || fb_wmask != 4'hf ||
+            fb_wdata != 32'hcafe9876)
             $fatal(1, "Framebuffer end translation failed");
-        access(32'h1000e100, 1, 4'hf, 32'hffffffff, 0);
-        if (fb_count != 4) $fatal(1, "Unexpected framebuffer writes: %d", fb_count);
+        access(32'h10000000 + `FB_WORDS * 4, 1, 4'hf,
+               32'hffffffff, 0);
+        if (fb_we)
+            $fatal(1, "Framebuffer accepts word past end");
+        // Word 16384 catches a framebuffer address tap left at 14 bits.
+        access(32'h10010000, 1, 4'hf, 32'h13579bdf,
+               (`FB_WORDS > 16384) ? 1 : 0);
+        if (`FB_WORDS > 16384 &&
+            (fb_addr_value != 16384 || fb_wmask != 4'hf ||
+             fb_wdata != 32'h13579bdf))
+            $fatal(1, "Framebuffer word-16384 translation failed");
+        expected_fb_count = (`FB_WORDS > 16384) ? 5 : 4;
+        if (fb_count != expected_fb_count)
+            $fatal(1, "Unexpected framebuffer writes: %d expected %d",
+                   fb_count, expected_fb_count);
         // Palette entries are aligned words at 0xfffff800.  All RGB bytes
         // must be present; the high byte is ignored and palette writes never
         // reach SDRAM.
@@ -221,7 +245,8 @@ module board_map_tb;
         read_check(32'h10000000, 4'hf, 32'h44332211);
         read_check(32'h10000004, 4'hf, 32'h000000a5);
         read_check(32'h10000008, 4'hf, 32'hd7000000);
-        read_check(32'h1000e0fc, 4'hf, 32'hcafe9876);
+        read_check(32'h10000000 + (`FB_WORDS - 1) * 4,
+                   4'hf, 32'hcafe9876);
         read_check(32'hfffffff4, 4'hf, 0);
         access(`SDRAM_END - 4, 1, 4'hf, 32'hfedcba98, 0);
         read_check(`SDRAM_END - 4, 4'hf, 32'hfedcba98);

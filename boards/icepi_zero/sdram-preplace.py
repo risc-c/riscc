@@ -26,10 +26,11 @@ for name, cell in ctx.cells:
     if name.startswith(('soc.cpu.cpu.regs.', 'soc.cpu.cpu.r0_zero_q')):
         ctx.constrainCellToRegion(name, 'cpu_load')
     elif name.startswith('memory.controller.') and any(part in name for part in (
-        'head_hit', 'load_head', 'head_valid', 'lookup_valid', 'bank_safe',
+        'head_hit', 'load_head', 'head_valid', 'head_data', 'head_mask',
+        'head_addr', 'lookup_valid', 'bank_safe',
         'lookup_addr', 'rows_q', 'open_q', 'run_ready', 'recovered', 'state_q',
         'delay_q', 'delay_done', 'head_same_direction', 'count_q', 'full_q',
-        'empty_q', 'accept', 'mem_stb', 'mem_stall', 'we_fifo')):
+        'empty_q', 'blocked_q', 'accept', 'mem_stb', 'mem_stall', 'we_fifo')):
         ctx.constrainCellToRegion(name, 'command_queue')
         count += 1
     elif name == 'video.scanout.lines.0.0':
@@ -51,6 +52,6 @@ for name, cell in ctx.cells:
           name.startswith('memory.mem_stb')):
         ctx.constrainCellToRegion(name, 'command_payload')
     elif name.startswith('memory.controller.') and any(part in name for part in (
-        'head_data', 'head_mask', 'head_addr', 'lookup_data', 'lookup_mask')):
+        'lookup_data', 'lookup_mask')):
         ctx.constrainCellToRegion(name, 'command_payload')
 print('Constrained command control cells:', count)

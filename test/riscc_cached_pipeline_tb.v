@@ -123,6 +123,7 @@ module riscc_cached_pipeline_tb #(
     integer target_pc_commits;
     reg early_jump_observed_q;
     reg irq_raised_q;
+    reg shift_irq_q;
     reg irq_withdrawn_q;
     localparam integer IRQ_MAIN_LOAD_PC = 11;
     localparam integer IRQ_MAIN_RETURN_PC = 12;
@@ -139,7 +140,7 @@ module riscc_cached_pipeline_tb #(
                         // Zero-wait replies change as soon as STB is offered.
                         .FETCH_RESPONSE_HELD(0),
                         .REGISTER_FETCH(REGISTER_FETCH)) dut (
-        .clk(clk), .rst(rst), .irq(irq),
+        .clk(clk), .rst(rst), .irq(irq | shift_irq_q),
         .imem_addr(imem_addr), .imem_rdata(imem_rdata),
         .imem_cyc(imem_cyc), .imem_stb(imem_stb),
         .imem_stall(imem_stall), .imem_ack(imem_ack),
@@ -170,7 +171,6 @@ module riscc_cached_pipeline_tb #(
         input [2:0] cc, input signed [7:0] relative);
         reg [7:0] rotated;
         begin
-            rotated = {relative[7:1], relative[0]};
             // The ISA stores rel8 bit 7 in instruction bit 0 and rel8 bits
             // 6:0 in bits 7:1.
             rotated = {relative[6:0], relative[7]};
@@ -222,7 +222,7 @@ module riscc_cached_pipeline_tb #(
 `ifdef RISCC_FAST_SOFT_MUL
                 expected_gap[address] = XLEN / 2 + 1;
 `else
-                expected_gap[address] = 4;
+                expected_gap[address] = 3;
 `endif
             end else if (func == 5'h08) expected_gap[address] = 1;
             else if (func == 5'h0a || func == 5'h0b || func == 5'h0e)
@@ -276,10 +276,10 @@ module riscc_cached_pipeline_tb #(
                 put_i(pc, 3'd1, 3'd0, 8'h11); pc = pc + 1;
                 put_i(pc, 3'd2, 3'd0, 8'h22); pc = pc + 1;
                 repeat (4) begin
-                put_r(pc, 3'd3, 3'd1, 5'h00, 3'd2); pc = pc + 1; // ADD
-                put_r(pc, 3'd4, 3'd1, 5'h06, 3'd2); pc = pc + 1; // XOR
-                put_r(pc, 3'd5, 3'd1, 5'h04, 3'd2); pc = pc + 1; // AND
-                put_r(pc, 3'd6, 3'd1, 5'h05, 3'd2); pc = pc + 1; // OR
+                    put_r(pc, 3'd3, 3'd1, 5'h00, 3'd2); pc = pc + 1; // ADD
+                    put_r(pc, 3'd4, 3'd1, 5'h06, 3'd2); pc = pc + 1; // XOR
+                    put_r(pc, 3'd5, 3'd1, 5'h04, 3'd2); pc = pc + 1; // AND
+                    put_r(pc, 3'd6, 3'd1, 5'h05, 3'd2); pc = pc + 1; // OR
                 end
                 put_mem(pc, 1'b1, 3'd3, 3'd7, RESULT_BYTE-DATA_BYTE);
                 pc = pc + 1;
@@ -384,10 +384,9 @@ module riscc_cached_pipeline_tb #(
                 put_mem(pc, 1'b1, 3'd6, 3'd7,
                         DONE_BYTE-DATA_BYTE);
             end else if (test_case == 6) begin
-                // Exercise the side-state datapath under a continuously
-                // asserted ACK: a variable shift and a multiply must still
-                // hold Execute until completion while ordinary requests use
-                // the same one-outstanding bus protocol.
+                // Exercise immediate-shift and multiply results under a
+                // continuously asserted ACK while ordinary requests use the
+                // same one-outstanding bus protocol.
                 pc = 0;
                 put_i(pc, 3'd7, 3'd0, DATA_BYTE); pc = pc + 1;
                 put_i(pc, 3'd1, 3'd0, 8'h40); pc = pc + 1;
@@ -404,9 +403,10 @@ module riscc_cached_pipeline_tb #(
             end else if (test_case == 7 || test_case == 9) begin
                 // Exercise both forms of destination feedback.  The first
                 // shift reads r1 and writes r3; the second reads and writes
-                // r3.  An IRQ is raised while the second shift is iterating,
-                // so the handler must observe its completed value and RETI
-                // must resume at the dependent ADD.
+                // r3.  An IRQ is presented as the second of two consecutive
+                // dependent single-cycle shifts completes, so the handler
+                // must observe the completed value and RETI must resume at
+                // the dependent ADD.
                 mem[0] = enc_branch(3'd4, 8'sd7); // JMP8 -> 8
                 put_mem(2, 1'b1, 3'd3, 3'd7,
                         RESULT_BYTE-DATA_BYTE+4);       // handler observes r3
@@ -493,7 +493,7 @@ module riscc_cached_pipeline_tb #(
 `ifdef RISCC_FAST_SOFT_MUL
                 expected_gap[pc] = XLEN / 2 + 2;
 `else
-                expected_gap[pc] = 5;
+                expected_gap[pc] = 4;
 `endif
                 pc = pc + 1;
                 put_mem(pc, 1'b1, 3'd5, 3'd7,
@@ -636,16 +636,16 @@ module riscc_cached_pipeline_tb #(
                 put_i(26, 3'd1, 3'd0, 8'd1);
                 // bbb=0 encodes the one-bit shift (the ISA count is bbb+1);
                 // the result is zero and must set Z.
-                put_r(27, 3'd0, 3'd1, 5'h0c, 3'd0); // SRLI r0, r1, 0
+                put_r(27, 3'd0, 3'd1, 5'h0c, 3'd0); // SRLI r0, r1, 1
                 mem[28] = enc_branch(3'd0, 8'sd2); // BEQZ -> 31
                 mem[29] = mem[6];
                 mem[30] = mem[6];
 
                 put_i(31, 3'd1, 3'd0, 8'd0);
                 put_i(32, 3'd1, 3'd2, 8'hff); // r1 = -1
-                // bbb=2 encodes a three-bit iterative shift. Arithmetic right
+                // bbb=2 encodes a three-bit shift. Arithmetic right
                 // shifting preserves the sign and must set N for BLTZ.
-                put_r(33, 3'd0, 3'd1, 5'h0d, 3'd2); // SRAI r0, -1, 2
+                put_r(33, 3'd0, 3'd1, 5'h0d, 3'd2); // SRAI r0, r1, 3
                 mem[34] = enc_branch(3'd2, 8'sd2); // BLTZ -> 37
                 mem[35] = mem[6];
                 mem[36] = mem[6];
@@ -836,6 +836,7 @@ module riscc_cached_pipeline_tb #(
             i_response_drop_q <= 1'b0;
             i_last_response_data_q <= 16'hdead;
         end else begin
+            i_response_drop_q <= 1'b0;
             if (i_accept) begin
                 i_accepted_count <= i_accepted_count + 1;
                 if (test_case == 3 && imem_addr == 3)
@@ -880,10 +881,10 @@ module riscc_cached_pipeline_tb #(
                 fail("instruction CYC dropped before response");
             if (i_accept && i_response_pending_q && !imem_ack)
                 fail("accepted second instruction request before response");
-            if (i_response_drop_q && !i_response_pending_q && !imem_ack &&
+            if (!REGISTER_FETCH && i_response_drop_q &&
+                !i_response_pending_q && !imem_ack &&
                 imem_rdata == i_last_response_data_q)
                 fail("instruction response remained valid after ACK");
-            i_response_drop_q <= 1'b0;
         end
     end
 
@@ -909,6 +910,7 @@ module riscc_cached_pipeline_tb #(
             stream_data_gap_errors <= 0;
             stream_last_accept_cycle <= 0;
         end else begin
+            d_response_drop_q <= 1'b0;
             if (d_accept) begin
                 d_accepted_count <= d_accepted_count + 1;
                 d_response_data_q <= d_live_read;
@@ -965,7 +967,6 @@ module riscc_cached_pipeline_tb #(
             if (d_response_drop_q && !d_response_pending_q && !dmem_ack &&
                 dmem_rdata == d_last_response_data_q)
                 fail("data response remained valid after ACK");
-            d_response_drop_q <= 1'b0;
         end
     end
 
@@ -1031,15 +1032,13 @@ module riscc_cached_pipeline_tb #(
                     irq_epc_errors <= irq_epc_errors + 1;
                 irq_epc_pending_q <= 1'b0;
             end
-            if ((test_case == 7 || test_case == 9) && dut.in_shift &&
-                dut.x_pc_q == 14 && !irq_raised_q) begin
-                irq_raised_q <= 1'b1;
-                irq <= 1'b1;
-            end
             if (test_case == 11 && dut.in_mul && !irq_raised_q) begin
                 irq_raised_q <= 1'b1;
                 irq <= 1'b1;
             end
+
+            if (shift_irq_q)
+                irq_raised_q <= 1'b1;
 
             if (test_case == 12 && REGISTER_FETCH && dut.d_valid &&
                 dut.x_valid_q && dut.x_pc_q == 3 && !dut.core_advance)
@@ -1076,7 +1075,7 @@ module riscc_cached_pipeline_tb #(
                 dut.frontend_flush) begin
                 irq_take_count <= irq_take_count + 1;
                 irq <= 1'b0;
-                if ((test_case == 7 || test_case == 9) && dut.in_shift)
+                if ((test_case == 7 || test_case == 9) && last_commit_pc != 14)
                     irq_shift_entry_errors <= irq_shift_entry_errors + 1;
                 if (test_case == 11 && dut.in_mul)
                     irq_mul_entry_errors <= irq_mul_entry_errors + 1;
@@ -1105,6 +1104,18 @@ module riscc_cached_pipeline_tb #(
         end
     end
 
+    // Present the shift IRQ before the second single-cycle shift commits. The
+    // request is sampled on that commit edge, before the dependent ADD.
+    always @(negedge clk) begin
+        if (rst)
+            shift_irq_q <= 1'b0;
+        else if (irq_take_count != 0 || irq_withdrawn_q)
+            shift_irq_q <= 1'b0;
+        else if ((test_case == 7 || test_case == 9) && dut.commit_valid &&
+                 dut.x_pc_q == 14 && !irq_raised_q)
+            shift_irq_q <= 1'b1;
+    end
+
     // Commit counters use the internal X stage metadata, which avoids adding
     // test-only ports to the production core.  A run of adjacent commits is
     // the direct observable for one IPC on this in-order machine.
@@ -1115,6 +1126,10 @@ module riscc_cached_pipeline_tb #(
                 test_case != 10 && test_case != 11 && test_case != 15)
                 fail("non-multicycle test committed without run_commit");
             if (dut.commit_valid) begin
+                if ((test_case == 7 || test_case == 9) &&
+                    (dut.x_pc_q == 13 || dut.x_pc_q == 14) &&
+                    !dut.run_commit)
+                    fail("shift committed without run_commit");
                 if (test_case == 12 && dut.x_pc_q == 8)
                     target_pc_commits <= target_pc_commits + 1;
                 if (test_case == 15 && dut.x_pc_q == 4 &&

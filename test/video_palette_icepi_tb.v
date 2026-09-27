@@ -48,9 +48,14 @@ module video_palette_icepi_tb;
     endfunction
 
     function [23:0] palette_color(input integer entry);
-        palette_color = {entry[7:0], (entry ^ 8'ha5),
-                         (entry * 8'h3d) ^ 8'h5a};
+        palette_color = {entry[7:0], (entry[7:0] ^ 8'ha5),
+                         (entry[7:0] * 8'h3d) ^ 8'h5a};
     endfunction
+
+    localparam integer SOURCE_WIDTH = 640;
+    localparam integer SOURCE_HEIGHT = 360;
+    localparam integer SOURCE_WORDS = SOURCE_WIDTH / 4;
+    localparam integer SOURCE_SIZE = SOURCE_WORDS * SOURCE_HEIGHT;
 
     function [31:0] memory_word(input integer row, input integer word);
         integer column;
@@ -107,14 +112,22 @@ module video_palette_icepi_tb;
         end else begin
             memory_cycle = memory_cycle + 1;
             if (memory_pop) begin
-                memory_rdata <= memory_word(memory_queue_addr[memory_queue_head] / 80,
-                                             memory_queue_addr[memory_queue_head] % 80);
+                if (memory_queue_addr[memory_queue_head] >= SOURCE_SIZE)
+                    $fatal(1, "IcePi scanout read outside framebuffer: %0d",
+                           memory_queue_addr[memory_queue_head]);
+                memory_rdata <= memory_word(memory_queue_addr[memory_queue_head] /
+                                             SOURCE_WORDS,
+                                             memory_queue_addr[memory_queue_head] %
+                                             SOURCE_WORDS);
                 memory_ack <= 1'b1;
                 memory_queue_head = (memory_queue_head + 1) % QUEUE_DEPTH;
             end
             if (memory_stb && !memory_stall) begin
                 if (!memory_cyc)
                     $fatal(1, "SDRAM stb without cyc");
+                if (memory_addr >= SOURCE_SIZE)
+                    $fatal(1, "IcePi scanout address outside framebuffer: %0d",
+                           memory_addr);
                 memory_queue_addr[memory_queue_tail] <= memory_addr;
                 memory_queue_due[memory_queue_tail] <= memory_cycle +
                     2 + memory_random[4:2];
@@ -150,12 +163,12 @@ module video_palette_icepi_tb;
         memory_rst = 1'b0;
         rst = 1'b0;
 
-        // The framebuffer fills the 1280x720 active region at exactly 4x.
-        // Check two source rows so both horizontal and vertical replication
-        // are exercised without simulating a complete frame.
+        // The framebuffer fills the 1280x720 active region at exactly 2x.
+        // Check the complete raster so both replication boundaries and every
+        // source row/address boundary are exercised.
         visible_line = 0;
         guard = 0;
-        while (visible_line < 8) begin
+        while (visible_line < 720) begin
             displayed = 0;
             while (!dut.active_d) begin
                 @(posedge pix_clk);
@@ -168,11 +181,11 @@ module video_palette_icepi_tb;
                 if (!dut.active_d)
                     $fatal(1, "IcePi framebuffer line ended at pixel %0d", displayed);
                 if (dut.rgb !== palette_color(
-                        pixel_index(visible_line / 4, displayed / 4)))
+                        pixel_index(visible_line / 2, displayed / 2)))
                     $fatal(1, "IcePi line %0d pixel %0d: got %h expected %h",
                            visible_line, displayed, dut.rgb,
-                           palette_color(pixel_index(visible_line / 4,
-                                                    displayed / 4)));
+                           palette_color(pixel_index(visible_line / 2,
+                                                    displayed / 2)));
                 @(posedge pix_clk);
                 #1;
                 displayed = displayed + 1;
@@ -183,18 +196,63 @@ module video_palette_icepi_tb;
                 $fatal(1, "IcePi framebuffer active region exceeds 1280 pixels");
             visible_line = visible_line + 1;
         end
+        guard = 0;
+        while (!dut.vblank) begin
+            @(posedge pix_clk);
+            #1;
+            guard = guard + 1;
+            if (guard > 10000)
+                $fatal(1, "IcePi raster did not enter vertical blanking");
+        end
+        // Continue into the next frame far enough to verify the source-row
+        // and SDRAM-address wrap from row 359 back to row 0.
+        guard = 0;
+        while (dut.vblank) begin
+            @(posedge pix_clk);
+            #1;
+            guard = guard + 1;
+            if (guard > 10000000)
+                $fatal(1, "IcePi raster did not leave vertical blanking");
+        end
+        visible_line = 0;
+        while (visible_line < 2) begin
+            displayed = 0;
+            while (!dut.active_d) begin
+                @(posedge pix_clk);
+                #1;
+                guard = guard + 1;
+                if (guard > 10000000)
+                    $fatal(1, "timed out waiting for next IcePi frame");
+            end
+            while (displayed < 1280) begin
+                if (!dut.active_d)
+                    $fatal(1, "next IcePi line ended at pixel %0d", displayed);
+                if (dut.rgb !== palette_color(
+                        pixel_index(visible_line / 2, displayed / 2)))
+                    $fatal(1, "next IcePi line %0d pixel %0d: got %h expected %h",
+                           visible_line, displayed, dut.rgb,
+                           palette_color(pixel_index(visible_line / 2,
+                                                    displayed / 2)));
+                @(posedge pix_clk);
+                #1;
+                displayed = displayed + 1;
+            end
+            if (dut.active_d)
+                $fatal(1, "next IcePi framebuffer active region exceeds 1280 pixels");
+            visible_line = visible_line + 1;
+        end
         if (underrun)
             $fatal(1, "unexpected IcePi scanout underrun");
         if (memory_max_pending < 2 || memory_pipelined == 0)
             $fatal(1, "scanout did not pipeline reads (max_pending=%0d pipelined=%0d)",
                    memory_max_pending, memory_pipelined);
-        $display("PASS IcePi video palette scanout: 256 colors, 1280x720 timing, 4x scaling (max %0d outstanding)",
+        $display("PASS IcePi video palette scanout: 256 colors, 1280x720 timing, 2x scaling (max %0d outstanding)",
                  memory_max_pending);
         $finish;
     end
 
     initial begin
-        #10000000;
+        #100000000;
         $fatal(1, "IcePi video palette scanout timeout");
     end
 endmodule

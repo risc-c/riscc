@@ -127,11 +127,8 @@ extension on both RC16 and RC32 with `PROFILE=2, MDU=2`; see the
 [hardware options](HARDWARE.md#parameterized-full-width-core).
 RC32X remains unsupported and `-mrc32x` is intentionally rejected.
 
-Min, Sys, and Full default to scheduling for the pipeline. For Cached's
-Decode-stage branches, the scheduler places useful independent instructions
-between an r0 producer and its branch: one after ALU/compare, shift, or multiply;
-two after a load. It reorders after register allocation, inserts no NOPs, and
-does not change the ISA or ABI. Nano keeps its existing scheduling.
+Min, Sys, and Full enable branch scheduling for the pipeline by default.
+Nano does not use this scheduling option.
 
 The default applies when compiling both applications and libraries; rebuild
 libraries to use it. Hand-written assembly is not rescheduled. To disable this
@@ -262,7 +259,7 @@ Common options are:
 
 | Option | Purpose |
 |---|---|
-| `--uart` | Connect RC16 target UART TX to stdout and RX to stdin |
+| `--uart` | Connect target UART TX to stdout and RX to stdin |
 | `--trace` | Print committed instructions and accepted interrupts |
 | `--state` | Print final registers and execution summary |
 | `--dump WADDR LEN` | Dump a range of memory words |
@@ -285,8 +282,8 @@ RTL simulation whenever exact cycle behavior matters.
 
 The ISS stops when the program halts, exceeds its instruction limit, or writes
 the test result register. Address `0xfffe` is a testbench convention, not an
-application `exit()` service. RC32 modes currently model the architectural
-core and generic test fixture, but not UART, timer, or framebuffer devices.
+application `exit()` service. Generic RC32 modes model the architectural
+core and test fixture; add `--board-rc32` for the board UART, timer, and framebuffer.
 
 ## 5. Runtime and platform reference
 
@@ -418,6 +415,10 @@ map has no test IRQ or result register.
 | `0xfffa` | Test IRQ injection/acknowledgement; ISS and generic RTL tests only |
 | `0xfffe` | Test result; ISS and generic RTL tests only |
 
+The indexed framebuffer starts at `0x10000000` and uses one byte per pixel,
+with a row stride equal to `RISCC_FRAMEBUFFER_WIDTH`: 640×360 on Icepi Zero,
+Atum A3 Nano, and DE23-Lite. All three output 1280×720 with 2× scaling.
+
 RC32 board-demo MMIO uses these byte addresses and 32-bit accesses:
 
 | Byte address | Interface |
@@ -444,8 +445,7 @@ transient colour is unacceptable.
 rising vertical blanking edges at nominally 60 Hz (`CLOCKS_PER_SEC` and
 `RISCC_TICK_HZ` are 60); other targets retain the 1 kHz timebase. The board BSP
 services a timer interrupt every display frame. Applications may instead install
-a custom handler with `riscc_irq_set_handler()`; the Julia demo uses this to
-redraw its scrolling text during blanking. A custom handler replaces the default
+a custom handler with `riscc_irq_set_handler()`. A custom handler replaces the default
 uptime service and must acknowledge/rearm the timer before returning. The ISS
 approximates the board frame rate from its configured CPU frequency.
 

@@ -127,7 +127,7 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
         defines.append("RISCC_FMAX_NANO")
     elif core.startswith(("cached-", "cached32-")):
         source = rtl / "riscc_cached.v"
-        extra_sources = (rtl / "riscc_fast.v",)
+        extra_sources = (rtl / "riscc_pipeline_shared.v",)
         top = "riscc_cached"
         defines.append("RISCC_FMAX_CACHED")
         if core.startswith("cached32-"):
@@ -138,6 +138,7 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
             defines.append("RISCC_FAST_SOFT_MUL")
     else:
         source = rtl / "riscc_fast.v"
+        extra_sources = (rtl / "riscc_pipeline_shared.v",)
         top = "riscc_fast"
         defines.append("RISCC_FMAX_FAST")
         if core.startswith("fast32-"):

@@ -1665,10 +1665,13 @@ def build_tb(core, family, config, outdir):
     rtl_sources = [rtl]
     if top == "riscc_cached_test_top":
         rtl_sources = [
-            os.path.join(RTL, "riscc_fast.v"),
+            os.path.join(RTL, "riscc_pipeline_shared.v"),
             os.path.join(RTL, "riscc_cached.v"),
             os.path.join(RTL, "test", "riscc_cached_test_top.v"),
         ]
+        rtl_dependencies = list(rtl_sources)
+    if top == "riscc_fast":
+        rtl_sources.append(os.path.join(RTL, "riscc_pipeline_shared.v"))
         rtl_dependencies = list(rtl_sources)
     if top in ("riscc_serial", "riscc_wide"):
         rtl_dependencies.append(os.path.join(RTL, "riscc_rf.vh"))

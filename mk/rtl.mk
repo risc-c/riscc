@@ -464,13 +464,13 @@ FAST_IRQ_IMAGE_16 := $(ISA_IRQ_BIN)
 FAST_IRQ_IMAGE_32 := $(RC32_FULL_ISA_IRQ_BIN)
 FAST_ADDRESS_32 := build/bin/serial32-address-full.bin build/bin/wide32-load-full.bin
 define FAST_TEST
-build/test/$(call fast_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v $(RTL_RULES)
+build/test/$(call fast_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v rtl/riscc_pipeline_shared.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_fast -GXLEN=$(3) --prefix Vriscc -Mdir $$(@D) \
 	  $$(FAST_MEMORY_DEFINES_$(1)) $$(FAST_DEFINES_$(2)) \
 	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_PIPELINED $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
-	  $$(abspath rtl/riscc_fast.v) $$(abspath $(TB_SRC))
+	  $$(abspath rtl/riscc_fast.v rtl/riscc_pipeline_shared.v) $$(abspath $(TB_SRC))
 
 build/test/$(call fast_family,$(3))/$(1)/$(2).ok: build/test/$(call fast_family,$(3))/$(1)/$(2)/tb $(FAST_IMAGE_$(3)) $(FAST_ADDRESS_$(3)) FORCE
 	@mkdir -p $$(@D)
@@ -555,7 +555,7 @@ cached_family = $(if $(filter 32,$(1)),cached32,cached)
 # Native 32-bit backing SRAM, shared with the assembly benchmark runner.
 cached_bench_tb = build/split-cache/bench/$(1)-$(2)-$(3)-$(if $(4),$(4),cache)/Vriscc_cached_bench_tb
 define CACHED_BENCH
-$(call cached_bench_tb,$(1),$(2),$(3),$(4)): rtl/riscc_fast.v rtl/riscc_cached.v \
+$(call cached_bench_tb,$(1),$(2),$(3),$(4)): rtl/riscc_pipeline_shared.v rtl/riscc_cached.v \
 		test/riscc_cached_bench_tb.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) --binary --timing $$(VERILATOR_MAKEFLAGS_ARG) \
@@ -563,20 +563,20 @@ $(call cached_bench_tb,$(1),$(2),$(3),$(4)): rtl/riscc_fast.v rtl/riscc_cached.v
 	  -GCACHED=$(if $(filter sram,$(4)),0,1) \
 	  -GREGISTER_FETCH=$(if $(filter sram,$(4)),1,0) --Mdir $$(@D) \
 	  $$(FAST_MEMORY_DEFINES_$(3)) $$(FAST_DEFINES_$(2)) \
-	  rtl/riscc_fast.v rtl/riscc_cached.v test/riscc_cached_bench_tb.v
+	  rtl/riscc_pipeline_shared.v rtl/riscc_cached.v test/riscc_cached_bench_tb.v
 endef
 $(foreach xlen,16 32,$(foreach multiplier,$(MULTIPLIERS),$(foreach memory,$(FAST_MEMORIES), \
 	$(foreach source,cache sram, \
 	  $(eval $(call CACHED_BENCH,$(xlen),$(multiplier),$(memory),$(source)))))))
 
 define CACHED_TEST
-build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_fast.v rtl/riscc_cached.v rtl/test/riscc_cached_test_top.v $(RTL_RULES)
+build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_pipeline_shared.v rtl/riscc_cached.v rtl/test/riscc_cached_test_top.v $(RTL_RULES)
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_cached_test_top -GXLEN=$(3) --prefix Vriscc -Mdir $$(@D) \
 	  $$(FAST_MEMORY_DEFINES_$(1)) $$(FAST_DEFINES_$(2)) \
 	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_PIPELINED $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
-	  $$(abspath rtl/riscc_fast.v) $$(abspath rtl/riscc_cached.v) \
+	  $$(abspath rtl/riscc_pipeline_shared.v) $$(abspath rtl/riscc_cached.v) \
 	  $$(abspath rtl/test/riscc_cached_test_top.v) $$(abspath $(TB_SRC))
 
 build/test/$(call cached_family,$(3))/$(1)/$(2).ok: build/test/$(call cached_family,$(3))/$(1)/$(2)/tb $(FAST_IMAGE_$(3)) $(FAST_ADDRESS_$(3)) FORCE

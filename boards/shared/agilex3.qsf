@@ -29,7 +29,7 @@ set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_sdram_bridge.v
 set_global_assignment -name VERILOG_FILE ../../../boards/shared/rtl/riscc_video_palette.v
 set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_cached.v
-set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_fast.v
+set_global_assignment -name VERILOG_FILE ../../../rtl/riscc_pipeline_shared.v
 
 # Pack SDRAM launch registers into the output and output-enable I/O cells.
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to "system|memory|controller|sd_dq_o[*]"
