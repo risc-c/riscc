@@ -1600,7 +1600,7 @@ def compare_final_state(core, family, config, seed, image, tb):
 
 
 def build_tb(core, family, config, outdir):
-    if family != "fast" and not core.startswith(("fast32-", "cached32-")) and not trace_supported(family, core):
+    if family != "fast" and not core.startswith(("fast32-", "cached-", "cached32-")) and not trace_supported(family, core):
         raise ValueError("trace compare does not support %s" % core)
 
     generic_rc16 = family == "rc16" and (
@@ -1642,21 +1642,33 @@ def build_tb(core, family, config, outdir):
         top = "riscc_nano"
         rtl = os.path.join(RTL, "riscc_nano.v")
         defs = []
-    elif family == "fast" or core.startswith(("fast32-", "cached32-")):
+    elif core.startswith(("cached-", "cached32-")):
+        if config != "full":
+            raise ValueError("Cached requires --config full")
+        if core not in ("cached-dsp", "cached-agilex-dsp",
+                        "cached32-dsp", "cached32-agilex-dsp"):
+            raise ValueError("invalid Cached core name: %s" % core)
+        d = os.path.join(outdir, "v_state_%s" % core)
+        top = "riscc_cached_test_top"
+        rtl = os.path.join(RTL, "riscc_cached.v")
+        defs = ([] if "agilex" in core else
+                ["-DRISCC_ECP5", "-DRISCC_FAST_BLOCK_RF"])
+        defs.append("-GXLEN=%d" % (32 if core.startswith("cached32-") else 16))
+    elif family == "fast" or core.startswith("fast32-"):
         if config != "full":
             raise ValueError("Fast requires --config full")
-        if core.replace("cached32-", "fast-").replace("cached-", "fast-").replace("fast32-", "fast-") not in ("fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"):
+        if core.replace("fast32-", "fast-") not in ("fast-soft", "fast-dsp", "fast-agilex-soft", "fast-agilex-dsp"):
             raise ValueError("invalid Fast core name: %s" % core)
         d = os.path.join(outdir, "v_state_%s" % core)
-        top = "riscc_cached_test_top" if core.startswith("cached") else "riscc_fast"
+        top = "riscc_fast"
         rtl = os.path.join(RTL, "riscc_fast.v")
         defs = [] if "agilex" in core else ["-DRISCC_FAST_BLOCK_RF"]
-        defs.append("-GXLEN=%d" % (32 if core.startswith(("fast32-", "cached32-")) else 16))
+        defs.append("-GXLEN=%d" % (32 if core.startswith("fast32-") else 16))
         if core.endswith("soft"):
             defs.append("-DRISCC_FAST_SOFT_MUL")
     else:
         raise ValueError("unsupported core: %s" % core)
-    with_trace = family != "fast" and not core.startswith(("fast32-", "cached32-"))
+    with_trace = family != "fast" and not core.startswith(("fast32-", "cached-", "cached32-"))
     if with_trace:
         defs.append("-DRISCC_TRACE")
     tb = os.path.join(d, "tb")
@@ -1699,7 +1711,7 @@ def build_tb(core, family, config, outdir):
         "-CFLAGS", os.environ.get("TB_CXXFLAGS", "-std=c++17") +
         (" -DRISCC_TB_TRACE" if with_trace else "") +
         (" -DRISCC_TB_MEM_PIPELINED"
-         if family == "fast" or core.startswith(("fast32-", "cached32-")) else
+         if family == "fast" or core.startswith(("fast32-", "cached-", "cached32-")) else
          " -DRISCC_TB_MEM_HANDSHAKE" if family in ("rc16", "rc32") else "") +
         (" -DRISCC_TB_MEM_OE_N" if family == "nano" else "") +
         (" -DRISCC_TB_RC32" if family == "rc32" or core.startswith(("fast32-", "cached32-")) else "") +

@@ -20,10 +20,11 @@ registers and a 4 GiB address space.
 | RC32 serial `/1`–`/16` | `W`-bit sliced ALU over a 16-bit memory port; `XLEN=32` | [`riscc_serial.v`](../rtl/riscc_serial.v) |
 | RC16 `/16`, RC32 `/32` | full-width multicycle ALU; Min/Sys/Full and optional MDU | [`riscc_wide.v`](../rtl/riscc_wide.v) |
 | Fast | RC16/RC32 Full, compact pipeline | [`riscc_fast.v`](../rtl/riscc_fast.v) |
-| Cached | RC16/RC32 Full, compact pipeline with internal I/D caches | [`riscc_cached.v`](../rtl/riscc_cached.v) |
+| Cached | RC16/RC32 Full, DSP multiply, BTB and internal I/D caches | [`riscc_cached.v`](../rtl/riscc_cached.v) |
 
 Compile [`riscc_pipeline_shared.v`](../rtl/riscc_pipeline_shared.v) alongside
-Fast or Cached for their shared register file and shifter.
+Fast or Cached for the shifter and Fast's register file. Cached uses a
+distributed register file of its own.
 
 ### External memory interfaces
 
@@ -190,8 +191,8 @@ Its memory port is 16 bits wide; `RESET_PC` is a halfword address.
 
 With one-clock SRAM, simple instructions sustain one instruction per clock.
 Byte and halfword loads/stores add one clock; native RC32 accesses add two.
-Taken branches, jumps, and returns add one bubble. Memory stalls stop the
-pipeline; interrupts wait for the current instruction to finish.
+Taken branches, jumps, and returns add one bubble. Memory stalls stop the pipeline;
+interrupts wait for the current instruction to finish.
 
 DSP multiplication takes two Execute clocks. `RISCC_FAST_SOFT_MUL` uses
 fabric logic instead, taking `XLEN/2 + 1` clocks.
@@ -203,26 +204,27 @@ adjust its borrow result for signed comparisons.
 ### Cached core with internal caches
 
 [`riscc_cached`](../rtl/riscc_cached.v) combines a pipeline with separate
-2 KiB, direct-mapped instruction and data caches. RC16 uses 32-byte lines;
-RC32 uses 64-byte lines. The backing port transfers 32-bit words.
+2 KiB, direct-mapped instruction and data caches. `XLEN=16/32` selects
+RC16 or RC32 (default: 32), with 32-byte or 64-byte lines respectively.
+Both use DSP multiplication and a BTB. The backing port
+transfers 32-bit words. Memory-map geometry, local SRAM initialization and
+reset address are the other integration parameters.
 Immediate shifts by 1–8 bits complete in one Execute clock.
 
-The pipeline has four stages: fetch reads an instruction, decode reads its
-operands, execute computes a result or issues a memory request, and writeback
-updates the register file. ALU results and loads share one RF write port.
-Forwarding handles adjacent ALU dependencies; an instruction that immediately
-uses a loaded value waits one clock. Independent loads and stores can advance
-every clock on local SRAM or cache hits, provided the backing port accepts
-write-through traffic. A store followed by a load of the same cached word
-needs an extra RAM read clock.
+The pipeline has four stages: fetch reads an instruction, decode selects its
+register operands, execute computes a result or issues a memory request, and writeback
+updates the register file. Forwarding handles adjacent ALU dependencies. An
+immediate load consumer waits one clock before retrying in Execute. Independent
+loads and stores can advance every clock on local SRAM or cache hits, provided
+the backing port accepts write-through traffic. A store followed by a load of
+the same cached word needs an extra RAM read clock. Accepted cache transactions
+remain stable through backing-port backpressure and complete in order.
 
 On a miss, the cache fetches a complete line and holds younger instructions.
 Stores update a cached copy if present and acknowledge once their payload is
-captured. The backing port retains accepted writes and completes them in
-order; no separate write-data FIFO is added. A read miss or uncached read
-waits for preceding writes to drain. Taken branches discard younger fetched
-instructions. DSP multiplication takes three Execute clocks, or `XLEN/2 + 1`
-with `RISCC_FAST_SOFT_MUL`.
+captured. The backing port completes accepted writes in order. A read miss or uncached read
+waits for preceding writes to drain. Mispredicted branches discard younger
+fetched instructions. DSP multiplication takes three Execute clocks.
 
 The data cache is write-through and does not allocate on a store miss.
 `DCACHE_UNCACHED_BIT` selects uncached data and MMIO; its default, `XLEN-1`,
@@ -240,26 +242,26 @@ contents. Instruction and data accesses run independently on the CPU clock
 and complete in one clock. Software must avoid simultaneous instruction
 fetches and stores to the same SRAM word; mixed-port read/write data is
 undefined. With local SRAM enabled, external instruction-cache lookups take
-two clocks; data-cache hits take one.
+two clocks; data-cache hits take one. On Agilex, the 16 KiB local SRAM uses
+16 M20Ks, with coherent copies serving the instruction and data ports.
 
-`REGISTER_FETCH` adds an instruction register before decode for higher CPU
-clock rates. Arithmetic still sustains one instruction per clock. Relative
-branches use the saved r0 sign and per-byte nonzero bits in Decode and share
-a target adder with Execute. Combining the byte flags in the branch stage
-keeps a whole-word zero reduction off the load-to-flag path. JMP8 and taken conditional branches with ready flags have one bubble.
-An immediately preceding ALU/CMP write to r0 defers the branch to Execute:
-two bubbles if taken, none if not taken. Scheduling one independent instruction
-between an ALU/CMP, shift, or multiply producer and its branch enables the
-one-bubble taken path; loads need two. Pending load results retain the existing
-load-use interlock and resolve in Execute. LLVM's default
-[branch scheduling](PROGRAMMING.md#2-choose-a-target) fills these gaps with
-independent work. JALR, RET, and JALL retain two redirect bubbles. All board
-demos enable registered fetch.
+The frontend uses a direct-mapped BTB with full address tags: 16 entries
+on ECP5 and 32 on Agilex. Instruction fetches are 16 bits. Correctly predicted branches, JALR/RET and JALL
+sustain one instruction per clock when operands and memory responses are ready.
+A JALL hit skips its payload; a miss reads it and adds one clock. Taken branch
+and indirect-jump misses add one clock. A predicted-taken branch that falls
+through adds two clocks.
 
-Reset clears cache validity in 64 clocks for RC16 or 32 for RC32. Stores
-invalidate the corresponding instruction-cache index. Software must also
-account for already prefetched instructions when modifying code. External
-writers and DMA are not cache-coherent.
+Cached implements the optional `iflush` extension; the other cores do not.
+`IFLUSH` invalidates the I-cache and BTB, preserves architectural registers and
+interrupt enable, and resumes at PC+2. Invalidation takes 64 clocks on RC16
+or 32 on RC32, plus any wait for outstanding instruction requests. Reset performs the same invalidation.
+Posted data writes continue independently; `IFLUSH` is not a store barrier.
+Stores do not invalidate the I-cache automatically. Make code writes visible
+using the platform's ordering rules, then execute `IFLUSH` from unmodified code
+before entering the replacement, including after changing a JALL payload.
+Initial loading after reset needs no maintenance if no stale instruction state
+exists. See [replacing executable code](PROGRAMMING.md#replacing-executable-code).
 
 ![RISC-C Cached pipeline and caches](riscc_cached_pipeline.svg)
 
@@ -297,9 +299,9 @@ Cached uses local SRAM or cache hits, with room for write-through stores.
 | `SLT`, `SLTU` | 51 (`SLTU` only) | `3S + P + 2` | 4 | 1 | 1 |
 | `LDI`, RC16 `LUI`, `ADDI`, `CMPI`, `ANDI`, `ORI`, `XORI` | 19 (no `CMPI`) | `S + P + 2` | 2 | 1 | 1 |
 | Conditional branch, not taken | 19 | `S + 2` | 2 | 1 | 1 |
-| Conditional branch, taken; `JMP8` | 19 | `S + 2` | 2 | 2 | 2 / 3* |
-| `JALR`, `RET`, `RETI` | 35 (`JALR` only) | `2S + 2` | 3 | 2 | 2 / 3* |
-| `JALL` | — | `3S + 3` | 4 | 2 | 2 / 3* |
+| Conditional branch, taken; `JMP8` | 19 | `S + 2` | 2 | 2 | 1 |
+| `JALR`, `RET`, `RETI` | 35 (`JALR` only) | `2S + 2` | 3 | 2 | 1 |
+| `JALL` | — | `3S + 3` | 4 | 2 | 1 |
 | `MFS`, `MTS` | — | `S + P + 2` | 2 | 1 | 1 |
 | `STI`, `CLI` | — | `S + 2` | 2 | 1 | 1 |
 | `LD` | 52 | `3S + H + 2` | `H + 3` | `H + 1` | 1 |
@@ -312,7 +314,7 @@ Cached uses local SRAM or cache hits, with room for write-through stores.
 | Immediate shift by `n` bits, Full | — | `(n + 1)S + P + 2` | `2n + 1` | `n` | 1 |
 | `FSR1` | — | `3S + P + 2` | 3 | 1 | 1 |
 | `FSL1` | — | `3S + P + 2` | 4; 3 with MulDiv | 1 | 1 |
-| Fabric `MUL` | — | `(L + 2)S + P + 2` | `L + 3` | `L/2 + 1` | `L/2 + 1` |
+| Fabric `MUL` | — | `(L + 2)S + P + 2` | `L + 3` | `L/2 + 1` | — |
 | DSP `MUL` | — | — | — | 2 | 3 |
 | `MULHU`, MulH/MulDiv | — | — | `L + 4` | — | — |
 | `DIVU`, MulDiv | — | — | `3L + 3` | — | — |
@@ -320,8 +322,9 @@ Cached uses local SRAM or cache hits, with room for write-through stores.
 `L = XLEN`, `W` = serial datapath width, `S = L/W`, `H = L/16`, `n = 1–8`.
 `P = S` for RC16 Min/Sys `/8` and RC32 `/8` or `/16`; otherwise `P = 0`.
 
-\* Cached control transfers cost 3 with `REGISTER_FETCH` (all board demos), otherwise 2.
-With local SRAM enabled, instruction-cache fetches take at least 2 CPI even
+Cached control-transfer figures assume correct predictions. A taken/indirect
+miss or cold JALL adds one clock; a predicted-taken branch that falls through
+adds two. With local SRAM enabled, instruction-cache fetches take at least 2 CPI even
 on hits. Cached adds one cycle for an immediate load consumer or a store
 followed by a load of the same cached word; these penalties can combine.
 
@@ -340,8 +343,8 @@ site count across usable mapping recipes. Clock rates are medians over routing
 seeds 1–32, or 1–128 for Nano. Serial and wide cores use the minimum block-RF
 area, with ties resolved by median Fmax. Fast uses the recipe with
 the highest median MIPS per LUT4 site. Efficiency uses the area of that
-timed recipe. Cached ECP5 results use seed 1, with the timed recipe chosen for
-MIPS per LUT4 site.
+timed recipe. Cached ECP5 results use Yosys 0.33 and nextpnr-ecp5 0.6-3build5
+at seed 1, with the timed recipe chosen for MIPS per LUT4 site.
 
 Agilex 3 results use Quartus Pro 26.1, seed 1, and a 4 ns target. The recipe
 is Aggressive Area for Full, MulH, and MulDiv, and High Performance Effort
@@ -351,8 +354,7 @@ restricted-Fmax estimate; it does not guarantee timing closure at that clock. On
 2.95 LEs for efficiency.
 
 Core-only measurements exclude board initialization and are not programmable
-board images. Cached tables use compact fetch; the board results below use
-registered fetch.
+board images. Cached tables use DSP multiplication and the target-specific BTB sizes above.
 
 ### Area
 
@@ -395,26 +397,30 @@ registered fetch.
 | RC32 Full + MulH | — | — | — | — | — | 253.4 |
 | RC32 Full + MulDiv | — | — | — | — | — | 261.8 |
 
-| Nano, Fast, and Cached area | ECP5 minimum block-RF LUT4 sites | ECP5 minimum LUTRAM-RF sites | ECP5 timed block-RF sites | Agilex 3 ALMs needed, RF included |
+| Nano, Fast, and Cached area | ECP5 block-RF LUT4 sites | ECP5 LUTRAM-RF sites | ECP5 timed sites | Agilex 3 ALMs needed, RF included |
 |---|---:|---:|---:|---:|
 | Nano | 94 | 115 | 94 | 78.9 |
 | RC16 Fast DSP | 499 | 546 | 499 | 260.7 |
 | RC16 Fast soft | 557 | 591 | 572 | 253.4 |
 | RC32 Fast DSP | 880 | 958 | 880 | 423.7 |
 | RC32 Fast soft | 949 | 1043 | 953 | 437.8 |
-| RC16 Cached soft | 1128 | 1174 | 1131 | 508.1 |
-| RC16 Cached DSP | 1070 | 1117 | 1070 | 481.4 |
-| RC32 Cached soft | 1730 | 1837 | 1734 | 804.6 |
-| RC32 Cached DSP | 1681 | 1772 | 1695 | 780.8 |
+| RC16 Cached DSP | — | 1242 | 1242 | 578.8 |
+| RC32 Cached DSP | — | 1958 | 2040 | 888.7 |
 
-ECP5 Nano uses one RF EBR; Fast and Cached use two at either width. ECP5 Fast DSP
-uses one DSP block at XLEN=16 and three at XLEN=32; Agilex uses one and two.
+ECP5 Nano uses one RF EBR. ECP5 Fast DSP uses one DSP block at XLEN=16 and
+three at XLEN=32; Agilex uses one and two. Cached uses the same DSP counts.
 The LUTRAM column includes the complete register file. Cached includes both
 2 KiB caches, their tags, and the register file. Cache data uses two memory
 blocks; tags and valid bits use LUTRAM on ECP5 and MLABs on Agilex.
+Cached's RF also uses LUTRAM/MLABs. Timed ECP5 results use the block RF for
+Nano and Fast, and LUTRAM for Cached.
 Fast ECP5 timing uses the median over seeds 1–32; Cached uses seed 1.
 
-The timed-recipe area column is used for Fmax and efficiency comparisons.
+The ECP5 area columns use the recorded mapping recipes. The timed-recipe
+area column is used for Fmax and efficiency comparisons. Cached's minimum-area
+recipes are `-dff` for RC16 and the default for RC32; its timed recipes
+are `-dff` and `-abc9`, respectively. Native RC32 Sys/Full and arithmetic
+extensions use a minimum block-area recipe for timing.
 
 ### Clock rate
 
@@ -444,19 +450,18 @@ The timed-recipe area column is used for Fmax and efficiency comparisons.
 | RC32 Full + MulH | — | — | — | — | — | 205.80 |
 | RC32 Full + MulDiv | — | — | — | — | — | 218.25 |
 
-| Other implementation Fmax (MHz) | ECP5 EBR RF | Agilex 3, MLAB RF |
+| Other implementation Fmax (MHz) | ECP5, timed RF | Agilex 3, MLAB RF |
 |---|---:|---:|
 | Nano | 87.11 | 291.80 |
 | RC16 Fast DSP | 60.60 | 239.12 |
 | RC16 Fast soft | 58.09 | 250.00 |
 | RC32 Fast DSP | 53.72 | 218.10 |
 | RC32 Fast soft | 55.91 | 239.87 |
-| RC16 Cached soft | 53.24 | 213.68 |
-| RC16 Cached DSP | 51.62 | 230.31 |
-| RC32 Cached soft | 53.32 | 213.45 |
-| RC32 Cached DSP | 52.43 | 206.36 |
+| RC16 Cached DSP | 69.57 | 231.43 |
+| RC32 Cached DSP | 69.69 | 207.94 |
 
-Fast ECP5 Fmax values are medians over seeds 1–32; Cached values use seed 1.
+Fast ECP5 Fmax values are medians over seeds 1–32; Cached uses seed 1.
+
 
 ### RC16 benchmark throughput
 
@@ -471,7 +476,9 @@ uses one-clock native 32-bit SRAM and includes cold-cache initialization and
 misses; serial/wide benchmarks use the ready-memory fixture.
 
 Throughput combines the clock rates above with the Verilator cycle counts
-below. ECP5 uses the block RF. All cores have the same cycle count on both targets.
+below. ECP5 uses the block RF except for Cached's LUTRAM RF.
+Cached cycle counts differ between targets because their BTB sizes differ;
+other cores have the same cycle counts on both targets.
 
 | Core | ECP5 MIPS | Agilex MIPS | ECP5 MIPS/kLUT4 | Agilex MIPS/kLE |
 |---|---:|---:|---:|---:|
@@ -485,8 +492,7 @@ below. ECP5 uses the block RF. All cores have the same cycle count on both targe
 | Nano | 2.80 | 9.40 | 29.8 | 40.4 |
 | RC16 Fast DSP | 45.32 | 178.86 | 90.8 | 232.6 |
 | RC16 Fast soft | 39.38 | 169.46 | 68.8 | 226.7 |
-| RC16 Cached soft | 35.66 | 143.13 | 31.5 | 95.5 |
-| RC16 Cached DSP | 37.56 | 167.58 | 35.1 | 118.0 |
+| RC16 Cached DSP | 53.96 | 180.09 | 43.4 | 105.5 |
 
 | Core | Cycles |
 |---|---:|
@@ -500,8 +506,8 @@ below. ECP5 uses the block RF. All cores have the same cycle count on both targe
 | Nano | 263691 |
 | RC16 Fast DSP | 4329 |
 | RC16 Fast soft | 4777 |
-| RC16 Cached soft | 4834 |
-| RC16 Cached DSP | 4450 |
+| RC16 Cached DSP | 4175 / 4161 |
+
 
 ### RC32 benchmark throughput
 
@@ -521,88 +527,129 @@ instruction-count differences. Memory fixtures match those described above.
 | RC32 Full /32 | 11191 | 20.20 | 59.66 | 39.8 | 80.5 |
 | RC32 Fast soft | 5775 | 30.23 | 129.72 | 31.7 | 100.4 |
 | RC32 Fast DSP | 4815 | 34.84 | 141.46 | 39.6 | 113.2 |
-| RC32 Cached soft | 5342 | 31.17 | 124.79 | 18.0 | 52.6 |
-| RC32 Cached DSP | 4446 | 36.83 | 144.95 | 21.7 | 62.9 |
+| RC32 Cached DSP | 4197 / 4195 | 51.86 | 154.80 | 25.4 | 59.0 |
 
-### Compiler benchmark cycles
+Cached cycle pairs list ECP5 / Agilex.
 
-Both widths compile the same C programs at `-O2` for the Full profile,
-with the size-optimized runtime libraries and standard-library optimizations enabled.
-The RC16 MulH/MulDiv columns reuse the Full binary; MulDiv also speeds up FSL1.
+With direct SRAM and speed-optimized libraries, RC32 Cached measures
+1.409 DMIPS/MHz with 32 BTB entries and 1.366 with 16 entries. These are RTL
+simulation results; the measured Dhrystone loops take 404,034 and 416,520
+cycles respectively.
 
-| Benchmark | RC16 Full /16 | RC16 MulH /16 | RC16 MulDiv /16 | RC32 Full /32 |
-|---|---:|---:|---:|---:|
-| `int32` | 156234 | 156234 | 151438 | 66555 |
-| `softfloat` | 366092 | 366092 | 361393 | 387794 |
-| `libm32` | 28621 | 28621 | 28215 | 27410 |
-| `matrix` | 188741 | 188741 | 186536 | 214815 |
-| `structures` | 7821 | 7821 | 7821 | 9814 |
-| `dhrystone` | 2166196 | 2166196 | 2166196 | 1377561 |
-| `memory_copy` | 1122709 | 1122709 | 1122709 | 277883 |
-| `memory_update` | 442578 | 442578 | 442578 | 221685 |
-| `memory_chase` | 1572076 | 1572076 | 1572076 | 535676 |
-| Total | 6051068 | 6051068 | 6038962 | 3119193 |
+### Comparison with other cores
 
-Pipelined DSP cores with ECP5 block RF:
+#### Dhrystone binary size: common compiler and sources
 
-| Benchmark | RC16 Fast | RC32 Fast | RC16 Cached, SRAM | RC32 Cached, SRAM |
-|---|---:|---:|---:|---:|
-| `int32` | 64258 | 27855 | 55229 | 22819 |
-| `softfloat` | 164088 | 185994 | 149715 | 158423 |
-| `libm32` | 12968 | 13367 | 11684 | 11001 |
-| `matrix` | 82704 | 101749 | 71418 | 88247 |
-| `structures` | 3494 | 4507 | 3273 | 3734 |
-| `dhrystone` | 1015131 | 714670 | 864962 | 484733 |
-| `memory_copy` | 451762 | 159923 | 289996 | 93343 |
-| `memory_update` | 198864 | 130052 | 145039 | 75823 |
-| `memory_chase` | 640129 | 284740 | 419966 | 173106 |
-| Total | 2633398 | 1622857 | 2011282 | 1111229 |
+The size comparison uses the same project LLVM/Clang and LLD 23.1.0 build,
+revision `c45af928ef16`, with the RISC-C, ARM and RISC-V backends enabled.
+All builds use hardware multiplication and software division, the same
+Dhrystone 2.1 and C library sources, and separate benchmark translation units
+with procedure inlining disabled and no LTO. Applications and C libraries use
+the indicated optimization level; unused sections are discarded by the linker.
+Sizes include minimal startup, constants and required runtime helpers,
+excluding ELF metadata and zero-initialized RAM (`.bss`).
 
-`dhrystone` adapts [Dhrystone 2.1](https://www.netlib.org/benchmark/dhry-c)
-for bare-metal execution with static records, 1,000 iterations, and final-state
-checks. It uses native 16-bit or 32-bit `int`, with the original two translation
-units compiled separately, procedure inlining disabled, and linker call relaxation.
-Dhrystone performance in **DMIPS/MHz**, measured over the loop only, excluding
-setup and verification. Applications use `-O2`; library optimization is shown
-separately. The cycle tables above use the default `-Oz` libraries; select
-`RISCC_LIB_OPT=-O2` for [speed-optimized libraries](PROGRAMMING.md#libraries).
+| Architecture / ISA | `-O2` bytes | `-Os` bytes |
+|---|---:|---:|
+| RISC-C, RC32 | 2,053 | 1,868 |
+| RISC-V, RV32IC+Zmmul | 2,272 | 2,204 |
+| Arm Thumb-2, Cortex-M3/M4 | 2,447 | 1,955 |
 
-| Core | RC16, `-Oz` libs | RC32, `-Oz` libs | RC16, `-O2` libs | RC32, `-O2` libs |
-|---|---:|---:|---:|---:|
-| Wide Full, native width | 0.266 | 0.423 | 0.304 | 0.428 |
-| Fast soft | 0.566 | 0.802 | 0.642 | 0.813 |
-| Fast DSP | 0.570 | 0.819 | 0.647 | 0.831 |
-| Cached soft, SRAM | 0.666 | 1.181 | 0.748 | 1.203 |
-| Cached DSP, SRAM | 0.671 | 1.216 | 0.754 | 1.240 |
+RISC-V uses `-march=rv32ic_zmmul -mabi=ilp32`: compressed instructions and
+hardware multiplication, without hardware division. Its software division
+uses the generic compiler-rt C helpers. RC32 uses its assembly runtime.
+Arm uses `-mcpu=cortex-m3` or `-mcpu=cortex-m4`, with
+`-mthumb -mfloat-abi=soft -mhwdiv=none` and the same compiler-rt division helpers.
+Cortex-M3 and M4 produce identical images. All four software-division builds
+pass 1,000 iterations and final-state checks in Unicorn 2.1.4's Cortex-M3/M4
+instruction-set simulator. Each executes 1,000 software-division calls and
+contains no hardware divide instructions. Unicorn does not model clock cycles,
+so it validates execution, not throughput.
 
-With speed libraries, Cached DSP's timed loops take 755,009 cycles on RC16
-and 459,011 on RC32; linked text sizes are 1,924 and 1,950 bytes.
-
-The memory tests use volatile 32-bit data and unrolled loops on both widths.
-`memory_copy` makes eight round trips between two 4 KiB buffers;
-`memory_update` increments a 1 KiB array 64 times; `memory_chase` follows
-an 8 KiB chain of indices 16 times, updating each visited node. All verify
-every element. Cycle counts include startup, initialization, and verification.
-
-Cached runs with direct instruction/data SRAM: one-clock responses, no cache
-misses, and one independent load/store per clock. Cached uses `REGISTER_FETCH`
-with Decode-stage branches; applications and libraries use the compiler's
-default branch scheduling. Fast uses its direct 16-bit SRAM port. These are
-RTL simulations, not board measurements.
+To enable the comparison backends in the existing compiler build:
 
 ```sh
-make bench bench-cached
-make RISCC_XLEN=16 compiler-benchmarks-rtl
-make RISCC_XLEN=32 compiler-benchmarks-rtl
+cmake -S external/llvm-project/llvm -B build/llvm-riscc \
+  '-DLLVM_TARGETS_TO_BUILD=ARM;RISCV' -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=RISCC
+CCACHE_DIR="$PWD/build/ccache" cmake --build build/llvm-riscc \
+  --target clang lld --parallel 16
 ```
 
-The C target runs both `-O2` and `-Os`, with soft and DSP multipliers.
-Add `BENCHMARKS=dhrystone` to run only Dhrystone, or
-`BENCH_OPT_LEVELS=oz` to measure the smallest-code setting. Use
-`BENCHMARK_CACHED_MEMORY=cache` to test the I/D caches against backing SRAM.
-Results, including loop cycles and DMIPS/MHz, are saved in
-`build/compiler/rc16/full/benchmarks/rtl-cycles-sram.json` (or `rtl-cycles-cache.json`)
-and the corresponding `rc32` directory.
+#### Dhrystone performance: core-specific builds
+
+These are core-reported Dhrystone 2.1 scores, not measurements of the common
+size-comparison binaries. Compiler, runtime, memory system and division
+support differ between results.
+
+| Architecture | Core | DMIPS/MHz | Source |
+|---|---|---:|---|
+| RISC-C | RC32 Cached, 32-entry BTB | 1.409 | [Project RTL measurements](#rc32-benchmark-throughput) |
+| RISC-V | VexRiscv | 1.44 | [VexRiscv documentation](https://github.com/SpinalHDL/VexRiscv#description) |
+| RISC-V | PicoRV32, normal / look-ahead memory | 0.305 / 0.516 | [PicoRV32 documentation](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) |
+| Arm Thumb-2 | Cortex-M3/M4 | 1.25 | [Arm, Cortex-M for Beginners, Table 7](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) |
+
+RC32 uses `-O2`, software division and direct SRAM. Timing covers 1,000
+iterations between the benchmark's markers, excluding setup and final-state
+verification: 404,034 loop cycles. DMIPS/MHz is
+`iterations * 1000000 / (1757 * loop_cycles)`.
+
+VexRiscv's 1.44 configuration uses a five-stage pipeline, dynamic target
+prediction, single-cycle multiplication and a 33-cycle hardware divider.
+PicoRV32's published scores enable fast multiplication, hardware division and
+a barrel shifter. Its
+[look-ahead interface](https://github.com/YosysHQ/picorv32#look-ahead-interface)
+provides the next memory address and controls one cycle before `mem_valid`,
+allowing synchronous SRAM to start the access earlier; these combinational
+outputs can make timing closure harder. Arm's 1.25 figures are its official
+scores without procedure inlining or multi-file compilation, not its higher
+full-optimization figures.
+
+#### FPGA size and clock comparison
+
+This table compares compact and pipelined RISC-C and RISC-V cores using recorded RISC-C
+fits and upstream-published RISC-V results. They are not same-device,
+same-tool measurements. Counts retain their device-native units; neither
+count represents the additional embedded RAM and DSP blocks used by a core.
+`—` means no matching measurement is available, not that the core is unsupported.
+
+| Core | Configuration | FPGA | Logic area | Fmax (MHz) | Source |
+|---|---|---|---:|---:|---|
+| RISC-C RC16 Nano (with RF) | 16-bit architecture, one-bit serial datapath, MLAB RF | Agilex 3 | 78.9 ALMs | 291.80 | [RISC-C measurement conditions](#measurement-conditions) |
+| RISC-C RC32 Min /1 (with RF) | 32-bit architecture, one-bit serial datapath, Min profile, MLAB RF | Agilex 3 | 121.3 ALMs | 301.66 | [RISC-C measurement conditions](#measurement-conditions) |
+| RISC-C RC32 Cached (with RF) | 2 KiB I-cache + 2 KiB D-cache, 32-entry BTB, DSP multiply | Agilex 3 | 888.7 ALMs | 207.94 | [RISC-C measurement conditions](#measurement-conditions) |
+| RISC-V SERV minimal | Minimum-area bit-serial configuration, excluding RF | Artix-7 | 125 LUTs | — | [SERV datasheet, Area](https://serv.readthedocs.io/en/stable/datasheet.html#area) |
+| RISC-V VexRiscv full | RV32IM, 4 KiB I-cache + 4 KiB D-cache, static prediction | Cyclone V | 1,166 ALMs | 141 | [VexRiscv area and Fmax](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
+| RISC-V VexRiscv full | RV32IM, 4 KiB I-cache + 4 KiB D-cache, static prediction | Artix-7 | 1,840 LUTs | 199 | [VexRiscv area and Fmax](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
+| RISC-V PicoRV32 large | RV32IMC, PCPI, IRQ, multiply/divide and barrel shifter | Kintex-7 | 2,019 LUTs | — | [PicoRV32 utilization](https://github.com/YosysHQ/picorv32#utilization-on-xilinx-7-series-fpgas) |
+
+An [Agilex 3 ALM](https://docs.altera.com/r/docs/817231/current/agilextm-3-fpgas-and-socs-device-overview/adaptive-logic-module-in-agilextm-3-fpgas-and-socs)
+has an eight-input fracturable LUT structure; a
+[7-series LUT](https://docs.amd.com/r/en-US/ug474_7Series_CLB/Look-Up-Table)
+has six inputs and can split into two five-input functions with shared inputs.
+There is no workload-independent conversion between their counts. ECP5 and
+iCE40 LUT4 counts would be useful for a same-family comparison, but changing
+the unit alone does not normalize different memory, carry and packing resources.
+
+All RISC-C area figures include their MLAB register files (RF). The RISC-C
+rows use Quartus Pro 26.1, device `A3CZ135BB18AE7S`, seed 1 and the
+post-fit restricted-Fmax estimate. Nano and Min `/1` include their MLAB register
+files, with no block RAM or DSP blocks. Cached's ALM count includes the MLAB register
+file and cache metadata; Cached also uses two M20Ks, with Quartus estimating
+two DSP blocks needed after dense packing.
+The source snapshot for this fit matches the current RTL. VexRiscv reports
+its fastest Cyclone V speed grade with neutral synthesis options and an
+aggressive clock constraint; those conditions differ from the Agilex fit.
+
+SERV reports 125 LUTs and 164 flip-flops for its most minimal Artix-7
+synthesis, explicitly excluding the register file. Its datasheet gives no
+matching Fmax, so the table does not infer one from another configuration.
+
+The VexRiscv PPA rows use its published `full` configuration, not the different
+configuration behind the 1.44 DMIPS/MHz headline score. PicoRV32's LUT figure
+is its Vivado 2017.3 area-optimized `large` result, including 88 memory LUTs.
+Its published timing configuration is not comparable and is omitted here.
+RISC-C has no recorded Xilinx 7-series fit or routed Fmax, and PicoRV32's
+upstream documentation gives no Intel ALM/Fmax pair.
 
 ### Reproducing measurements
 
@@ -614,6 +661,20 @@ make -j16 QUARTUS_SH=/path/to/quartus/bin/quartus_sh tables
 `tables-lattice` evaluates mapping recipes at routing seed 1 by default and
 runs the common RTL benchmark. Set `TUNE_SEEDS=32` for a 32-seed sweep.
 Recipe choices and raw results are written under `build/tune/`.
+
+To reproduce only the recorded Cached ECP5 area and timing recipes:
+
+```sh
+make -j6 PNR_SEED=1 \
+  build/area/ecp5-lutram/cached/dsp.resources \
+  build/area/ecp5-lutram/cached32/dsp.resources \
+  build/area/ecp5-block/cached/dsp.resources \
+  build/area/ecp5-block/cached32/dsp.resources \
+  build/fmax/ecp5/cached/dsp.mhz build/fmax/ecp5/cached32/dsp.mhz
+```
+
+For Cached, the `ecp5-lutram` area targets use the minimum-area recipes, while
+`ecp5-block` uses the timed recipes. Both include the fixed LUTRAM register file.
 
 For one full-width configuration:
 
@@ -780,10 +841,12 @@ The full 64 MiB pattern checks and benchmark verification passed.
 
 ### Icepi Zero
 
-The [Icepi demo](../boards/icepi_zero) runs RC32 Cached at 66.67 MHz and
+The [Icepi demo](../boards/icepi_zero) targets RC32 Cached at 66.67 MHz and
 scales the 640×360 framebuffer 2× to 1280×720 DVI at 60 Hz.
-The build uses 3,857 LUT4 sites, 1,667 registers, 12 EBRs, and three DSP
-blocks. All internal clock targets pass.
+The build uses 4,105 packed `TRELLIS_COMB` cells, 1,555 registers, 12 EBRs
+and three DSP blocks. At routing seed 1, CPU Fmax is 68.75 MHz and SDRAM
+Fmax is 174.46 MHz.
+All internal clock targets pass.
 
 ```sh
 make icepi-zero-demo-iss
@@ -804,7 +867,7 @@ openFPGALoader -cft231X --pins=7:3:5:6 build/icepi_zero/demo.bit
 
 ### Terasic Atum A3 Nano
 
-The [Atum demo](../boards/atum_a3_nano) runs RC32 Cached at 200 MHz
+The [Atum demo](../boards/atum_a3_nano) targets RC32 Cached at 200 MHz
 and scales the 640×360 framebuffer 2× to 1280×720p60 through the TFP410.
 Board settings and pin assignments are in
 [atum_a3_nano.qsf](../boards/atum_a3_nano/atum_a3_nano.qsf).
@@ -831,8 +894,8 @@ quartus_pgm -c "Atum A3 Nano [USB-0]" -m jtag \
   -o "p;build/atum_a3_nano/quartus/output_files/atum_a3_nano.sof"
 ```
 
-Quartus Pro 26.1: 1,417 ALMs, 2,193 registers, 15 M20Ks, two DSPs, two PLLs.
-CPU, SDRAM, and HDMI timing pass.
+The seed-1 build uses 1,551 ALMs and reaches 201.53 MHz on the CPU clock.
+All timing checks pass at the configured CPU, SDRAM and video clocks.
 
 Persistent QSPI programming is outside the normal flow; see Terasic's
 [Atum A3 Nano documentation](https://www.terasic.com.tw/cgi-bin/page/archive.pl?CategoryNo=44&Language=English&No=1373&PartNo=4).
@@ -843,7 +906,7 @@ Persistent QSPI programming is outside the normal flow; see Terasic's
 
 ### Terasic DE23-Lite
 
-The [DE23-Lite demo](../boards/de23_lite) runs RC32 Cached at 200 MHz with
+The [DE23-Lite demo](../boards/de23_lite) targets RC32 Cached at 200 MHz with
 64 MiB SDRAM at 125 MHz. The ADV7513 outputs 1280×720p60 video from the
 640×360 framebuffer at 2× scaling. It shares the SoC and firmware with Atum A3 Nano.
 Pin assignments are in [de23_lite.qsf](../boards/de23_lite/de23_lite.qsf).
@@ -858,5 +921,5 @@ Output: `build/de23_lite/quartus/output_files/de23_lite.sof`.
 UART uses the onboard FT2232H at 115200 baud, 8N1. KEY0 resets the system;
 LEDR0–2 show application status and LEDR3 shows HDMI configuration status.
 
-Quartus Pro 26.1: 1,487 ALMs, 2,174 registers, 15 M20Ks, two DSPs, two PLLs.
-CPU, SDRAM, and HDMI timing pass.
+The seed-1 build uses 1,612 ALMs and reaches 201.53 MHz on the CPU clock.
+All timing checks pass at the configured CPU, SDRAM and video clocks.

@@ -107,6 +107,8 @@ module riscc_sdram_scanout #(
     assign memory_addr = {{(24-ADDRESS_BITS){1'b0}}, address_q};
     assign memory_cyc = busy_q && !setup_q;
     assign memory_stb = issuing_q;
+    wire final_request = (&address_q[3:0]) &&
+        block_q == LAST_BLOCK[BLOCK_BITS-1:0];
     always @(posedge memory_clk) begin
         if (memory_rst) begin
             request_meta_q <= 0;
@@ -128,24 +130,24 @@ module riscc_sdram_scanout #(
                 fetch_row_q <= fetch_row;
                 setup_q <= 1;
                 word_q <= 0;
-                block_q <= 0;
+
                 busy_q <= 1;
             end
             // Begin the fetch after selecting the requested mailbox row.
             if (setup_q) begin
                 address_q <= (row_address << (STRIDE_SHIFT + 2)) + (row_address << STRIDE_SHIFT);
                 setup_q <= 0;
-                issuing_q <= 1;
             end
+            if (!busy_q) block_q <= 0;
             if (memory_stb && !memory_stall) begin
                 // The address already counts words within each 16-word block.
                 if (&address_q[3:0]) begin
                     block_q <= block_q + 1'b1;
-                    if (block_q == LAST_BLOCK[BLOCK_BITS-1:0])
-                        issuing_q <= 0;
                 end
                 address_q <= address_q + 1'b1;
             end
+            issuing_q <= (setup_q || issuing_q) &&
+                !(issuing_q && !memory_stall && final_request);
             if (busy_q && memory_ack) begin
                 lines[{fetch_bank_q, word_q}] <= memory_rdata;
                 if (word_q == LAST_WORD[WORD_BITS-1:0]) begin

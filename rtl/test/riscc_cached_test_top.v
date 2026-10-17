@@ -11,7 +11,7 @@
 `default_nettype none
 
 module riscc_cached_test_top #(
-    parameter integer XLEN = 16,
+    parameter integer XLEN = 32,
     // The C++ fixture maps MMIO in byte addresses with bit 15 set on both
     // RC16 and RC32 configurations.
     parameter integer DCACHE_UNCACHED_BIT = 15

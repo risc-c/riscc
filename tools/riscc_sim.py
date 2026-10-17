@@ -13,11 +13,12 @@ Profile model mirrors the three RTL builds:
     sys (default)   min + IRQ/RETI + JALL/JMPL
     --full          sys + variable shifts + MUL
     --mdu           paired MULHU and DIVU (requires --full)
+    --iflush        enable IFLUSH (requires sys/full profile)
     --nano          nano ABI: no S-bank/sys profile/CMPI/JALL, JALR links to rd
 In min and sys, SRLI/SRAI shift by exactly 1 and FSL1/FSR1 are defined.
 SLLI and MUL are undefined outside Full; JALL is undefined only in Min.
 
-Usage: riscc_sim.py image.bin [--min] [--full] [--mdu]
+Usage: riscc_sim.py image.bin [--min] [--full] [--mdu] [--iflush]
                        [--nano]
                        [--max-insns N] [--trace] [--dump ADDR LEN] [--dump-written]
                        [--uart] [--uart-in FILE] [--uart-in-text TEXT]
@@ -156,7 +157,7 @@ class FramebufferWindow:
 
 class Sim:
     def __init__(self, image, sys_tier=True, full=False, mdu=False, nano=False,
-                 trace=False, uart=False, uart_in=b""):
+                 trace=False, uart=False, uart_in=b"", iflush=False):
         self.mem = [0] * 32768
         for i in range(0, min(len(image), 65536), 2):
             hi = image[i + 1] if i + 1 < len(image) else 0
@@ -172,6 +173,7 @@ class Sim:
         self.long_jall = sys_tier and not nano
         self.full = full and not nano
         self.mdu = mdu and self.full
+        self.iflush = iflush and self.sys_tier
         self.insns = 0
         self.trace = trace
         self.trace_steps = 0
@@ -430,6 +432,9 @@ class Sim:
                     elif ddd == 5 and self.sys_tier:
                         self.ie = 1
                         pc_next = (self.s[aaa] >> 1) & 0x7FFF
+                    elif ddd == 3 and self.iflush:
+                        if aaa != 0:
+                            raise Undefined("IFLUSH aaa field reserved")
                     elif ddd in (2, 7) and self.sys_tier:
                         if aaa != 0:
                             raise Undefined("CLI/STI aaa field reserved")
@@ -480,6 +485,8 @@ def main():
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--mdu", action="store_true",
                     help="enable the paired MULHU/DIVU extension (requires --full)")
+    ap.add_argument("--iflush", action="store_true",
+                    help="enable IFLUSH (requires a sys/full profile)")
     ap.add_argument("--nano", action="store_true",
                     help="nano ABI/subset (JALR links to rd, no S-bank/sys profile)")
     ap.add_argument("--max-insns", type=int, default=2_000_000,
@@ -512,6 +519,8 @@ def main():
         ap.error("--nano cannot be combined with an RC16 profile")
     if args.mdu and not args.full:
         ap.error("--mdu requires --full")
+    if args.iflush and (args.min or args.nano):
+        ap.error("--iflush requires a sys/full profile")
 
     with open(args.image, "rb") as f:
         image = f.read()
@@ -522,6 +531,7 @@ def main():
     if args.uart_in_text is not None:
         uart_in.extend(args.uart_in_text.encode("latin1"))
     sim = Sim(image, sys_tier=not args.min, full=args.full, mdu=args.mdu,
+              iflush=args.iflush,
               nano=args.nano, trace=args.trace,
               uart=args.uart or args.uart_in or args.uart_in_text is not None or
               args.uart_out or args.uart_expect is not None,

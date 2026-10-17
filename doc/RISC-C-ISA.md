@@ -142,9 +142,10 @@ calculations use XLEN-bit addition and wrap modulo `2^XLEN`. Instruction fetch
 reads `M16[pc]`; an instruction target must be two-byte aligned.
 
 Whether a region is executable, readable, or writable is platform-defined.
-When stores modify executable memory, their ordering and visibility to
-instruction fetch are platform-defined unless an extension defines
-synchronization.
+When stores modify executable memory, software must make them visible using
+platform-defined ordering, then invalidate instruction-side caches with
+the optional `iflush` extension where supported. Otherwise, cache maintenance
+is platform-defined.
 
 ### 2.1 Memory Ordering and Atomicity
 
@@ -155,7 +156,8 @@ indivisible 16-bit access, and an aligned data-word access is an indivisible
 XLEN-bit access. No agent may observe only part of an indivisible access.
 
 Visibility and ordering between a core and other cores, devices, or DMA engines
-are platform-defined. The base ISA does not define cache coherence, fences,
+are platform-defined. Beyond local instruction-cache invalidation with `IFLUSH`,
+the base ISA does not define cache coherence, general memory fences,
 atomic read-modify-write operations, or memory-mapped device ordering and side
 effects. A platform or extension may define them.
 
@@ -435,14 +437,16 @@ control-selector values are defined:
 | `000` | `101` | `RETI Sa` | `IE ← 1`; `pc ← S[a]` |
 | `000` | `010` | `CLI` | `IE ← 0` |
 | `000` | `111` | `STI` | `IE ← 1` |
+| `000` | `011` | `IFLUSH` (optional extension) | invalidate local instruction cache and BTB |
 
-In these selectors, `ddd[1]` selects a return (`0`) or a direct `IE`
+For RET/RETI and CLI/STI, `ddd[1]` selects a return (`0`) or a direct `IE`
 operation (`1`), and `ddd[2] = ddd[0]` supplies the zero/one value. The
 return/value-zero combination preserves `IE`; the other three combinations
 write the selected value.
 
 All other `ddd` values in the `bbb = 000` row are reserved and undefined.
-`aaa` selects `Sa` for `RET` and `RETI`; `CLI` and `STI` require `aaa = 0`.
+`aaa` selects `Sa` for `RET` and `RETI`; `CLI`, `STI`, and `IFLUSH` require
+`aaa = 0`.
 
 The remaining `bbb` values have the following definitions:
 
@@ -462,6 +466,13 @@ Consequently, `RET S0` preserves `IE`, while `RETI S0` sets it.
 `CLI` clears `IE`.
 
 `STI` sets `IE` to one.
+
+`IFLUSH` is an optional extension for RC16/RC32 Sys/Full cores with
+instruction caches or cached control-transfer targets. It invalidates that
+core's instruction cache and cached targets, including the BTB. Registers and
+`IE` are unchanged. It is not a data-memory fence; already-prefetched
+instructions need not be discarded. The encoding is reserved when the
+extension is absent.
 
 `JALR` transfers control to the byte address in `ra` and, unless `Sd` is `S0`,
 writes the byte address of the following instruction to `Sd`. Thus,
@@ -594,11 +605,13 @@ smaller profile's defined instructions is valid on a larger profile.
 | `RETI Sa` |  | X | X |
 | `CLI` |  | X | X |
 | `STI` |  | X | X |
+| `IFLUSH` § |  |  |  |
 
 
 
 § `SLL`, `SRL`, and `SRA` are optional Appendix E instructions. `MULHU` and
-`DIVU` are optional Appendix B instructions. None is required by any profile.
+`DIVU` are optional Appendix B instructions. `IFLUSH` requires the optional
+`iflush` extension and a Sys/Full profile. None is required by any profile.
 
 # Appendices
 
@@ -1206,6 +1219,7 @@ encoding.
 | `11dddaaa11111011` | — | `MTS Sd, ra` | RC16 |
 | `1101000011111000` | — | `CLI` | RC16 sys |
 | `1111100011111000` | — | `STI` | RC16 sys |
+| `1101100011111000` | — | `IFLUSH` | RC16/RC32 sys + iflush |
 | `00ddd00000110100` | `llllllllllllllll` | `JALL Sd, addr16` | RC16 Sys/Full |
 | `0000000000110100` | `llllllllllllllll` | `JMPL addr16` | RC16 Sys/Full |
 | `00dddhhhhh110100` | `llllllllllllllll` | `JALL Sd, addr21` | RC32 Sys/Full |

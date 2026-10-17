@@ -34,7 +34,8 @@ CORES = (
     "min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full", "nano",
     "mulh", "muldiv",
     "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp",
-    "cached-soft", "cached-dsp", "cached32-soft", "cached32-dsp",
+    "cached-dsp",
+    "cached32-dsp",
     "serial16-min", "serial16-sys", "serial16-full",
     "serial32-min", "serial32-sys", "serial32-full",
 ) + WIDE_CORES
@@ -42,7 +43,8 @@ WIDTHS = (1, 2, 4, 8, 16)
 MATRIX_CORES = ("min", "sys", "full", "rc32-min", "rc32-sys", "rc32-full")
 OTHER_CORES = ("nano", "mulh", "muldiv",
                "fast-soft", "fast-dsp", "fast32-soft", "fast32-dsp",
-               "cached-soft", "cached-dsp", "cached32-soft", "cached32-dsp")
+               "cached-dsp",
+               "cached32-dsp")
 SERIAL_CORES = ("serial16-min", "serial16-sys", "serial16-full",
                 "serial32-min", "serial32-sys", "serial32-full")
 
@@ -125,17 +127,16 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
         source = rtl / "riscc_nano.v"
         top = "riscc_nano"
         defines.append("RISCC_FMAX_NANO")
-    elif core.startswith(("cached-", "cached32-")):
+    elif core in ("cached-dsp", "cached32-dsp"):
         source = rtl / "riscc_cached.v"
         extra_sources = (rtl / "riscc_pipeline_shared.v",)
         top = "riscc_cached"
-        defines.append("RISCC_FMAX_CACHED")
-        if core.startswith("cached32-"):
-            defines.remove("RISCC_FMAX_CACHED")
+        if core == "cached32-dsp":
             defines.append("RISCC_FMAX_CACHED32")
             parameters = (("XLEN", 32),)
-        if core.endswith("soft"):
-            defines.append("RISCC_FAST_SOFT_MUL")
+        else:
+            defines.append("RISCC_FMAX_CACHED")
+            parameters = (("XLEN", 16),)
     else:
         source = rtl / "riscc_fast.v"
         extra_sources = (rtl / "riscc_pipeline_shared.v",)
@@ -148,7 +149,10 @@ def core_spec(root: Path, target: str, core: str, width: int) -> CoreSpec:
             defines.append("RISCC_FAST_SOFT_MUL")
 
     block_defines = list(defines)
-    if core.startswith(("fast-", "fast32-", "cached-", "cached32-")):
+    if core.startswith(("cached-", "cached32-")):
+        # Cached always uses a distributed RF. Keep its target-specific BTB.
+        pass
+    elif core.startswith(("fast-", "fast32-")):
         block_defines.remove("RISCC_ECP5")
         block_defines.append("RISCC_FAST_BLOCK_RF")
     else:
@@ -316,8 +320,9 @@ def print_matrix(selections, target: str, output: Path, serial=False):
 
     table("Tuned ECP5 area (LUTRAM RF included)", "area")
     table("Tuned ECP5 area (block RAM RF)", "block_area")
+    print("Cached uses its fixed LUTRAM RF in both area columns.")
     table(f"Tuned {target} Fmax (MHz, fastest recipe and seed)", "fmax", 2)
-    table(f"Tuned {target} block-RF efficiency (MHz/kLUT, one recipe and seed)",
+    table(f"Tuned {target} efficiency (MHz/kLUT, timed RF, one recipe and seed)",
           "mhz_per_klut", 2)
     print(f"selections: {output}")
 
@@ -508,7 +513,7 @@ def main():
                              synth.block_area if synth.block_area is not None else "",
                              seed, f"{fmax:.2f}", status))
 
-    print(f"{'recipe':<14} {'block':>7} {'seed':>7} {'Fmax MHz':>10}")
+    print(f"{'recipe':<14} {'sites':>7} {'seed':>7} {'Fmax MHz':>10}")
     best_rows = []
     for synth in sorted(synths, key=lambda item: item.recipe):
         routed = [row for row in results
@@ -525,7 +530,8 @@ def main():
         raise SystemExit("all place-and-route runs failed")
     fastest = max(best_rows, key=lambda row: row[2])
     efficient = max(best_rows, key=lambda row: row[2] / row[0].block_area)
-    print(f"smallest: {smallest.recipe}, {smallest.block_area} LUT sites + EBR")
+    rf = "LUTRAM RF, two cache EBRs" if args.core.startswith("cached") else "block RF"
+    print(f"smallest: {smallest.recipe}, {smallest.block_area} LUT sites ({rf})")
     print(f"fastest:  {fastest[0].recipe}, seed {fastest[1]}, "
           f"{fastest[2]:.2f} MHz")
     print(f"efficient:{efficient[0].recipe:>12}, seed {efficient[1]}, "

@@ -5,7 +5,7 @@ Author: Arto Vuori <avuori@iki.fi>
 RISC-C is an open processor architecture and FPGA soft-core family for compact
 systems. Its RISC-style instruction set is designed for compiled C and
 C++, and the family includes both 16- and 32-bit architectures. Implementations
-range from tiny bit-serial cores to a three-stage pipelined core.
+range from tiny bit-serial cores to a four-stage pipelined core.
 
 RISC-C Nano is the smallest practical C/C++-programmable FPGA soft CPU,
 using just 94 ECP5 LUT4 sites plus one memory block. Even a 32-bit RISC-C core
@@ -13,8 +13,8 @@ with interrupts and preemptive RTOS support uses only 172 LUT4 sites.
 
 The pipelined 32-bit core uses a single-issue, in-order design and runs at
 200 MHz on Agilex 3. With local SRAM and speed-optimized libraries, RTL
-benchmarks measure [1.235 DMIPS/MHz](doc/HARDWARE.md#compiler-benchmark-cycles),
-equivalent to about 247 DMIPS at 200 MHz.
+benchmarks measure [1.366–1.409 DMIPS/MHz](doc/HARDWARE.md#rc32-benchmark-throughput),
+depending on the branch predictor configuration.
 
 This repository contains the ISA and C application binary interface (ABI)
 specifications, a C/C++ compiler based on LLVM/Clang, an assembler, an
@@ -28,6 +28,55 @@ can be run using only free and open-source software. The RISC-C demonstration
 also runs on the
 [Icepi Zero](https://github.com/cheyao/icepi-zero), an open-source hardware
 board.
+
+## Comparison with other cores
+
+### Dhrystone binary size
+
+Dhrystone 2.1 built with the same LLVM/Clang 23.1.0 compiler, benchmark and
+C library sources, using hardware multiplication and software division.
+Sizes include startup and runtime, excluding `.bss`.
+
+| Architecture / ISA | `-O2` bytes | `-Os` bytes |
+|---|---:|---:|
+| RISC-C, RC32 | 2,053 | 1,868 |
+| RISC-V, RV32IC + multiply | 2,272 | 2,204 |
+| Arm Thumb-2, Cortex-M3/M4 | 2,447 | 1,955 |
+
+### Dhrystone performance
+
+Reported Dhrystone scores use each core's own compiler, runtime and hardware
+settings, not the common builds above. The RISC-V scores use hardware division;
+RC32 uses software division.
+
+| Architecture | Core | DMIPS/MHz |
+|---|---|---:|
+| RISC-C | [RC32 Cached](doc/HARDWARE.md#rc32-benchmark-throughput) | 1.409 |
+| RISC-V | [VexRiscv](https://github.com/SpinalHDL/VexRiscv#description) | 1.44 |
+| RISC-V | [PicoRV32](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) | 0.305 / 0.516 |
+| Arm Thumb-2 | [Cortex-M3/M4](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) | 1.25 |
+
+PicoRV32 values use normal / look-ahead memory. See the
+[configurations and measurement details](doc/HARDWARE.md#comparison-with-other-cores).
+
+### FPGA size and clock comparison
+
+Core-only results in each FPGA's native units; counts are not normalized
+across families.
+
+| Core | FPGA | Logic area | Fmax (MHz) |
+|---|---|---:|---:|
+| RISC-C RC16 Nano (with RF) | Agilex 3 | 78.9 ALMs | 291.80 |
+| RISC-C RC32 Min /1 (with RF) | Agilex 3 | 121.3 ALMs | 301.66 |
+| RISC-C RC32 Cached (with RF) | Agilex 3 | 888.7 ALMs | 207.94 |
+| RISC-V [SERV minimal, excluding RF](https://serv.readthedocs.io/en/stable/datasheet.html#area) | Artix-7 | 125 LUTs | — |
+| RISC-V [VexRiscv full](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | Cyclone V | 1,166 ALMs | 141 |
+| RISC-V [VexRiscv full](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | Artix-7 | 1,840 LUTs | 199 |
+| RISC-V [PicoRV32 large](https://github.com/YosysHQ/picorv32#evaluation-timing-and-utilization-on-xilinx-7-series-fpgas) | Kintex-7 | 2,019 LUTs | — |
+
+All RISC-C area figures include the register file (RF); SERV's excludes it.
+`—` means no comparable Fmax is listed. See
+[FPGA comparison details](doc/HARDWARE.md#fpga-size-and-clock-comparison).
 
 ## Getting started
 

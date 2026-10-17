@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 PASS_RE = re.compile(
-    r"PASS Cached cache hits XLEN=(?P<xlen>\d+) cycles=(?P<cycles>\d+) "
+    r"PASS Cached cache hits(?: XLEN=(?P<xlen>\d+))? cycles=(?P<cycles>\d+) "
     r"commits=(?P<commits>\d+) writes=(?P<writes>\d+)"
 )
 
@@ -30,18 +30,17 @@ def run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedP
 
 
 def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
-                block_rf: bool, register_fetch: bool, timeout: int) -> bool:
+                block_rf: bool, timeout: int) -> bool:
     rf_name = "block" if block_rf else "distributed"
-    fetch_name = "registered-fetch" if register_fetch else "compact-fetch"
-    name = f"xlen{xlen}-dsp-{rf_name}-{fetch_name}"
+    name = f"xlen{xlen}-dsp-{rf_name}-held-btb"
     mdir = build_root / name
     mdir.mkdir(parents=True, exist_ok=True)
     binary = mdir / "Vriscc_cached_hits_tb"
-    defines = ["-DRISCC_FAST_BLOCK_RF"] if block_rf else []
+    defines = (["-DRISCC_ECP5", "-DRISCC_FAST_BLOCK_RF"]
+               if block_rf else [])
     command = [
         verilator, "--binary", "--timing",
         "--top-module", "riscc_cached_hits_tb", f"-GXLEN={xlen}",
-        f"-GREGISTER_FETCH={int(register_fetch)}",
         "--Mdir", str(mdir), *defines,
         str(root / "rtl/riscc_pipeline_shared.v"),
         str(root / "rtl/riscc_cached.v"),
@@ -56,7 +55,8 @@ def one_variant(root: Path, verilator: str, build_root: Path, xlen: int,
     if result.returncode or not match:
         sys.stderr.write(f"{name}: test failed\n{result.stdout}")
         return False
-    if int(match.group("xlen")) != xlen or int(match.group("writes")) != 2:
+    if (match.group("xlen") is not None and int(match.group("xlen")) != xlen) or \
+            int(match.group("writes")) != 2:
         sys.stderr.write(f"{name}: malformed PASS result\n{result.stdout}")
         return False
     print(f"{name}: {match.group(0)}")
@@ -78,11 +78,10 @@ def main() -> int:
     if not build_root.is_absolute():
         build_root = root / build_root
     ok = all(one_variant(root, args.verilator, build_root, xlen, block_rf,
-                         register_fetch, args.timeout)
-             for xlen in (16, 32) for block_rf in (False, True)
-             for register_fetch in (False, True))
+                         args.timeout)
+             for xlen in (16, 32) for block_rf in (False, True))
     if ok:
-        print("Cached cache-hit checks PASS (8 variants)")
+        print("Cached cache-hit checks PASS (4 XLEN/RF variants)")
         return 0
     return 1
 

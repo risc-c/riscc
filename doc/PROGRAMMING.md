@@ -500,3 +500,28 @@ For one profile or subsystem, use the narrower targets documented by
 
 Hardware trace comparison, fuzzing, synthesis, and board programming belong in
 the [Hardware manual](HARDWARE.md#4-validation).
+
+## Replacing executable code
+
+Make replacement instructions visible to instruction fetch using the platform's
+memory-ordering rules, then execute `IFLUSH` from unmodified code before jumping
+to them. `IFLUSH` invalidates the local instruction cache and BTB; it is not a
+store barrier and need not discard instructions already prefetched. It preserves
+registers, flags, and interrupt enable. Keep affected code unreachable, including
+from interrupt handlers, until this sequence completes. Initial loading after
+reset needs no maintenance if no stale instruction state exists.
+
+```asm
+        ; Store the replacement instructions.
+        ; Complete the platform's required write-visibility operation.
+        IFLUSH
+        JMP r1          ; r1 holds the replacement entry address
+```
+
+In C, use `__asm__ volatile ("iflush" ::: "memory")` to prevent compiler
+reordering across the invalidation. The compiler barrier does not drain hardware
+stores. `IFLUSH` requires the optional `iflush` extension on a Sys/Full core;
+Cached supports it. Enable LLVM assembly with `-mattr=+iflush`, Clang with
+`-Xclang -target-feature -Xclang +iflush`, or the standalone assembler and
+simulators with `--iflush`. External writers and other cores require the
+platform's additional synchronization.

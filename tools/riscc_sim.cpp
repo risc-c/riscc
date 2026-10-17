@@ -240,6 +240,7 @@ struct Opts
     bool board_rc32 = false;
     bool full = false;
     bool mdu = false;
+    bool iflush = false;
     bool nano = false;
     bool fast = false;
     bool fast_soft = false;
@@ -287,6 +288,11 @@ struct Opts
     bool has_mdu() const
     {
         return full && mdu && !nano;
+    }
+
+    bool has_iflush() const
+    {
+        return iflush && (has_sys() || rc32_sys);
     }
 };
 
@@ -875,6 +881,12 @@ struct Sim
                         pc_next = static_cast<uint16_t>((s[ra] >> 1) & 0x7fff);
                         instr_cycles = cycle.ret;
                     }
+                    else if (rd == 3 && opts.has_iflush())
+                    {// IFLUSH: cache maintenance is outside the ISS model.
+                        if (ra != 0)
+                            throw std::runtime_error("IFLUSH ra field reserved");
+                        instr_cycles = cycle.direct;
+                    }
                     else if ((rd == 2 || rd == 7) && opts.has_sys())
                     {// CLI / STI
                         if (ra != 0)
@@ -1417,6 +1429,11 @@ struct RC32Sim
                         ie = true;
                         pc_next = s[ra];
                     }
+                    else if (rd == 3 && opts.has_iflush())
+                    {// IFLUSH: cache maintenance is outside the ISS model.
+                        if (ra != 0)
+                            throw std::runtime_error("RC32 IFLUSH ra field reserved");
+                    }
                     else if ((rd == 2 || rd == 7) && opts.rc32_sys)
                     {
                         if (ra != 0)
@@ -1681,7 +1698,7 @@ void print_usage(const char *prog)
     std::cerr
         << "RISC-C simulator " << RISCC_VERSION << "\n"
         << "usage: " << prog << " image.bin [options]\n"
-        << "  --min --full [--mdu]\n"
+        << "  --min --full [--mdu] [--iflush]\n"
         << "  --rc32                     RC32 Min architectural model\n"
         << "  --rc32-sys                 RC32 Sys architectural model\n"
         << "  --rc32-full                RC32 Full architectural model\n"
@@ -1749,6 +1766,10 @@ Opts parse_args(int argc, char **argv)
         else if (opt == "--mdu")
         {
             opts.mdu = true;
+        }
+        else if (opt == "--iflush")
+        {
+            opts.iflush = true;
         }
         else if (opt == "--nano")
         {
@@ -1847,6 +1868,8 @@ Opts parse_args(int argc, char **argv)
         throw std::runtime_error("--nano cannot be combined with an RC16 profile");
     if (opts.mdu && !opts.full)
         throw std::runtime_error("--mdu requires --full");
+    if (opts.iflush && !(opts.has_sys() || opts.rc32_sys))
+        throw std::runtime_error("--iflush requires a sys/full profile");
     if (opts.fast && (opts.nano || opts.min))
         throw std::runtime_error("pipelined timing cannot be combined with --nano or --min");
     return opts;

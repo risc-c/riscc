@@ -19,7 +19,7 @@
     </style>
   </defs>
   <rect width="1080" height="570" fill="#fff"/>
-  <text x="35" y="40" class="title">RISC-C Cached · RC16 / RC32 Full</text>
+  <text x="35" y="40" class="title">RISC-C Cached · RC16/RC32 Full + DSP + BTB</text>
   <text x="35" y="68" class="small">One instruction per clock on independent ALU operations, loads and stores</text>
 
   <rect x="35" y="112" width="210" height="105" rx="8" class="pipe"/>
@@ -30,7 +30,7 @@
 
   <rect x="300" y="112" width="210" height="105" rx="8" class="pipe"/>
   <text x="320" y="143" class="label">2 · Decode / RF</text>
-  <text x="320" y="173">Read operands</text>
+  <text x="320" y="173">Select registers</text>
   <text x="320" y="198" class="small">Check load dependencies</text>
   <path d="M510 164H565" class="flow"/>
 

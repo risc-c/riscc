@@ -71,19 +71,14 @@ FAST_FMAX_OPTIONS_fast32_soft := -dff
 FAST_FMAX_OPTIONS_fast32_dsp := -abc2
 
 # Cached: minimum area and highest MHz/LUT4 mapping at seed 1, including
-# both caches. Cache data uses two EBRs in addition to the RF.
-CACHED_BLOCK_OPTIONS_cached_soft := -abc2
-CACHED_BLOCK_OPTIONS_cached_dsp := -abc2
-CACHED_BLOCK_OPTIONS_cached32_soft :=
-CACHED_BLOCK_OPTIONS_cached32_dsp := -abc2
-CACHED_LUTRAM_OPTIONS_cached_soft := -abc2
-CACHED_LUTRAM_OPTIONS_cached_dsp := -noccu2 -dff
-CACHED_LUTRAM_OPTIONS_cached32_soft :=
+# both caches and the fixed distributed RF. Cache data uses two EBRs.
+CACHED_MULTIPLIERS := dsp
+CACHED_BLOCK_OPTIONS_cached_dsp := -dff
+CACHED_LUTRAM_OPTIONS_cached_dsp := -abc2 -dff
+CACHED_FMAX_OPTIONS_cached_dsp := -dff
+CACHED_BLOCK_OPTIONS_cached32_dsp := -abc9
 CACHED_LUTRAM_OPTIONS_cached32_dsp :=
-CACHED_FMAX_OPTIONS_cached_soft := -abc2 -dff
-CACHED_FMAX_OPTIONS_cached_dsp := -abc2
-CACHED_FMAX_OPTIONS_cached32_soft :=
-CACHED_FMAX_OPTIONS_cached32_dsp := -abc2 -dff
+CACHED_FMAX_OPTIONS_cached32_dsp := -abc9
 CACHED_MEASURE_RTL := $(abspath rtl/riscc_cached.v rtl/riscc_pipeline_shared.v)
 
 # Agilex tables consume only generated Quartus results. Published snapshots
@@ -188,15 +183,15 @@ $(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_BLOCK_OPTIONS_$(pipeline)_$(multiplier)),riscc_fast, \
     $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 
-$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(CACHED_MULTIPLIERS), \
   $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-lutram/$(pipeline)/$(multiplier).resources, \
     -DRISCC_ECP5 $(FAST_DEFINES_$(multiplier)) $(CACHED_MEASURE_RTL), \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(CACHED_LUTRAM_OPTIONS_$(pipeline)_$(multiplier)),riscc_cached, \
-    $(if $(filter cached32,$(pipeline)),chparam -set XLEN 32 riscc_cached;))) \
+    $(if $(filter cached32,$(pipeline)),chparam -set XLEN 32 riscc_cached;,chparam -set XLEN 16 riscc_cached;))) \
   $(eval $(call ECP5_RESOURCE_AREA,build/area/ecp5-block/$(pipeline)/$(multiplier).resources, \
-    -DRISCC_FAST_BLOCK_RF $(FAST_DEFINES_$(multiplier)) $(CACHED_MEASURE_RTL), \
+    -DRISCC_ECP5 $(FAST_DEFINES_$(multiplier)) $(CACHED_MEASURE_RTL), \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(CACHED_BLOCK_OPTIONS_$(pipeline)_$(multiplier)),riscc_cached, \
-    $(if $(filter cached32,$(pipeline)),chparam -set XLEN 32 riscc_cached;)))))
+    $(if $(filter cached32,$(pipeline)),chparam -set XLEN 32 riscc_cached;,chparam -set XLEN 16 riscc_cached;)))))
 
 RC16_AREA_RESULTS := $(foreach target,$(AREA_TARGETS),$(foreach profile,$(RC16_PROFILES), \
   $(foreach width,$(WIDTHS),build/area/$(target)/rc16/$(profile)/$(width).lut)))
@@ -208,7 +203,7 @@ EXTENSION_AREA_RESULTS := $(foreach target,$(AREA_TARGETS),$(foreach extension,$
 PIPELINE_AREA_RESULTS := $(foreach target,$(ECP5_AREA_TARGETS),$(foreach pipeline,$(PIPELINES), \
   $(foreach multiplier,$(MULTIPLIERS),build/area/$(target)/$(pipeline)/$(multiplier).resources)))
 CACHED_PIPELINE_AREA_RESULTS := $(foreach target,$(ECP5_AREA_TARGETS),$(foreach pipeline,$(CACHED_PIPELINES), \
-  $(foreach multiplier,$(MULTIPLIERS),build/area/$(target)/$(pipeline)/$(multiplier).resources)))
+  $(foreach multiplier,$(CACHED_MULTIPLIERS),build/area/$(target)/$(pipeline)/$(multiplier).resources)))
 LATTICE_AREA_RESULTS := $(RC16_AREA_RESULTS) $(NANO_AREA_RESULTS) \
   $(RC32_AREA_RESULTS) $(EXTENSION_AREA_RESULTS) $(PIPELINE_AREA_RESULTS) \
   $(CACHED_PIPELINE_AREA_RESULTS)
@@ -247,7 +242,15 @@ area-lattice: $(LATTICE_AREA_RESULTS)
 	  "$$(cat build/area/ecp5-lutram/extension/$$extension.lut)"; done
 	@printf '%-16s %22s %22s\n' implementation \
 	  'ECP5 block LUT/DSP/EBR' 'ECP5 LUTRAM LUT/DSP/EBR'; \
-	for pipeline in $(PIPELINES) $(CACHED_PIPELINES); do for multiplier in $(MULTIPLIERS); do \
+	for pipeline in $(PIPELINES); do for multiplier in $(MULTIPLIERS); do \
+	  set -- $$(cat build/area/ecp5-block/$$pipeline/$$multiplier.resources); \
+	  blut=$$1; bdsp=$$6; bebr=$$7; \
+	  set -- $$(cat build/area/ecp5-lutram/$$pipeline/$$multiplier.resources); \
+	  llut=$$1; ldsp=$$6; lebr=$$7; \
+	  printf '%-16s %16s/%s/%s %16s/%s/%s\n' "$$pipeline $$multiplier" \
+	    $$blut $$bdsp $$bebr $$llut $$ldsp $$lebr; \
+	done; done; \
+	for pipeline in $(CACHED_PIPELINES); do for multiplier in $(CACHED_MULTIPLIERS); do \
 	  set -- $$(cat build/area/ecp5-block/$$pipeline/$$multiplier.resources); \
 	  blut=$$1; bdsp=$$6; bebr=$$7; \
 	  set -- $$(cat build/area/ecp5-lutram/$$pipeline/$$multiplier.resources); \
@@ -325,16 +328,15 @@ $(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(FAST_FMAX_OPTIONS_$(pipeline)_$(multiplier)),40,, \
     $(if $(filter fast32,$(pipeline)),chparam -set XLEN 32 riscc_fast;)))))
 
-$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(CACHED_MULTIPLIERS), \
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/$(pipeline)/$(multiplier).mhz, \
-    -DRISCC_FMAX_$(if $(filter cached32,$(pipeline)),CACHED32,CACHED) \
-    -DRISCC_FAST_BLOCK_RF $(FAST_DEFINES_$(multiplier)) \
-    $(CACHED_MEASURE_RTL), \
+    -DRISCC_ECP5 -DRISCC_FMAX_$(if $(filter cached32,$(pipeline)),CACHED32,CACHED) \
+    $(FAST_DEFINES_$(multiplier)) $(CACHED_MEASURE_RTL), \
     $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(CACHED_FMAX_OPTIONS_$(pipeline)_$(multiplier)),40,, \
-    $(if $(filter cached32,$(pipeline)),chparam -set XLEN 32 riscc_cached;)))))
+    chparam -set XLEN $(if $(filter cached32,$(pipeline)),32,16) riscc_cached;))))
 
 # Match the tuner's source paths and order so both flows reproduce its netlist.
-$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+$(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(CACHED_MULTIPLIERS), \
   build/fmax/ecp5/$(pipeline)/$(multiplier).mhz)): FMAX_TOP := $(abspath $(FMAX_TOP))
 
 RC16_FMAX_RESULTS := $(foreach profile,$(RC16_PROFILES), \
@@ -345,7 +347,7 @@ OTHER_FMAX_RESULTS := build/fmax/ecp5/nano.mhz \
   $(foreach extension,$(EXTENSIONS),build/fmax/ecp5/extension/$(extension).mhz) \
   $(foreach pipeline,$(PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
     build/fmax/ecp5/$(pipeline)/$(multiplier).mhz)) \
-  $(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(MULTIPLIERS), \
+  $(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(CACHED_MULTIPLIERS), \
     build/fmax/ecp5/$(pipeline)/$(multiplier).mhz))
 LATTICE_FMAX_RESULTS := $(RC16_FMAX_RESULTS) $(RC32_FMAX_RESULTS) $(OTHER_FMAX_RESULTS)
 
@@ -370,7 +372,11 @@ fmax-lattice: $(LATTICE_FMAX_RESULTS)
 	  printf '%-16s %7s\n' nano "$$(cat build/fmax/$$target/nano.mhz)"; \
 	  for extension in $(EXTENSIONS); do printf '%-16s %7s\n' "full $$extension" \
 	    "$$(cat build/fmax/$$target/extension/$$extension.mhz)"; done; \
-	  for pipeline in $(PIPELINES) $(CACHED_PIPELINES); do for multiplier in $(MULTIPLIERS); do \
+	  for pipeline in $(PIPELINES); do for multiplier in $(MULTIPLIERS); do \
+	    printf '%-16s %7s\n' "$$pipeline $$multiplier" \
+	      "$$(cat build/fmax/$$target/$$pipeline/$$multiplier.mhz)"; \
+	  done; done; \
+	  for pipeline in $(CACHED_PIPELINES); do for multiplier in $(CACHED_MULTIPLIERS); do \
 	    printf '%-16s %7s\n' "$$pipeline $$multiplier" \
 	      "$$(cat build/fmax/$$target/$$pipeline/$$multiplier.mhz)"; \
 	  done; done

@@ -6,8 +6,7 @@
 `default_nettype none
 
 module riscc_cached_hits_tb #(
-    parameter integer XLEN = 16,
-    parameter integer REGISTER_FETCH = 0
+    parameter integer XLEN = 32
 );
     localparam integer MEM_WORDS = 16384;
     localparam integer DATA_WORD = 32; // byte address 0x80
@@ -50,7 +49,7 @@ module riscc_cached_hits_tb #(
     assign mem_rdata = response_data_q;
     assign mem_stall = 1'b0;
 
-    riscc_cached #(.XLEN(XLEN), .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
+    riscc_cached #(.XLEN(XLEN)) dut (
         .clk(clk), .rst(rst), .irq(irq),
         .mem_cacheable(), .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .mem_wdata(mem_wdata), .mem_wmask(mem_wmask), .mem_we(mem_we),
@@ -64,8 +63,8 @@ module riscc_cached_hits_tb #(
     wire [13:0] backing_addr = mem_addr[13:0];
     wire [31:0] monitor_pc = {{(33-XLEN){1'b0}}, dut.cpu.x_pc_q};
     wire [31:0] monitor_wdata = {{(32-XLEN){1'b0}}, dut.cpu.rf_wdata};
-    wire [3:0] monitor_waddr = dut.cpu.rf_waddr;
-    wire monitor_commit = dut.cpu.commit_valid;
+    wire [3:0] monitor_waddr = dut.cpu.w_dst_q;
+    wire monitor_commit = dut.cpu.x_finish;
     wire monitor_rf_we = dut.cpu.rf_we;
 
     function automatic [15:0] enc_i(

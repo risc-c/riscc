@@ -128,7 +128,8 @@ module riscc_sdram_bridge #(
              (!issue_last && !issued_last_q &&
               consumer_gray_q != producer_sync_q));
         if (memory_stb && !memory_stall) begin
-            issued_q <= issued_q + 1'b1;
+            if (!head_write && READ_WORD_BITS != 0)
+                issued_q <= issued_q + 1'b1;
             if (last_issue) begin
                 issued_last_q <= 1;
             end
@@ -136,13 +137,12 @@ module riscc_sdram_bridge #(
         if (!empty_q && !head_write)
             line_data[returned_q] <= memory_rdata;
         if (!empty_q && memory_ack) begin
-            returned_q <= returned_q + 1'b1;
+            if (!head_write && READ_WORD_BITS != 0)
+                returned_q <= returned_q + 1'b1;
             reply_last_q <= returned_q == PENULTIMATE[BEAT_BITS-1:0];
             if (last_reply) begin
                 consumer_gray_q <= next_consumer_gray;
                 issued_last_q <= 0;
-                issued_q <= 0;
-                returned_q <= 0;
                 reply_last_q <= 0;
             end
         end

@@ -9,22 +9,29 @@
 // from the testbench while retaining the real TCM/cache routing logic.
 module riscc_cached_pipe #(
     parameter integer XLEN = 32,
-    parameter integer FETCH_RESPONSE_HELD = 0,
-    parameter REGISTER_FETCH = 1'b0,
+    parameter integer LOCAL_ADDR_BITS = 0,
     parameter [XLEN-1:0] RESET_PC = 0
 ) (
     input wire clk, rst, irq,
+    output wire iflush_req,
+    input wire iflush_ack,
+    output wire imem_local,
     output wire [XLEN-2:0] imem_addr,
     input wire [15:0] imem_rdata,
     output wire imem_cyc, imem_stb,
     input wire imem_stall, imem_ack,
     output wire [XLEN-3:0] dmem_addr,
-    input wire [31:0] dmem_rdata,
+    input wire [63:0] dmem_rdata,
+    input wire dmem_local,
     output wire [31:0] dmem_wdata,
     output wire [3:0] dmem_wmask,
-    output wire dmem_we, dmem_cyc, dmem_stb,
+    output wire dmem_we, dmem_write_local, dmem_cyc, dmem_stb,
+    output wire [XLEN-3:0] dmem_store_addr,
     input wire dmem_stall, dmem_ack
 );
+    assign iflush_req = riscc_cached_sram_tb.iflush_q;
+    assign imem_local = LOCAL_ADDR_BITS != 0 &&
+        ((imem_addr >> (LOCAL_ADDR_BITS - 1)) == 0);
     assign imem_addr = riscc_cached_sram_tb.i_addr_q;
     assign imem_cyc = riscc_cached_sram_tb.i_cyc_q;
     assign imem_stb = riscc_cached_sram_tb.i_stb_q;
@@ -32,14 +39,19 @@ module riscc_cached_pipe #(
     assign dmem_wdata = riscc_cached_sram_tb.d_wdata_q;
     assign dmem_wmask = riscc_cached_sram_tb.d_sel_q;
     assign dmem_we = riscc_cached_sram_tb.d_we_q;
+    assign dmem_write_local = dmem_we && LOCAL_ADDR_BITS != 0 &&
+        ((dmem_addr >> (LOCAL_ADDR_BITS - 2)) == 0);
+    assign dmem_store_addr = dmem_addr;
     assign dmem_cyc = riscc_cached_sram_tb.d_cyc_q;
     assign dmem_stb = riscc_cached_sram_tb.d_stb_q;
 endmodule
 
 module riscc_cached_sram_tb #(
+    parameter integer XLEN = 32,
     parameter integer SRAM_ADDR_BITS = 14,
     parameter SRAM_HEX = ""
 );
+    reg iflush_q = 0;
     reg clk = 1'b0;
     reg rst = 1'b1;
     always #5 clk = ~clk;
@@ -52,9 +64,9 @@ module riscc_cached_sram_tb #(
     reg forced_mem_stall = 1'b0;
     reg mem_ack = 1'b0;
 
-    reg [30:0] i_addr_q = 0;
+    reg [XLEN-2:0] i_addr_q = 0;
     reg i_cyc_q = 0, i_stb_q = 0;
-    reg [29:0] d_addr_q = 0;
+    reg [XLEN-3:0] d_addr_q = 0;
     reg [31:0] d_wdata_q = 0;
     reg [3:0] d_sel_q = 0;
     reg d_we_q = 0, d_cyc_q = 0, d_stb_q = 0;
@@ -62,14 +74,15 @@ module riscc_cached_sram_tb #(
     wire [15:0] i_data = dut.i_data;
     wire i_stall = dut.i_stall;
     wire i_ack = dut.i_ack;
-    wire [31:0] d_rdata = dut.d_rdata;
+    wire [31:0] d_rdata = dut.d_response_local ?
+        dut.d_rdata[31:0] : dut.d_rdata[63:32];
     wire d_stall = dut.d_stall;
     wire d_ack = dut.d_ack;
 
     // Keep the actual wrapper and caches, using the stub pipeline above as a
     // deterministic two-port master for this test.
     riscc_cached #(
-        .XLEN(32),
+        .XLEN(XLEN),
         .SRAM_ADDR_BITS(SRAM_ADDR_BITS),
         .SRAM_HEX(SRAM_HEX),
         .RESET_PC(0)
@@ -420,13 +433,16 @@ module riscc_cached_sram_tb #(
             fail("cache refill did not reach backing port");
 
         // Registered external lookups also hit without backing traffic,
-        // including when local fetches intervene. Stores invalidate that line.
+        // including when local fetches intervene. IFLUSH publishes code stores.
         n = backend_accepts;
         i_read(32'h8002, 16'h9000);
         i_read(0, 16'ha55a);
         i_read(32'h8000, 16'h2000);
         if (backend_accepts != n) fail("warm instruction read missed");
         d_access(32'h8000, 1'b1, 4'hf, 32'h56781234, 0);
+        @(negedge clk); iflush_q = 1;
+        wait (dut.iflush_ack);
+        @(negedge clk); iflush_q = 0;
         i_read(32'h8000, 16'h1234);
         i_read(32'h8002, 16'h5678);
         if (backend_accepts != n + 17 || backend_writes != 1)

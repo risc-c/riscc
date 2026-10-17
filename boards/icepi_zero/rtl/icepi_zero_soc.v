@@ -97,12 +97,10 @@ module icepi_zero_soc #(
     wire [31:0] irq_rdata;
 
     riscc_cached #(
-        .XLEN(32),
         .CACHE_ADDR_BITS(25),
         .CACHE_BASE(32'h10000000),
         .SRAM_ADDR_BITS(14),
         .SRAM_HEX(MEM_HEX),
-        .REGISTER_FETCH(1'b1),
         .RESET_PC(0)
     ) cpu (
         .clk(clk),

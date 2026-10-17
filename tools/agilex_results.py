@@ -23,9 +23,7 @@ OTHER_ROWS = (
     ("fast32 DSP", "fast32_dsp", 32),
     ("fast32 soft", "fast32_soft", 32),
     ("cached DSP", "cached_dsp", 16),
-    ("cached soft", "cached_soft", 16),
     ("cached32 DSP", "cached32_dsp", 32),
-    ("cached32 soft", "cached32_soft", 32),
 )
 
 

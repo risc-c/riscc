@@ -170,9 +170,9 @@ help:
 	  '  test-fast                   test XLEN, MEMORY and MULTIPLIER' \
 	  '  test-fast-all               test all fast-core variants' \
 	  '  test-fast-irq-all           sweep IRQ timing across all Fast variants' \
-	  '  test-cached                  test XLEN, MEMORY and MULTIPLIER Cached core' \
-	  '  test-cached-all              test all Cached core variants' \
-	  '  test-cached-irq-all          sweep IRQ timing across all Cached variants' \
+	  '  test-cached                  test XLEN and MEMORY with DSP Cached' \
+	  '  test-cached-all              test RC16/RC32 Cached caches and pipeline' \
+	  '  test-cached-irq-all          sweep IRQ timing across RC16/RC32 Cached' \
 	  '  test-cached-pipeline         run Cached split-memory pipeline checks' \
 	  '  test-cached-hits             check warmed Cached cache-hit timing' \
 	  '  test-cached-address          check full-address caching and code coherence' \
@@ -195,7 +195,7 @@ help:
 	  '  fuzz-serial / fuzz-serial32  fuzz parameterized RC16 / RC32' \
 	  '  fuzz-wide / fuzz-wide32      fuzz full-width RC16 / RC32, including MDU' \
 	  '  fuzz-fast / fuzz-fast32     fuzz RC16 / RC32 Fast' \
-	  '  fuzz-cached / fuzz-cached32 fuzz RC16 / RC32 Cached core' \
+	  '  fuzz-cached / fuzz-cached32 fuzz RC16 / RC32 DSP Cached' \
 	  '  fuzz-all                    run all fuzz campaigns' \
 	  '  trace                       trace PROFILE and WIDTH' \
 	  '  trace-nano                  trace Nano' \

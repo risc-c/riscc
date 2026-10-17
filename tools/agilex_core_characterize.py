@@ -115,12 +115,11 @@ def project_specs(root: Path, family: str):
         ))
     if family in ("other", "all"):
         for xlen in (16, 32):
-            for mul in ("dsp", "soft"):
-                name = ("cached32_" if xlen == 32 else "cached_") + mul
-                macros = ["RISCC_FMAX_CACHED32" if xlen == 32 else "RISCC_FMAX_CACHED"]
-                if mul == "soft":
-                    macros.append("RISCC_FAST_SOFT_MUL")
-                specs.append((name, name, xlen, root / "rtl/riscc_cached.v", macros, top))
+            name = "cached32_dsp" if xlen == 32 else "cached_dsp"
+            macros = ["RISCC_FMAX_CACHED32" if xlen == 32
+                      else "RISCC_FMAX_CACHED"]
+            specs.append((name, name, xlen, root / "rtl/riscc_cached.v",
+                          macros, top))
     return specs
 
 

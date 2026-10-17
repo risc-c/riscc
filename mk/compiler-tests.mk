@@ -770,17 +770,17 @@ compiler-benchmarks: $(BENCHMARK_BINS) $(RISCC_SIM)
 # C benchmarks on native-width Full and ECP5 block-RF Fast/Cached cores.
 BENCHMARK_RTL_MAX_CYCLES ?= 30000000
 BENCHMARK_RTL_TIMEOUT ?= 300
-# Match the boards' one-clock local SRAM and registered instruction fetch.
+# Match the boards' one-clock local SRAM and predicting frontend.
 # Select cache to measure the separate I/D caches and backing SRAM instead.
 BENCHMARK_CACHED_MEMORY ?= sram
-BENCHMARK_CACHED_SOFT := $(call cached_bench_tb,$(RISCC_XLEN),soft,ecp5-block,$(BENCHMARK_CACHED_MEMORY))
 BENCHMARK_CACHED_DSP := $(call cached_bench_tb,$(RISCC_XLEN),dsp,ecp5-block,$(BENCHMARK_CACHED_MEMORY))
+BENCHMARK_CACHED_ARGS := --native-core cached-$(BENCHMARK_CACHED_MEMORY)-dsp="$(abspath $(BENCHMARK_CACHED_DSP))"
 BENCHMARK_RTL_BASE_TB := $(call wide_tb,$(RISCC_XLEN),full,0,native)
 BENCHMARK_RTL_FAST_FAMILY := $(call fast_family,$(RISCC_XLEN))
 BENCHMARK_RTL_TBS := $(BENCHMARK_RTL_BASE_TB) \
 	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb \
 	build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb \
-	$(BENCHMARK_CACHED_SOFT) $(BENCHMARK_CACHED_DSP)
+	$(BENCHMARK_CACHED_DSP)
 
 .PHONY: compiler-benchmarks-rtl
 ifeq ($(PROFILE),full)
@@ -798,8 +798,7 @@ compiler-benchmarks-rtl: $(BENCHMARK_BINS) $(BENCHMARK_RTL_TBS) \
 	  --core full-native="$(abspath $(BENCHMARK_RTL_BASE_TB))" \
 	  --core fast-soft="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/soft/tb)" \
 	  --core fast-dsp="$(abspath build/test/$(BENCHMARK_RTL_FAST_FAMILY)/ecp5-block/dsp/tb)" \
-	  --native-core cached-$(BENCHMARK_CACHED_MEMORY)-soft="$(abspath $(BENCHMARK_CACHED_SOFT))" \
-	  --native-core cached-$(BENCHMARK_CACHED_MEMORY)-dsp="$(abspath $(BENCHMARK_CACHED_DSP))"
+	  $(BENCHMARK_CACHED_ARGS)
 else
 compiler-benchmarks-rtl:
 	@echo "compiler-benchmarks-rtl requires PROFILE=full (got PROFILE=$(PROFILE))" >&2

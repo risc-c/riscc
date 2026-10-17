@@ -1,9 +1,8 @@
 // Benchmark the core and cache hierarchy with one-clock, native-width SRAM.
 `default_nettype none
 module riscc_cached_bench_tb #(
-    parameter integer XLEN = 16,
-    parameter integer CACHED = 1,
-    parameter integer REGISTER_FETCH = 0
+    parameter integer XLEN = 32,
+    parameter integer CACHED = 1
 );
     reg clk = 0;
     always #5 clk = !clk;
@@ -28,12 +27,12 @@ module riscc_cached_bench_tb #(
     reg i_ack = 0;
     reg [15:0] i_rdata = 0;
     generate if (CACHED != 0) begin : cached
-        riscc_cached #(.XLEN(XLEN), .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
+        riscc_cached #(.XLEN(XLEN)) dut (
             .clk(clk), .rst(rst), .irq(1'b0),
             .mem_cacheable(), .mem_addr(addr), .mem_wdata(wdata), .mem_wmask(sel), .mem_we(we),
             .mem_rdata(rdata), .mem_cyc(cyc), .mem_stb(stb), .mem_stall(1'b0), .mem_ack(ack)
         );
-        assign commit = dut.cpu.commit_valid;
+        assign commit = dut.cpu.x_finish;
         assign result_issued = dut.cpu.dmem_stb && !dut.cpu.dmem_stall &&
             dut.cpu.dmem_we && dut.cpu.dmem_addr[13:0] == 14'h3fff &&
             (&dut.cpu.dmem_wmask[3:2]);
@@ -44,20 +43,27 @@ module riscc_cached_bench_tb #(
         assign d_refill = dut.dcache.refill_accept && dut.dcache.refill_addr_beat == 0;
     end else begin : direct
         // Direct SRAM has the same held, one-clock replies as the board SRAM.
-        riscc_cached_pipe #(.XLEN(XLEN), .FETCH_RESPONSE_HELD(1),
-                            .REGISTER_FETCH(REGISTER_FETCH != 0)) dut (
+        riscc_cached_pipe #(.XLEN(XLEN)) dut (
+        .iflush_req(), .iflush_ack(1'b1),
             .clk(clk), .rst(rst), .irq(1'b0),
+            .imem_local(),
             .imem_addr(i_addr), .imem_rdata(i_rdata), .imem_cyc(i_cyc),
             .imem_stb(i_stb), .imem_stall(1'b0), .imem_ack(i_ack),
             .dmem_addr(addr), .dmem_wdata(wdata), .dmem_wmask(sel), .dmem_we(we),
-            .dmem_rdata(rdata), .dmem_cyc(cyc), .dmem_stb(stb), .dmem_stall(1'b0), .dmem_ack(ack)
+            .dmem_write_local(), .dmem_store_addr(),
+            .dmem_rdata({rdata, 32'b0}), .dmem_local(1'b0),
+            .dmem_cyc(cyc), .dmem_stb(stb), .dmem_stall(1'b0), .dmem_ack(ack)
         );
-        assign commit = dut.commit_valid;
+        assign commit = dut.x_finish;
         assign result_issued = cyc && stb && we && addr[13:0] == 14'h3fff &&
             (&sel[3:2]);
         assign i_refill = 1'b0;
         assign d_refill = 1'b0;
     end endgenerate
+    always @(posedge clk) begin
+        if (!rst && i_cyc && i_stb)
+            i_rdata <= memory[i_addr & 32767];
+    end
     initial begin
         for (n=0; n<32768; n=n+1) memory[n] = 0;
         if (!$value$plusargs("IMAGE=%s", image_path)) $fatal(1, "missing +IMAGE");
@@ -80,7 +86,6 @@ module riscc_cached_bench_tb #(
         if (!rst && commit && !result_issued_q && !result_issued) commits <= commits + 1;
         if (!rst && i_refill) i_refills <= i_refills + 1;
         if (!rst && d_refill) d_refills <= d_refills + 1;
-        if (!rst && i_cyc && i_stb) i_rdata <= memory[i_addr & 32767];
         if (!rst && cyc && stb) begin
             rdata <= {memory[{addr[13:0], 1'b1}], memory[{addr[13:0], 1'b0}]};
             if (we) begin

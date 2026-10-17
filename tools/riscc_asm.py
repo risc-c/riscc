@@ -13,7 +13,8 @@ with ``-D NAME`` on the command line, or select an ISA profile with
 ``--profile min|sys|full|nano``.  The default profile is ``sys``.  A profile
 selection defines its corresponding ``RISCC_*`` symbol; Full also defines
 ``RISCC_SYS``.  Pass ``--mdu`` with the Full profile to define the MDU
-capability symbols.
+capability symbols.  Pass ``--iflush`` with the Sys or Full profile to enable
+the optional IFLUSH instruction and define ``RISCC_IFLUSH``.
 """
 import argparse
 import ast
@@ -73,12 +74,13 @@ R_FUNC = {
     "SYS": 0x1F,
 }
 
-# RET/RETI and CLI/STI share bbb=000.  ccc occupies ddd: bit 1 selects
-# return versus direct IE control, while bits 2 and 0 duplicate the IE value.
+# RET/RETI, IFLUSH, and CLI/STI share bbb=000.  ccc occupies ddd: bit 1
+# selects return versus direct control, while bits 2 and 0 duplicate the IE
+# value for CLI/STI.  IFLUSH uses ccc=011 with aaa=000.
 # MFEPC/MTEPC are aliases of MFS/MTS with S0 (EPC).
 # reset starts at word 0, IRQ enters at word 2.
 SYS_SUB = {"CONTROL": 0, "JALR": 1, "MFS": 2, "MTS": 3}
-CONTROL_CCC = {"RET": 0, "RETI": 5, "CLI": 2, "STI": 7}
+CONTROL_CCC = {"RET": 0, "RETI": 5, "IFLUSH": 3, "CLI": 2, "STI": 7}
 
 SREGS = {f"S{i}": i for i in range(8)}
 
@@ -459,7 +461,8 @@ def enc_long(rd: int, imm16: int) -> bytes:
     return encode_word(head) + encode_word(imm16)
 
 
-def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -> bytes:
+def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int,
+                iflush: bool = False) -> bytes:
     op = op.upper()
     if op in ("JALL", "JMPL"):
         op = MNEMONIC_ALIASES[op]
@@ -598,7 +601,10 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
         return encode_word(enc_r(d, reg(operands[1]),
                                  R_FUNC["SYS"], SYS_SUB["JALR"]))
 
-    if op in ("CLI", "STI"):
+    if op == "IFLUSH" and not iflush:
+        raise AsmError("IFLUSH requires the iflush extension")
+
+    if op in ("CLI", "STI", "IFLUSH"):
         n_ops(0, op)
         return encode_word(enc_r(CONTROL_CCC[op], 0, R_FUNC["SYS"],
                                  SYS_SUB["CONTROL"]))
@@ -630,14 +636,15 @@ def encode_insn(op: str, operands: List[str], labels: Dict[str, int], pc: int) -
     raise AsmError(f"unknown instruction: {op}")
 
 
-def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int]) -> bytes:
+def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int],
+              iflush: bool = False) -> bytes:
     pc = bases[item.section] + item.offset
     if item.kind == "INSN":
         if pc & 1:
             raise AsmError(
                 f"line {item.lineno}: instruction address not 2-byte-aligned")
         try:
-            return encode_insn(item.op, item.operands, labels, pc)
+            return encode_insn(item.op, item.operands, labels, pc, iflush)
         except AsmError as exc:
             raise AsmError(f"line {item.lineno}: {exc}") from exc
     if item.kind == "BYTE":
@@ -660,8 +667,11 @@ def emit_item(item: Item, labels: Dict[str, int], bases: Dict[str, int]) -> byte
     raise AsmError(f"internal error: unknown item kind {item.kind}")
 
 
-def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
+def assemble(lines: List[str], defines: set[str] | None = None,
+             iflush: bool = False) -> bytes:
     active_defines = defines or set()
+    if iflush and not ({"RISCC_SYS", "RISCC_FULL"} & active_defines):
+        raise AsmError("--iflush requires the sys or full profile")
     filtered = preprocess_source(lines, active_defines)
     items, label_defs = parse_source(filtered)
     bases = layout_sections(items)
@@ -673,7 +683,7 @@ def assemble(lines: List[str], defines: set[str] | None = None) -> bytes:
 
     blobs = {name: bytearray(sizes[name]) for name in SECTION_ORDER}
     for item in items:
-        data = emit_item(item, labels, bases)
+        data = emit_item(item, labels, bases, iflush)
         if len(data) != item.size:
             raise AsmError(
                 f"line {item.lineno}: internal size mismatch for {item.op}: "
@@ -701,6 +711,8 @@ def main() -> int:
                         help="profile symbol for conditional assembly (default: sys)")
     parser.add_argument("--mdu", action="store_true",
                         help="define MDU capability symbols (requires --profile full)")
+    parser.add_argument("--iflush", action="store_true",
+                        help="enable IFLUSH (requires --profile sys or full)")
     parser.add_argument("input")
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("-D", "--define", action="append", default=[],
@@ -711,13 +723,17 @@ def main() -> int:
         defines = {define_name(name) for name in args.define}
         if args.mdu and args.profile != "full":
             raise AsmError("--mdu requires --profile full")
+        if args.iflush and args.profile not in ("sys", "full"):
+            raise AsmError("--iflush requires --profile sys or full")
         defines.add(f"RISCC_{args.profile.upper()}")
         if args.profile == "full":
             defines.add("RISCC_SYS")
         if args.mdu:
             defines.update(("RISCC_MDU", "RISCC_MULHU", "RISCC_DIVU"))
+        if args.iflush:
+            defines.add("RISCC_IFLUSH")
         with open(args.input, "r", encoding="utf-8") as src:
-            image = assemble(src.readlines(), defines)
+            image = assemble(src.readlines(), defines, iflush=args.iflush)
         with open(args.output, "wb") as out:
             out.write(image)
     except (OSError, AsmError, SyntaxError) as exc:

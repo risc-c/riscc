@@ -11,11 +11,9 @@
 
 // Backend bus driver replacing only the CPU/cache instance for this test.
 module riscc_cached #(
-    parameter integer XLEN = 32,
-    parameter integer CACHE_ADDR_BITS = XLEN,
-    parameter [XLEN-1:0] CACHE_BASE = 0,
+    parameter integer CACHE_ADDR_BITS = 32,
+    parameter [31:0] CACHE_BASE = 0,
     parameter integer SRAM_ADDR_BITS = 0,
-    parameter REGISTER_FETCH = 1'b0,
     parameter SRAM_HEX = "",
     parameter RESET_PC = 0
 ) (

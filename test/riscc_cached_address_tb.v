@@ -8,7 +8,7 @@
 `default_nettype none
 
 module riscc_cached_address_tb #(
-    parameter integer XLEN = 16,
+    parameter integer XLEN = 32,
     parameter integer RESET_PC = 0,
     // The RC32 coherence run overrides this with bit 15 so the 0x8000 byte
     // region is D-cache bypassed while the I-cache still caches all addresses.
@@ -208,7 +208,8 @@ module riscc_cached_address_tb #(
             put16(RC16_HIGH + 32, enc_mem(1'b1, 3'd1, 3'd6, 8'd0));
             put_ldi16(RC16_HIGH + 34, 3'd1, new_jump);
             put16(RC16_HIGH + 38, enc_mem(1'b1, 3'd1, 3'd6, 8'd2));
-            put16(RC16_HIGH + 40, enc_jmp(3'd6));
+            put16(RC16_HIGH + 40, 16'hd8f8); // IFLUSH after code stores
+            put16(RC16_HIGH + 42, enc_jmp(3'd6));
 
             put16(RC16_LOW, enc_i(3'd3, 3'd0, 8'h33));
             put16(RC16_LOW + 2, enc_jmp(3'd4));
@@ -275,7 +276,8 @@ module riscc_cached_address_tb #(
             put16(RC32_HIGH + 16, enc_ldpc(3'd1, 8'h1a));
             put16(RC32_HIGH + 18, enc_nop());
             put16(RC32_HIGH + 20, enc_mem(1'b1, 3'd1, 3'd4, 8'd0));
-            put16(RC32_HIGH + 22, enc_jmp(3'd4));
+            put16(RC32_HIGH + 22, 16'hd8f8); // IFLUSH
+            put16(RC32_HIGH + 24, enc_jmp(3'd4));
 
             put_word(RC32_HIGH + 32, RC32_COH_TARGET);
             put_word(RC32_HIGH + 36, RC32_HIGH + 12);
@@ -317,7 +319,7 @@ module riscc_cached_address_tb #(
 
     always @* begin
         if (stalled_last &&
-            (backend_now_addr !== stalled_addr || mem_wdata !== stalled_wdata ||
+            (backend_now_addr !== stalled_addr || (stalled_we && mem_wdata !== stalled_wdata) ||
              mem_wmask !== stalled_wmask || mem_we !== stalled_we ||
              !mem_cyc || !mem_stb))
             $fatal(1, "backing command changed while stalled");

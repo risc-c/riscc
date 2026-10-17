@@ -362,6 +362,7 @@ def main() -> int:
         for cpu, instruction in (
                 ("min", "jall s0, 0"),
                 ("min", "reti s0"),
+                ("min", "iflush"),
                 ("min", "slli r0, r0, 1"),
                 ("min", "srli r0, r0, 2"),
                 ("min", "srai r0, r0, 8"),

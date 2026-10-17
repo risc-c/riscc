@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run the public Cached high-address and instruction-coherence checks.
 
-The fixture uses a sparse 30-bit-word backing store, so RC32 I-cache tags
-cannot pass by accidentally masking address bits.  It covers the RC16 and
-RC32 alias programs, RC32 self-modifying code through an explicitly uncached
-data bit, and registered, immediate, and delayed/stalled responses.
+The fixture uses a sparse backing store, so I-cache tags cannot pass by
+accidentally masking address bits. It covers RC16/RC32 aliases and RC32
+self-modifying code through an explicitly uncached data bit, plus registered,
+immediate, and delayed/stalled responses.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 PASS_RE = re.compile(
-    r"PASS Cached address XLEN=(?P<xlen>\d+) case=(?P<case>\d+) "
+    r"PASS Cached address(?: XLEN=(?P<xlen>\d+))? case=(?P<case>\d+) "
     r"reads=(?P<reads>\d+) writes=(?P<writes>\d+) "
     r"target_line_reads=(?P<target>\d+) stalls=(?P<stalls>\d+)"
 )
@@ -58,10 +58,10 @@ def main() -> int:
     source = source.resolve()
     tb = root / "test/riscc_cached_address_tb.v"
 
-    # The RC16 program covers high/low I aliases and D-uncached patching.
-    # RC32 has a full-tag alias case and a separate target index for the
-    # warm-line/self-modifying-code check.  The latter uses D bit 15 so its
-    # 0x8000 patch is uncached while I-cache policy remains independent.
+    # RC16 covers the low/high alias case. RC32 has a full-tag alias case and
+    # a separate target index for the warm-line/self-modifying-code check.
+    # The latter uses D bit 15 so its 0x8000 patch is uncached while I-cache
+    # policy remains independent.
     variants = (
         ("rc16-dsp-distributed", 16, 0x4800, 15, 0),
         ("rc32-dsp-distributed", 32, 0x8000, 31, 0),
@@ -78,7 +78,8 @@ def main() -> int:
         command = [args.verilator, "--binary", "--timing",
                    "-Wno-UNOPTFLAT",
                    "--top-module", "riscc_cached_address_tb",
-                   f"-GXLEN={xlen}", f"-GRESET_PC=0x{reset_pc:x}",
+                   f"-GXLEN={xlen}",
+                   f"-GRESET_PC=0x{reset_pc:x}",
                    f"-GDCACHE_UNCACHED_BIT={uncached_bit}",
                    "--Mdir", str(mdir), str(source),
                    str(root / "rtl/riscc_pipeline_shared.v"), str(tb)]
@@ -94,13 +95,14 @@ def main() -> int:
             if result.returncode or not match:
                 sys.stderr.write(f"address {name} {mode_name} failed\n{result.stdout}")
                 return 1
-            if int(match.group("xlen")) != xlen or int(match.group("case")) != case:
+            if ((match.group("xlen") is not None and int(match.group("xlen")) != xlen) or
+                    int(match.group("case")) != case):
                 sys.stderr.write(f"address {name} {mode_name}: malformed PASS line\n"
                                  f"{result.stdout}")
                 return 1
             print(f"address {name} {mode_name}: {match.group(0)}")
 
-    print("Cached public address/tag checks PASS (RC16/RC32, alias/coherence, "
+    print("Cached public address/tag checks PASS (RC16/RC32 alias/coherence, "
           "registered/immediate/delayed-stall)")
     return 0
 

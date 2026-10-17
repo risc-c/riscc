@@ -95,11 +95,9 @@ module riscc_demo_soc #(
     wire [31:0] irq_rdata;
 
     riscc_cached #(
-        .XLEN(32),
         .CACHE_ADDR_BITS(26),
         .CACHE_BASE(32'h10000000),
         .SRAM_ADDR_BITS(14),
-        .REGISTER_FETCH(1'b1),
         .SRAM_HEX(MEM_HEX),
         .RESET_PC(0)
     ) cpu (

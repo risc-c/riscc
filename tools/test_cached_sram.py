@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the focused Cached low-address SRAM/TCM protocol test."""
+"""Run Cached SRAM protocol and production-CPU store boundary checks."""
 
 from __future__ import annotations
 
@@ -20,6 +20,33 @@ def run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedP
         if isinstance(output, bytes):
             output = output.decode(errors="replace")
         return subprocess.CompletedProcess(command, 124, output + "timed out\n")
+
+
+def store_variant(root: Path, verilator: str, build_dir: Path,
+                  xlen: int, sram_bits: int, timeout: int) -> bool:
+    out = build_dir / f"stores-rc{xlen}-sram{sram_bits}"
+    out.mkdir(parents=True, exist_ok=True)
+    image = out / "sram.hex"
+    image.write_text("11223344\n" * (1 << (sram_bits - 2)))
+    mdir = out / "obj"
+    binary = mdir / "Vriscc_cached_store_tb"
+    command = [verilator, "--binary", "--timing", "-Wno-TIMESCALEMOD",
+               "-Wno-UNOPTFLAT", "--top-module", "riscc_cached_store_tb",
+               f"-GXLEN={xlen}", f"-GSRAM_ADDR_BITS={sram_bits}",
+               f'-GSRAM_HEX="{image}"', "--Mdir", str(mdir),
+               str(root / "rtl/riscc_pipeline_shared.v"),
+               str(root / "rtl/riscc_cached.v"),
+               str(root / "test/riscc_cached_store_tb.v")]
+    built = run(command, cwd=root, timeout=120)
+    (out / "build.log").write_text(built.stdout)
+    if built.returncode or not binary.exists():
+        sys.stderr.write(f"{out.name}: build failed\n{built.stdout}")
+        return False
+    result = run([str(binary)], cwd=root, timeout=timeout)
+    (out / "run.log").write_text(result.stdout)
+    print(result.stdout, end="")
+    return result.returncode == 0 and (
+        f"PASS Cached stores XLEN={xlen} SRAM={sram_bits}" in result.stdout)
 
 
 def main() -> int:
@@ -51,7 +78,8 @@ def main() -> int:
     command = [
         args.verilator, "--binary", "--timing", "-Wno-fatal",
         "-Wno-UNOPTFLAT", "-Wno-WIDTH", "-Wno-TIMESCALEMOD",
-        "--top-module", "riscc_cached_sram_tb", "-GSRAM_ADDR_BITS=14",
+        "--top-module", "riscc_cached_sram_tb", "-GXLEN=32",
+        "-GSRAM_ADDR_BITS=14",
         f'-GSRAM_HEX="{image}"', "--Mdir", str(mdir),
         str(root / "rtl/riscc_pipeline_shared.v"),
         str(wrapper),
@@ -72,6 +100,12 @@ def main() -> int:
         print(f"Cached SRAM test failed; see {build_dir / 'run.log'}",
               file=sys.stderr)
         return 1
+    for xlen in (16, 32):
+        for sram_bits in (6, 8, 14):
+            if not store_variant(root, args.verilator, build_dir, xlen,
+                                 sram_bits, args.timeout):
+                return 1
+    print("Cached SRAM checks PASS (protocol plus 6 production-store variants)")
     return 0
 
 

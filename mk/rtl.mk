@@ -548,8 +548,9 @@ bench-rc32: bench-fast32 $(foreach width,$(WIDTHS),build/test/rc32/full/$(width)
 	@printf 'rc32/32 '
 	@build/test/wide/32/full/0/native/tb build/bin/bench-rc32.bin --max-cycles 1000000
 
-# Cached includes its instruction and data caches. The legacy C++ fixture
-# reaches its 32-bit backing port through a test-only width adapter.
+# Cached includes its instruction and data caches. The C++ fixture exercises
+# both native widths through the XLEN parameter; BTB/IFLUSH focused fixtures
+# remain separate RC32 tests.
 cached_family = $(if $(filter 32,$(1)),cached32,cached)
 
 # Native 32-bit backing SRAM, shared with the assembly benchmark runner.
@@ -561,11 +562,11 @@ $(call cached_bench_tb,$(1),$(2),$(3),$(4)): rtl/riscc_pipeline_shared.v rtl/ris
 	+$$(VERILATOR) --binary --timing $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_cached_bench_tb -GXLEN=$(1) \
 	  -GCACHED=$(if $(filter sram,$(4)),0,1) \
-	  -GREGISTER_FETCH=$(if $(filter sram,$(4)),1,0) --Mdir $$(@D) \
-	  $$(FAST_MEMORY_DEFINES_$(3)) $$(FAST_DEFINES_$(2)) \
+	  --Mdir $$(@D) \
+	  $$(FAST_MEMORY_DEFINES_$(3)) $(if $(filter ecp5-block,$(3)),-DRISCC_ECP5,) $$(FAST_DEFINES_$(2)) \
 	  rtl/riscc_pipeline_shared.v rtl/riscc_cached.v test/riscc_cached_bench_tb.v
 endef
-$(foreach xlen,16 32,$(foreach multiplier,$(MULTIPLIERS),$(foreach memory,$(FAST_MEMORIES), \
+$(foreach xlen,16 32,$(foreach multiplier,dsp,$(foreach memory,$(FAST_MEMORIES), \
 	$(foreach source,cache sram, \
 	  $(eval $(call CACHED_BENCH,$(xlen),$(multiplier),$(memory),$(source)))))))
 
@@ -574,7 +575,7 @@ build/test/$(call cached_family,$(3))/$(1)/$(2)/tb: $(TB_SRC) rtl/riscc_pipeline
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) -cc --exe --build $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_cached_test_top -GXLEN=$(3) --prefix Vriscc -Mdir $$(@D) \
-	  $$(FAST_MEMORY_DEFINES_$(1)) $$(FAST_DEFINES_$(2)) \
+	  $$(FAST_MEMORY_DEFINES_$(1)) $(if $(filter ecp5-block,$(1)),-DRISCC_ECP5,) $$(FAST_DEFINES_$(2)) \
 	  -CFLAGS "$$(TB_CXXFLAGS) -DRISCC_TB_MEM_PIPELINED $(if $(filter 32,$(3)),-DRISCC_TB_RC32)" -o tb \
 	  $$(abspath rtl/riscc_pipeline_shared.v) $$(abspath rtl/riscc_cached.v) \
 	  $$(abspath rtl/test/riscc_cached_test_top.v) $$(abspath $(TB_SRC))
@@ -592,18 +593,23 @@ build/test/$(call cached_family,$(3))/$(1)/$(2)-irq.ok: build/test/$(call cached
 	@touch $$@
 endef
 
-$(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+$(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,dsp, \
   $(eval $(call CACHED_TEST,$(memory),$(multiplier),$(xlen))))))
 
 .PHONY: test-cached test-cached-all test-cached-irq-all test-cached-pipeline \
-	test-cached-hits test-cached-address test-cached-sram test-cache bench-cached
-test-cached: build/test/$(call cached_family,$(XLEN))/$(MEMORY)/$(MULTIPLIER).ok
-test-cached-all: test-cached-pipeline test-cached-hits test-cached-address test-cached-sram test-cache $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+	test-cached-btb test-cached-iflush \
+	test-cached-hits test-cached-address test-cached-sram test-cache test-cache-local bench-cached
+test-cached: build/test/$(call cached_family,$(XLEN))/$(MEMORY)/dsp.ok
+test-cached-all: test-cached-pipeline test-cached-btb test-cached-iflush test-cached-hits test-cached-address test-cached-sram test-cache test-cache-local $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,dsp, \
   build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier).ok)))
-test-cached-irq-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,$(MULTIPLIERS), \
+test-cached-irq-all: $(foreach xlen,16 32,$(foreach memory,$(FAST_MEMORIES),$(foreach multiplier,dsp, \
   build/test/$(call cached_family,$(xlen))/$(memory)/$(multiplier)-irq.ok)))
 test-cached-pipeline:
 	$(PYTHON) tools/test_cached_pipeline.py --verilator $(VERILATOR)
+test-cached-btb:
+	$(PYTHON) tools/test_cached_btb.py --verilator $(VERILATOR)
+test-cached-iflush:
+	$(PYTHON) tools/test_cached_iflush.py --verilator $(VERILATOR)
 test-cached-hits:
 	$(PYTHON) tools/test_cached_hits.py --verilator $(VERILATOR)
 test-cached-address:
@@ -612,18 +618,20 @@ test-cached-sram:
 	$(PYTHON) tools/test_cached_sram.py --verilator $(VERILATOR)
 test-cache:
 	$(PYTHON) tools/test_cache.py --verilator $(VERILATOR)
+test-cache-local:
+	$(PYTHON) tools/test_cache_local.py --verilator $(VERILATOR)
 bench-cached: $(BENCH_BIN) build/bin/bench-rc32.bin
 	$(PYTHON) tools/bench_cached.py --verilator $(VERILATOR)
 
 .PHONY: fuzz-cached fuzz-cached32
-fuzz-cached: $(RISCC_SIM)
-	RISCC_SIM=$(abspath $(RISCC_SIM)) $(PYTHON) tools/riscc_fuzz.py \
+fuzz-cached: $(RISCC_SIM) llvm-riscc
+	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_BIN)) $(PYTHON) tools/riscc_fuzz.py \
 	  --family fast --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) \
-	  --jobs $(FUZZ_JOBS) --config full --cores cached-soft,cached-dsp,cached-agilex-soft,cached-agilex-dsp \
+	  --jobs $(FUZZ_JOBS) --config full --cores cached-dsp,cached-agilex-dsp \
 	  --outdir build/fuzz/cached
 
 .PHONY: fuzz-cached32
 fuzz-cached32: $(RISCC_SIM) llvm-riscc
 	RISCC_SIM=$(abspath $(RISCC_SIM)) RISCC_LLVM_BIN=$(abspath $(LLVM_BIN)) $(PYTHON) tools/riscc_fuzz.py \
-	  --family rc32 --config full --cores cached32-soft,cached32-dsp,cached32-agilex-soft,cached32-agilex-dsp \
+	  --family rc32 --config full --cores cached32-dsp,cached32-agilex-dsp \
 	  --campaign $(FUZZ_SEEDS) $(FUZZ_SEED_ARGS) --jobs $(FUZZ_JOBS) --outdir build/fuzz/cached32
