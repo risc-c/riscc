@@ -47,6 +47,9 @@ OTHER_CORES = ("nano", "mulh", "muldiv",
                "cached32-dsp")
 SERIAL_CORES = ("serial16-min", "serial16-sys", "serial16-full",
                 "serial32-min", "serial32-sys", "serial32-full")
+# The Icepi clock is 66 2/3 MHz. Cached mapping maximizes frequency per
+# LUT site among recipes meeting this clock requirement.
+CACHED_TARGET_MHZ = 66.67
 
 
 @dataclass(frozen=True)
@@ -232,7 +235,7 @@ def synthesize(root: Path, out: Path, target: str, spec: CoreSpec,
 
 
 def route(out: Path, target: str, synth: SynthResult, seed: int,
-          frequency: int):
+          frequency: float):
     directory = synth.json.parent
     log_path = directory / f"seed-{seed}.log"
     command = [
@@ -276,7 +279,20 @@ def result_directory(base: Path, core: str, width: int) -> Path:
     return base / f"{core}{suffix}"
 
 
-def read_selection(path: Path, target: str, recipes, seeds):
+def select_timed(rows, minimum_mhz=None):
+    if minimum_mhz is None:
+        return max(rows, key=lambda row:
+                   float(row["fmax_mhz"]) / int(row["block_area"]))
+    feasible = [row for row in rows if float(row["fmax_mhz"]) >= minimum_mhz]
+    if not feasible:
+        raise RuntimeError(f"no successful mapping meets {minimum_mhz:g} MHz")
+    return min(feasible, key=lambda row: (
+        -float(row["fmax_mhz"]) / int(row["block_area"]),
+        int(row["block_area"]),
+        row["recipe"], int(row["seed"])))
+
+
+def read_selection(path: Path, target: str, recipes, seeds, minimum_mhz=None):
     with path.open(newline="") as stream:
         rows = [row for row in csv.DictReader(stream, delimiter="\t")
                 if row["status"] == "ok" and row["recipe"] in recipes and
@@ -288,7 +304,7 @@ def read_selection(path: Path, target: str, recipes, seeds):
     fastest = max(rows, key=lambda row: float(row["fmax_mhz"]))
     efficient = max(rows, key=lambda row:
                     float(row["fmax_mhz"]) / int(row["block_area"]))
-    return area, block, fastest, efficient
+    return area, block, fastest, efficient, select_timed(rows, minimum_mhz)
 
 
 def print_matrix(selections, target: str, output: Path, serial=False):
@@ -324,6 +340,14 @@ def print_matrix(selections, target: str, output: Path, serial=False):
     table(f"Tuned {target} Fmax (MHz, fastest recipe and seed)", "fmax", 2)
     table(f"Tuned {target} efficiency (MHz/kLUT, timed RF, one recipe and seed)",
           "mhz_per_klut", 2)
+    cached = [(core, selection) for (core, _), selection in selections.items()
+              if core.startswith("cached")]
+    if cached:
+        print("Cached timed mappings maximize MHz/LUT at or above "
+              f"{CACHED_TARGET_MHZ:g} MHz; see timed_* columns in the selection file.")
+        for core, selection in cached:
+            print(f"{core}: {selection['timed_area']} LUT sites, "
+                  f"{selection['timed_fmax']:.2f} MHz ({selection['timed_recipe']})")
     print(f"selections: {output}")
 
 
@@ -345,6 +369,10 @@ def tune_matrix(args, root: Path, serial=False):
         try:
             with path.open(newline="") as stream:
                 rows = list(csv.DictReader(stream, delimiter="\t"))
+            if case[0].startswith("cached") and any(
+                    float(row.get("constraint_mhz", 0)) != CACHED_TARGET_MHZ
+                    for row in rows):
+                return False
             found = {(row["recipe"], int(row["seed"])) for row in rows}
             return all(
                 {(recipe, seed) for seed in expected_seeds}.issubset(found) or
@@ -395,17 +423,23 @@ def tune_matrix(args, root: Path, serial=False):
                   "block_area_recipe", "block_area_options", "block_area",
                   "fmax_recipe", "fmax_options", "seed", "fmax_mhz",
                   "efficient_recipe", "efficient_options", "efficient_area",
-                  "efficient_seed", "efficient_fmax_mhz", "mhz_per_klut")
+                  "efficient_seed", "efficient_fmax_mhz", "mhz_per_klut",
+                  "target_mhz", "timed_recipe", "timed_options", "timed_area",
+                  "timed_seed", "timed_fmax_mhz")
         writer = csv.DictWriter(stream, fields, delimiter="\t")
         writer.writeheader()
         for core, width in cases:
             path = result_directory(base, core, width) / "results.tsv"
-            area, block, fastest, efficient = read_selection(
-                path, args.target, expected_recipes, expected_seeds)
+            minimum_mhz = CACHED_TARGET_MHZ if core.startswith("cached") else None
+            area, block, fastest, efficient, timed = read_selection(
+                path, args.target, expected_recipes, expected_seeds, minimum_mhz)
             selected = {
                 "area": int(area["area"]),
                 "block_area": int(block["block_area"]) if block else "",
                 "fmax": float(fastest["fmax_mhz"]),
+                "timed_area": int(timed["block_area"]),
+                "timed_fmax": float(timed["fmax_mhz"]),
+                "timed_recipe": timed["recipe"],
                 "mhz_per_klut": (
                     1000 * float(efficient["fmax_mhz"]) /
                     int(efficient["block_area"])
@@ -430,6 +464,12 @@ def tune_matrix(args, root: Path, serial=False):
                 "mhz_per_klut": (
                     f"{1000 * float(efficient['fmax_mhz']) / int(efficient['block_area']):.2f}"
                 ),
+                "target_mhz": minimum_mhz if minimum_mhz is not None else "",
+                "timed_recipe": timed["recipe"],
+                "timed_options": timed["synth_options"],
+                "timed_area": timed["block_area"],
+                "timed_seed": timed["seed"],
+                "timed_fmax_mhz": timed["fmax_mhz"],
             })
     print_matrix(selections, args.target, output, serial)
 
@@ -494,7 +534,7 @@ def main():
     if not synths:
         raise SystemExit("all synthesis recipes failed")
 
-    frequency = 40
+    frequency = CACHED_TARGET_MHZ if args.core.startswith("cached") else 40
     seeds = range(args.seed_start, args.seed_start + args.seeds)
     results = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -507,11 +547,11 @@ def main():
     with (out / "results.tsv").open("w", newline="") as stream:
         writer = csv.writer(stream, delimiter="\t")
         writer.writerow(("recipe", "synth_options", "area", "block_area",
-                         "seed", "fmax_mhz", "status"))
+                         "seed", "fmax_mhz", "status", "constraint_mhz"))
         for synth, seed, fmax, status in results:
             writer.writerow((synth.recipe, synth.options, synth.area,
                              synth.block_area if synth.block_area is not None else "",
-                             seed, f"{fmax:.2f}", status))
+                             seed, f"{fmax:.2f}", status, frequency))
 
     print(f"{'recipe':<14} {'sites':>7} {'seed':>7} {'Fmax MHz':>10}")
     best_rows = []
@@ -536,6 +576,12 @@ def main():
           f"{fastest[2]:.2f} MHz")
     print(f"efficient:{efficient[0].recipe:>12}, seed {efficient[1]}, "
           f"{1000 * efficient[2] / efficient[0].block_area:.2f} MHz/kLUT")
+    if args.core.startswith("cached"):
+        _, _, _, _, timed = read_selection(
+            out / "results.tsv", args.target, recipes, seeds, CACHED_TARGET_MHZ)
+        print(f"best MHz/LUT meeting {CACHED_TARGET_MHZ:g} MHz: "
+              f"{timed['recipe']}, {timed['block_area']} LUT sites, "
+              f"{timed['fmax_mhz']} MHz, seed {timed['seed']}")
     print(f"results:  {out / 'results.tsv'}")
 
 

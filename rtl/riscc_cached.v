@@ -1215,7 +1215,7 @@ module riscc_cached_pipe #(
             assign btb_victim_count = row_q[1:0];
             assign btb_clearing = clearing_q;
             // All transfers use the same replacement policy. A conflicting
-            // miss ages the resident counter; replace when it reaches zero.
+            // taken miss ages the resident counter; replace below weakly taken.
             wire taken = (x_branch_q && x_branch_taken) || x_indirect_q || x_jall_q;
             wire conditional = x_branch_q && !x_ddd[2];
             // Fixed targets cannot change before IFLUSH. Counter-only writes
@@ -1227,8 +1227,10 @@ module riscc_cached_pipe #(
                 (!x_hit_q || (x_indirect_q && successor_wrong));
             // Tag and target change only on allocation or an indirect-target change.
             wire [PC_BITS-1:0] write_target = resolved_target;
+            // Allocate weakly taken: another taken hit earns protection, while
+            // a not-taken outcome or conflicting miss can quickly displace it.
             wire [1:0] count_next = !x_hit_q && x_count_q[1] ?
-                x_count_q - 1'b1 : (!conditional || !x_hit_q) ? 2'b11 : taken ?
+                x_count_q - 1'b1 : !x_hit_q ? 2'b10 : !conditional ? 2'b11 : taken ?
                     (&x_count_q ? x_count_q : x_count_q + 1'b1) :
                     (|x_count_q ? x_count_q - 1'b1 : x_count_q);
             // A counter collision changes only the prediction strength. Target

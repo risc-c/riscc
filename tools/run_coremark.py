@@ -99,6 +99,23 @@ def parse_core(value: str) -> tuple[str, Path]:
     return name, Path(path).resolve()
 
 
+def parse_rtl_output(
+    output: str, mode: str, iterations: int, clock_hz: int, cached: bool
+) -> dict:
+    configs = re.findall(
+        r"^COREMARK_CONFIG cached=(\d+) btb_entries=(\d+)$", output, re.MULTILINE
+    )
+    if configs != [(str(int(cached)), "32")]:
+        raise ValueError("missing or incorrect CoreMark RTL configuration")
+    if not re.search(
+        rf"^COREMARK_DONE cached={int(cached)} cycles=\d+$", output, re.MULTILINE
+    ):
+        raise ValueError("missing CoreMark terminal result")
+    result = parse_output(output, mode, iterations, clock_hz)
+    result["btb_entries"] = 32
+    return result
+
+
 def run(args: argparse.Namespace) -> dict:
     manifest = check_sources()
     compiler = subprocess.check_output([args.compiler, "--version"], text=True)
@@ -111,7 +128,7 @@ def run(args: argparse.Namespace) -> dict:
         "architecture": "RC32 Full, hardware multiply, software division",
         "memory": "64 KiB unified SRAM, one-clock native-width responses",
         "cycle_counter_base": args.cycle_base,
-        "rtl_defines": ["RISCC_FAST_BLOCK_RF", "RISCC_ECP5"],
+        "rtl_defines": ["RISCC_FAST_BLOCK_RF"],
         "source_sha256": {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in (
@@ -206,14 +223,10 @@ def run(args: argparse.Namespace) -> dict:
                     "timing": "not measured; ISS used for correctness only",
                 }
             else:
-                result = parse_output(completed.stdout, mode, args.iterations, args.clock_hz)
-                expected = 1 if name == "cached" else 0
-                if not re.search(
-                    rf"^COREMARK_DONE cached={expected} cycles=\d+$",
-                    completed.stdout,
-                    re.MULTILINE,
-                ):
-                    raise ValueError(f"{mode}/{name}: missing terminal result")
+                result = parse_rtl_output(
+                    completed.stdout, mode, args.iterations, args.clock_hz,
+                    name == "cached",
+                )
             result.update(
                 {
                     "mode": mode,

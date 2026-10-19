@@ -466,7 +466,9 @@ make -j16 COREMARK_OPT=-Os coremark
 ```
 
 `coremark-iss` checks correctness only. `coremark` measures cycles in Verilator
-with one-clock native-width SRAM, with and without the instruction/data caches.
+with a 32-entry BTB and one-clock native-width SRAM, with and without the
+instruction/data caches. The fixture checks the BTB size, and each RTL result
+records it as `btb_entries`.
 No FPGA programming is performed. Application and runtime use the same
 optimization level. Binaries, per-run logs and JSON results are under
 `build/coremark/rc32/O2/`, `build/coremark/rc32/O3/` or

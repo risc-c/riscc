@@ -18,9 +18,16 @@ from pathlib import Path
 DEVICE = "A3CZ135BB18AE7S"
 FIT_SEED = 1
 TARGET_NS = 4.0
+CACHED_TARGET_MHZ = 200.0
 AREA_OPTIMIZATION = "AGGRESSIVE AREA"
 PERFORMANCE_OPTIMIZATION = "HIGH PERFORMANCE EFFORT"
 AREA_PROFILES = {"full", "rc32full", "mulh", "muldiv"}
+# Selected for highest measured MHz/ALM subject to the 200 MHz requirement.
+# The fitter constraint is a recipe parameter, not the acceptance threshold.
+CACHED_RECIPES = {
+    "cached_dsp": (PERFORMANCE_OPTIMIZATION, 4.0),
+    "cached32_dsp": (PERFORMANCE_OPTIMIZATION, 4.0),
+}
 AUTO_CONFIG_MEMORY_KIB = 3 * 1024 * 1024
 
 
@@ -130,6 +137,7 @@ def write_project(directory: Path, name: str, profile: str, root: Path,
         f'QUARTUS_VERSION = "26.1"\nPROJECT_REVISION = "{name}"\n')
     optimization = (AREA_OPTIMIZATION if profile in AREA_PROFILES
                     else PERFORMANCE_OPTIMIZATION)
+    optimization, period_ns = CACHED_RECIPES.get(profile, (optimization, TARGET_NS))
     qsf = [
         'set_global_assignment -name FAMILY "Agilex 3"',
         f"set_global_assignment -name DEVICE {DEVICE}",
@@ -151,7 +159,7 @@ def write_project(directory: Path, name: str, profile: str, root: Path,
                for macro in macros)
     (directory / f"{name}.qsf").write_text("\n".join(qsf) + "\n")
     (directory / f"{name}.sdc").write_text(
-        f"create_clock -name clk -period {TARGET_NS:.3f} [get_ports {{clk}}]\n")
+        f"create_clock -name clk -period {period_ns:.3f} [get_ports {{clk}}]\n")
 
 
 def parse_results(directory: Path, name: str):
@@ -210,6 +218,9 @@ def characterize(spec, output_dir: Path, root: Path, quartus_syn: Path,
             subprocess.run(command, cwd=directory, check=True,
                            stdout=log, stderr=subprocess.STDOUT)
     alms, fmax = parse_results(directory, name)
+    if profile in CACHED_RECIPES and fmax < CACHED_TARGET_MHZ:
+        raise RuntimeError(f"{name}: {fmax:.2f} MHz misses the "
+                           f"{CACHED_TARGET_MHZ:g} MHz Cached target")
     return name, profile, width, alms, fmax
 
 

@@ -13,7 +13,7 @@ with interrupts and preemptive RTOS support uses only 172 LUT4 sites.
 
 The pipelined 32-bit core uses a single-issue, in-order design and runs at
 200 MHz on Agilex 3. With local SRAM and speed-optimized libraries, RTL
-benchmarks measure [1.391–1.407 DMIPS/MHz](doc/HARDWARE.md#rc32-benchmark-throughput),
+benchmarks measure [1.388–1.410 DMIPS/MHz](doc/HARDWARE.md#rc32-benchmark-throughput),
 depending on the branch predictor configuration.
 
 This repository contains the ISA and C application binary interface (ABI)
@@ -53,7 +53,7 @@ RC32 uses software division.
 
 | Architecture | Core | DMIPS/MHz | CoreMark/MHz |
 |---|---|---:|---:|
-| RISC-C | [RC32 pipeline, direct SRAM](doc/HARDWARE.md#coremark) | 1.407 | 2.7865 / 2.9882† |
+| RISC-C | [RC32 pipeline, direct SRAM](doc/HARDWARE.md#coremark) | 1.410 | 2.8033 / 2.9934† |
 | RISC-V | [VexRiscv full max perf, dynamic prediction](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | 1.38 | 2.57 |
 | RISC-V | [VexRiscv full, no caches](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | 1.21 | 2.30 |
 | RISC-V | [PicoRV32](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) | 0.305 / 0.516 | — |
@@ -61,7 +61,7 @@ RC32 uses software division.
 | Arm Thumb-2 | Cortex-M4 | [1.25](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) | [3.54](https://documentation-service.arm.com/static/655e085f2c8b3557fee7048f) |
 
 † RC32 CoreMark: ordinary `-O3` / `-O3` with five optional LLVM tuning flags,
-measured in RTL simulation.
+measured in RTL simulation with a 32-entry BTB.
 `—` means no score is quoted for that configuration. PicoRV32 values use
 normal / look-ahead memory. See the
 [configurations and measurement details](doc/HARDWARE.md#comparison-with-other-cores).
@@ -75,7 +75,7 @@ across families.
 |---|---|---:|---:|
 | RISC-C RC16 Nano (with RF) | Agilex 3 | 78.9 ALMs | 291.80 |
 | RISC-C RC32 Min /1 (with RF) | Agilex 3 | 121.3 ALMs | 301.66 |
-| RISC-C RC32 Cached (with RF) | Agilex 3 | 888.7 ALMs | 207.94 |
+| RISC-C RC32 Cached (with RF) | Agilex 3 | 885.6 ALMs | 218.53 |
 | RISC-V [SERV minimal, excluding RF](https://serv.readthedocs.io/en/stable/datasheet.html#area) | Artix-7 | 125 LUTs | — |
 | RISC-V [VexRiscv full](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | Cyclone V | 1,166 ALMs | 141 |
 | RISC-V [VexRiscv full](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | Artix-7 | 1,840 LUTs | 199 |

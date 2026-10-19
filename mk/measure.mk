@@ -70,15 +70,15 @@ FAST_FMAX_OPTIONS_fast_dsp := -abc2 -dff
 FAST_FMAX_OPTIONS_fast32_soft := -dff
 FAST_FMAX_OPTIONS_fast32_dsp := -abc2
 
-# Cached: minimum area and highest MHz/LUT4 mapping at seed 1, including
+# Cached: highest MHz/LUT4 meeting the 66.67 MHz board clock at seed 1, including
 # both caches and the fixed distributed RF. Cache data uses two EBRs.
 CACHED_MULTIPLIERS := dsp
-CACHED_BLOCK_OPTIONS_cached_dsp := -dff
+CACHED_BLOCK_OPTIONS_cached_dsp := -abc9
 CACHED_LUTRAM_OPTIONS_cached_dsp := -abc2 -dff
-CACHED_FMAX_OPTIONS_cached_dsp := -dff
-CACHED_BLOCK_OPTIONS_cached32_dsp := -abc9
-CACHED_LUTRAM_OPTIONS_cached32_dsp :=
-CACHED_FMAX_OPTIONS_cached32_dsp := -abc9
+CACHED_FMAX_OPTIONS_cached_dsp := -abc9
+CACHED_BLOCK_OPTIONS_cached32_dsp := -dff
+CACHED_LUTRAM_OPTIONS_cached32_dsp := -abc2 -dff
+CACHED_FMAX_OPTIONS_cached32_dsp := -dff
 CACHED_MEASURE_RTL := $(abspath rtl/riscc_cached.v rtl/riscc_pipeline_shared.v)
 
 # Agilex tables consume only generated Quartus results. Published snapshots
@@ -332,7 +332,7 @@ $(foreach pipeline,$(CACHED_PIPELINES),$(foreach multiplier,$(CACHED_MULTIPLIERS
   $(eval $(call ECP5_FMAX,build/fmax/ecp5/$(pipeline)/$(multiplier).mhz, \
     -DRISCC_ECP5 -DRISCC_FMAX_$(if $(filter cached32,$(pipeline)),CACHED32,CACHED) \
     $(FAST_DEFINES_$(multiplier)) $(CACHED_MEASURE_RTL), \
-    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(CACHED_FMAX_OPTIONS_$(pipeline)_$(multiplier)),40,, \
+    $(SYNTH_OPTIONS_ecp5_$(multiplier)) $(CACHED_FMAX_OPTIONS_$(pipeline)_$(multiplier)),66.67,, \
     chparam -set XLEN $(if $(filter cached32,$(pipeline)),32,16) riscc_cached;))))
 
 # Match the tuner's source paths and order so both flows reproduce its netlist.
@@ -387,7 +387,11 @@ fmax-agilex: $(AGILEX_RESULTS)
 fmax-all: fmax-lattice $(AGILEX_RESULTS)
 	$(PYTHON) $(AGILEX_REPORT) --metric fmax $(AGILEX_RESULTS)
 
-.PHONY: tables tables-lattice
+.PHONY: tables tables-lattice test-measure-tools
+
+test-measure-tools:
+	$(PYTHON) tools/test_lattice_tune.py
+	$(PYTHON) tools/test_agilex_core_characterize.py
 
 tables:
 	+$(MAKE) --no-print-directory tables-lattice

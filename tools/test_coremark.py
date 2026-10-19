@@ -2,7 +2,7 @@
 """Guard CoreMark validation, source integrity and short-run reporting."""
 import unittest
 
-from run_coremark import CRCS, SHORT_WARNING, check_sources, parse_output
+from run_coremark import CRCS, SHORT_WARNING, check_sources, parse_output, parse_rtl_output
 
 
 def output(mode="performance", cycles=123456, iterations=100, hz=100000000):
@@ -28,6 +28,22 @@ def output(mode="performance", cycles=123456, iterations=100, hz=100000000):
 
 
 class CoreMarkTests(unittest.TestCase):
+    def test_rtl_configuration(self):
+        for cached in (False, True):
+            config = f"COREMARK_CONFIG cached={int(cached)} btb_entries=32\n"
+            done = f"COREMARK_DONE cached={int(cached)} cycles=123456\n"
+            text = config + output() + done
+            result = parse_rtl_output(text, "performance", 100, 100000000, cached)
+            self.assertEqual(result["btb_entries"], 32)
+            for invalid in (
+                text.replace("btb_entries=32", "btb_entries=16"),
+                text.replace(config, ""), config + text, text.replace(done, ""),
+            ):
+                with self.assertRaises(ValueError):
+                    parse_rtl_output(invalid, "performance", 100, 100000000, cached)
+            with self.assertRaises(ValueError):
+                parse_rtl_output(text, "performance", 100, 100000000, not cached)
+
     def test_upstream_sources_unchanged(self):
         self.assertEqual(check_sources()["commit"], "1f483d5b8316753a742cbf5590caf5bd0a4e4777")
 

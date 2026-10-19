@@ -54,6 +54,40 @@ module riscc_cached_btb_tb #(
                   displacement[6:0], displacement[7]};
     endfunction
 
+    // Observe real pipeline updates: allocations start weak, and only a
+    // subsequent taken hit earns the strongest prediction/replacement state.
+    integer weak_allocations = 0, confirmed_entries = 0, aged_conflicts = 0;
+    reg check_allocation = 0;
+    integer allocated_index = 0;
+    always @(posedge clk) begin
+        check_allocation = 0;
+        if (!rst && !dut.g_btb.clearing_q && dut.g_btb.update) begin
+            if (!dut.x_hit_q && dut.x_count_q < 2) begin
+                if (!dut.g_btb.replace_target || dut.g_btb.count_next != 2)
+                    $fatal(1, "BTB allocation must start weakly taken");
+                weak_allocations = weak_allocations + 1;
+                allocated_index = int'(dut.g_btb.write_index);
+                check_allocation = 1;
+            end else if (!dut.x_hit_q) begin
+                if (dut.g_btb.replace_target ||
+                    dut.g_btb.count_next != dut.x_count_q - 2'd1)
+                    $fatal(1, "BTB conflict must age a protected resident");
+                aged_conflicts = aged_conflicts + 1;
+            end else if (dut.g_btb.taken && dut.x_count_q == 2) begin
+                if (dut.g_btb.count_next != 3)
+                    $fatal(1, "BTB taken hit must confirm a weak entry");
+                confirmed_entries = confirmed_entries + 1;
+            end else if (!dut.g_btb.taken && dut.x_count_q == 2) begin
+                if (dut.g_btb.count_next != 1)
+                    $fatal(1, "BTB not-taken hit must weaken a new entry");
+            end
+        end
+    end
+    always @(negedge clk) begin
+        if (check_allocation && dut.g_btb.count_mem[allocated_index] != 2)
+            $fatal(1, "BTB weak allocation was not written to the counter RAM");
+    end
+
     always @(posedge clk) begin
         if (!rst && imem_cyc && imem_stb)
             imem_rdata <= read_instr(imem_addr);
@@ -444,6 +478,12 @@ module riscc_cached_btb_tb #(
                 errors <= errors + 1;
             end
             if (commits == 100) begin
+                if (weak_allocations == 0)
+                    $fatal(1, "BTB test did not exercise weak allocation");
+                if (CASE == 0 && confirmed_entries == 0)
+                    $fatal(1, "BTB test did not confirm a weak entry");
+                if (CASE == 15 && aged_conflicts == 0)
+                    $fatal(1, "BTB conflict test did not age a resident");
                 if (CASE == 14 && (iflush_commits != 1 || irq_entries != 1 ||
                                    case_r3_writes != 1 || !dut.interrupt_enable_q))
                     $fatal(1, "IFLUSH/IRQ did not preserve successor or IE");

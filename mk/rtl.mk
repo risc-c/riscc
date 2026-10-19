@@ -22,7 +22,7 @@ test-rtl: test-cores test-extensions test-nano test-rc32 \
 # Run the ISA and compiler gates in order because they share LLVM, firmware, and RTL
 # output trees. Each recursive make inherits the GNU Make jobserver, so every
 # gate still uses the caller's full -j parallelism internally.
-test-all: check-llvm-riscc
+test-all: check-llvm-riscc test-measure-tools
 	+$(MAKE) --no-print-directory test-isa
 	+$(MAKE) --no-print-directory test-compiler
 	+$(MAKE) --no-print-directory test-cached-all test-cached-irq-all

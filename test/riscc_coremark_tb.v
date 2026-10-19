@@ -1,5 +1,6 @@
 // CoreMark fixture: native-width, one-clock SRAM plus always-ready console
-// and a coherent 64-bit cycle counter. No changes to the CPU or ISA.
+// and a coherent 64-bit cycle counter. Standard 32-entry BTB with synchronous
+// block register file; no changes to the CPU or ISA.
 `default_nettype none
 module riscc_coremark_tb #(
     parameter integer CACHED = 0
@@ -31,6 +32,12 @@ module riscc_coremark_tb #(
             .mem_wmask(sel), .mem_we(we), .mem_rdata(rdata),
             .mem_cyc(cyc), .mem_stb(stb), .mem_stall(1'b0), .mem_ack(ack)
         );
+        initial begin
+            if ($size(dut.cpu.g_btb.target_mem) != 32)
+                $fatal(1, "CoreMark requires a 32-entry BTB");
+            $display("COREMARK_CONFIG cached=1 btb_entries=%0d",
+                     $size(dut.cpu.g_btb.target_mem));
+        end
         assign i_addr = 0;
         assign i_cyc = 0;
         assign i_stb = 0;
@@ -47,6 +54,12 @@ module riscc_coremark_tb #(
             .dmem_cyc(cyc), .dmem_stb(stb),
             .dmem_stall(1'b0), .dmem_ack(ack)
         );
+        initial begin
+            if ($size(dut.g_btb.target_mem) != 32)
+                $fatal(1, "CoreMark requires a 32-entry BTB");
+            $display("COREMARK_CONFIG cached=0 btb_entries=%0d",
+                     $size(dut.g_btb.target_mem));
+        end
     end endgenerate
 
     initial begin

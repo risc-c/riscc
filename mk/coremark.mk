@@ -83,10 +83,10 @@ coremark-build32: $(COREMARK_IMAGES)
 coremark-iss32: $(COREMARK_IMAGES) $(RISCC_SIM)
 	$(PYTHON) tools/run_coremark.py $(COREMARK_RUN_ARGS) --iss $(RISCC_SIM) \
 	  --output $(COREMARK_BUILD)/results-iss.json
-coremark-rtl32: $(COREMARK_IMAGES) $(foreach cached,0 1,build/coremark/rtl/$(cached)/Vriscc_coremark_tb)
+coremark-rtl32: $(COREMARK_IMAGES) $(foreach cached,0 1,build/coremark/rtl/btb32/$(cached)/Vriscc_coremark_tb)
 	$(PYTHON) tools/run_coremark.py $(COREMARK_RUN_ARGS) \
-	  --rtl sram=build/coremark/rtl/0/Vriscc_coremark_tb \
-	  --rtl cached=build/coremark/rtl/1/Vriscc_coremark_tb \
+	  --rtl sram=build/coremark/rtl/btb32/0/Vriscc_coremark_tb \
+	  --rtl cached=build/coremark/rtl/btb32/1/Vriscc_coremark_tb \
 	  --output $(COREMARK_BUILD)/results-rtl.json
 else
 coremark-build32 coremark-iss32 coremark-rtl32:
@@ -94,13 +94,14 @@ coremark-build32 coremark-iss32 coremark-rtl32:
 	@exit 2
 endif
 
+# Standard 32-entry BTB; keep the same synchronous block register file.
 define COREMARK_RTL
-build/coremark/rtl/$(1)/Vriscc_coremark_tb: test/riscc_coremark_tb.v \
+build/coremark/rtl/btb32/$(1)/Vriscc_coremark_tb: test/riscc_coremark_tb.v \
 		rtl/riscc_pipeline_shared.v rtl/riscc_cached.v $(RISCC_RF_RTL) mk/coremark.mk
 	@mkdir -p $$(@D)
 	+$$(VERILATOR) --binary --timing -j 8 $$(VERILATOR_MAKEFLAGS_ARG) \
 	  --top-module riscc_coremark_tb -GCACHED=$(1) --Mdir $$(@D) \
-	  -DRISCC_FAST_BLOCK_RF -DRISCC_ECP5 \
+	  -DRISCC_FAST_BLOCK_RF \
 	  rtl/riscc_pipeline_shared.v rtl/riscc_cached.v test/riscc_coremark_tb.v
 endef
 $(foreach cached,0 1,$(eval $(call COREMARK_RTL,$(cached))))

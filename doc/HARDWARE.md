@@ -255,6 +255,13 @@ A JALL hit skips its payload; a miss reads it and adds one clock. Taken branch
 and indirect-jump misses add one clock. A predicted-taken branch that falls
 through adds two clocks.
 
+New BTB entries start weakly taken (two-bit counter `2`). A taken hit
+strengthens them to `3`; a not-taken outcome reduces `2` to `1`, disabling
+taken prediction. On a conflicting taken miss, a resident counter of `2` or
+`3` is decremented without replacing its target. A resident below `2` is
+replaced. Thus unconfirmed entries give way sooner than repeatedly taken ones;
+there is no time-based aging.
+
 Cached implements the optional `iflush` extension; the other cores do not.
 `IFLUSH` invalidates the I-cache and BTB, preserves architectural registers and
 interrupt enable, and resumes at PC+2. Invalidation takes 64 clocks on RC16
@@ -347,11 +354,17 @@ seeds 1–32, or 1–128 for Nano. Serial and wide cores use the minimum block-R
 area, with ties resolved by median Fmax. Fast uses the recipe with
 the highest median MIPS per LUT4 site. Efficiency uses the area of that
 timed recipe. Cached ECP5 results use Yosys 0.33 and nextpnr-ecp5 0.6-3build5
-at seed 1, with the timed recipe chosen for MIPS per LUT4 site.
+at seed 1. Cached mappings maximize MIPS per LUT4 site while meeting the
+66.67 MHz board clock; smaller area breaks an efficiency tie. The unconstrained
+minimum area is listed separately and may not meet that clock.
 
-Agilex 3 results use Quartus Pro 26.1, seed 1, and a 4 ns target. The recipe
-is Aggressive Area for Full, MulH, and MulDiv, and High Performance Effort
-for other profiles. Area is Quartus's **ALMs needed** for the core and MLAB
+Agilex 3 results use Quartus Pro 26.1 and seed 1. Cached mappings are selected
+for highest measured MIPS per ALM while meeting 200 MHz. Mapping recipes do
+not change cycle counts, so this is equivalent to maximizing MHz per ALM.
+The fitter constraint is a recipe parameter, not the selection objective.
+The recorded recipes use a 4 ns constraint. Full, MulH, and MulDiv use
+Aggressive Area, and the remaining profiles use High Performance Effort.
+Area is Quartus's **ALMs needed** for the core and MLAB
 register file, accounting for estimated dense packing. Fmax is the post-fit
 restricted-Fmax estimate; it does not guarantee timing closure at that clock. One ALM counts as
 2.95 LEs for efficiency.
@@ -407,8 +420,8 @@ board images. Cached tables use DSP multiplication and the target-specific BTB s
 | RC16 Fast soft | 557 | 591 | 572 | 253.4 |
 | RC32 Fast DSP | 880 | 958 | 880 | 423.7 |
 | RC32 Fast soft | 949 | 1043 | 953 | 437.8 |
-| RC16 Cached DSP | — | 1242 | 1242 | 578.8 |
-| RC32 Cached DSP | — | 1958 | 2040 | 888.7 |
+| RC16 Cached DSP | — | 1238 | 1293 | 572.7 |
+| RC32 Cached DSP | — | 1940 | 1942 | 885.6 |
 
 ECP5 Nano uses one RF EBR. ECP5 Fast DSP uses one DSP block at XLEN=16 and
 three at XLEN=32; Agilex uses one and two. Cached uses the same DSP counts.
@@ -421,8 +434,8 @@ Fast ECP5 timing uses the median over seeds 1–32; Cached uses seed 1.
 
 The ECP5 area columns use the recorded mapping recipes. The timed-recipe
 area column is used for Fmax and efficiency comparisons. Cached's minimum-area
-recipes are `-dff` for RC16 and the default for RC32; its timed recipes
-are `-dff` and `-abc9`, respectively. Native RC32 Sys/Full and arithmetic
+recipe is `-abc2 -dff` for both widths; its timed recipes
+are `-abc9` and `-dff`, respectively. Native RC32 Sys/Full and arithmetic
 extensions use a minimum block-area recipe for timing.
 
 ### Clock rate
@@ -460,8 +473,8 @@ extensions use a minimum block-area recipe for timing.
 | RC16 Fast soft | 58.09 | 250.00 |
 | RC32 Fast DSP | 53.72 | 218.10 |
 | RC32 Fast soft | 55.91 | 239.87 |
-| RC16 Cached DSP | 69.57 | 231.43 |
-| RC32 Cached DSP | 69.69 | 207.94 |
+| RC16 Cached DSP | 73.17 | 226.65 |
+| RC32 Cached DSP | 67.32 | 218.53 |
 
 Fast ECP5 Fmax values are medians over seeds 1–32; Cached uses seed 1.
 
@@ -495,7 +508,7 @@ other cores have the same cycle counts on both targets.
 | Nano | 2.80 | 9.40 | 29.8 | 40.4 |
 | RC16 Fast DSP | 45.32 | 178.86 | 90.8 | 232.6 |
 | RC16 Fast soft | 39.38 | 169.46 | 68.8 | 226.7 |
-| RC16 Cached DSP | 53.96 | 180.09 | 43.4 | 105.5 |
+| RC16 Cached DSP | 56.93 | 176.59 | 44.0 | 104.5 |
 
 | Core | Cycles |
 |---|---:|
@@ -509,7 +522,7 @@ other cores have the same cycle counts on both targets.
 | Nano | 263691 |
 | RC16 Fast DSP | 4329 |
 | RC16 Fast soft | 4777 |
-| RC16 Cached DSP | 4175 / 4161 |
+| RC16 Cached DSP | 4162 / 4156 |
 
 
 ### RC32 benchmark throughput
@@ -530,13 +543,13 @@ instruction-count differences. Memory fixtures match those described above.
 | RC32 Full /32 | 11191 | 20.20 | 59.66 | 39.8 | 80.5 |
 | RC32 Fast soft | 5775 | 30.23 | 129.72 | 31.7 | 100.4 |
 | RC32 Fast DSP | 4815 | 34.84 | 141.46 | 39.6 | 113.2 |
-| RC32 Cached DSP | 4197 / 4195 | 51.86 | 154.80 | 25.4 | 59.0 |
+| RC32 Cached DSP | 4187 / 4184 | 50.21 | 163.11 | 25.9 | 62.4 |
 
 Cached cycle pairs list ECP5 / Agilex.
 
 With direct SRAM and speed-optimized libraries, RC32 Cached measures
-1.407 DMIPS/MHz with 32 BTB entries and 1.391 with 16 entries. These are RTL
-simulation results; the measured Dhrystone loops take 404,529 and 409,022
+1.410 DMIPS/MHz with 32 BTB entries and 1.388 with 16 entries. These are RTL
+simulation results; the measured Dhrystone loops take 403,532 and 410,021
 cycles respectively.
 
 ### Software floating point
@@ -549,8 +562,8 @@ but exclude `.bss`.
 
 | Workload (`test/compiler/bench/`) | Image bytes | RTL cycles |
 |---|---:|---:|
-| `libm32.c`: math functions | 4,436 | 8,275 |
-| `softfloat.c`: arithmetic and math loop | 3,372 | 120,758 |
+| `libm32.c`: math functions | 4,436 | 8,264 |
+| `softfloat.c`: arithmetic and math loop | 3,372 | 120,726 |
 
 Size-built floating-point helpers enable private-literal sharing; see
 [runtime optimization](PROGRAMMING.md#libraries).
@@ -570,8 +583,8 @@ in the RTL fixture, excluding initialization and reporting.
 
 | RC32 pipeline configuration | `-O2` cycles/iteration | `-O3` cycles/iteration | `-Os` cycles/iteration |
 |---|---:|---:|---:|
-| Direct SRAM, no caches | 363,543.50 | 358,875.60 | 481,143.59 |
-| 2 KiB I-cache + 2 KiB D-cache | 377,381.74 | 392,020.21 | 504,157.55 |
+| Direct SRAM, no caches | 360,853.87 | 356,732.35 | 476,529.04 |
+| 2 KiB I-cache + 2 KiB D-cache | 374,807.81 | 390,027.06 | 499,543.00 |
 
 Separate 4,000-iteration direct-SRAM runs measure ordinary `-O3` and the
 [tuned `-O3` recipe](PROGRAMMING.md#coremark). The application and runtime
@@ -579,8 +592,8 @@ use the same flags in each build.
 
 | Build | Timed performance cycles | CoreMark/MHz | Performance image bytes |
 |---|---:|---:|---:|
-| Ordinary `-O3` | 1,435,481,305 | 2.7865 | 10,940 |
-| `-O3` with five optional LLVM tuning flags | 1,338,611,552 | 2.9882 | 11,836 |
+| Ordinary `-O3` | 1,426,911,274 | 2.8033 | 10,940 |
+| `-O3` with five optional LLVM tuning flags | 1,336,255,516 | 2.9934 | 11,836 |
 
 Both builds pass the upstream CRC checks with performance and validation
 seeds. All four runs exceed ten simulated seconds at 100 MHz; these are RTL
@@ -589,8 +602,8 @@ increases inlining, enables loop flattening, reverses local register assignment,
 removes global-copy priority during coalescing and raises the tail-duplication
 limit to eight instructions. It does not change compiler defaults.
 
-Both memory configurations use native-width, one-clock SRAM responses, a 16-entry
-BTB and the ECP5 synchronous register-file implementation. The direct fixture
+Both memory configurations use native-width, one-clock SRAM responses, a 32-entry
+BTB and the synchronous block register-file implementation. The direct fixture
 has separate instruction/data ports; the cached fixture uses the shared
 backing-memory port. These are simulation configurations, not fitted FPGA designs.
 
@@ -601,8 +614,8 @@ required runtime helpers, excluding `.bss`. Reproduce with
 [CoreMark usage and timing](PROGRAMMING.md#coremark).
 
 Application-only LTO with the ordinary `-Os` runtime reduces the performance
-image to 7,780 bytes and direct-SRAM time to 457,874.88 cycles/iteration.
-The same image takes 493,673.51 cycles/iteration through the caches.
+image to 7,780 bytes and direct-SRAM time to 453,088.53 cycles/iteration.
+The same image takes 488,882.25 cycles/iteration through the caches.
 Both seed sets pass in SRAM and cached RTL simulation.
 
 ### Comparison with other cores
@@ -671,7 +684,7 @@ Compiler, runtime, memory system and division support differ between results.
 
 | Architecture | Core | DMIPS/MHz | CoreMark/MHz | Source |
 |---|---|---:|---:|---|
-| RISC-C | RC32 pipeline, direct SRAM | 1.407 | 2.7865 / 2.9882† | [Dhrystone RTL](#rc32-benchmark-throughput), [CoreMark RTL](#coremark) |
+| RISC-C | RC32 pipeline, direct SRAM | 1.410 | 2.8033 / 2.9934† | [Dhrystone RTL](#rc32-benchmark-throughput), [CoreMark RTL](#coremark) |
 | RISC-V | VexRiscv full max perf, dynamic prediction, 8 KiB I-cache + 8 KiB D-cache | 1.38 | 2.57 | [VexRiscv configuration results](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
 | RISC-V | VexRiscv full, no caches, static prediction | 1.21 | 2.30 | [VexRiscv configuration results](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
 | RISC-V | PicoRV32, normal / look-ahead memory | 0.305 / 0.516 | — | [PicoRV32 documentation](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) |
@@ -687,11 +700,10 @@ the duration and validation conditions are listed above.
 have a corresponding CoreMark score listed. Arm's CoreMark figures are from
 its 2023 processor comparison table.
 
-RC32 uses software division and direct SRAM. Dhrystone uses `-O2` and a
-32-entry BTB; both CoreMark builds use the ECP5
-16-entry BTB. Dhrystone timing covers 1,000
+RC32 uses software division, direct SRAM and a 32-entry BTB for both
+benchmarks. Dhrystone uses `-O2`; its timing covers 1,000
 iterations between the benchmark's markers, excluding setup and final-state
-verification: 404,529 loop cycles. DMIPS/MHz is
+verification: 403,532 loop cycles. DMIPS/MHz is
 `iterations * 1000000 / (1757 * loop_cycles)`.
 
 VexRiscv's `full max perf` configuration uses RV32IM with hardware division,
@@ -718,7 +730,7 @@ count represents the additional embedded RAM and DSP blocks used by a core.
 |---|---|---|---:|---:|---|
 | RISC-C RC16 Nano (with RF) | 16-bit architecture, one-bit serial datapath, MLAB RF | Agilex 3 | 78.9 ALMs | 291.80 | [RISC-C measurement conditions](#measurement-conditions) |
 | RISC-C RC32 Min /1 (with RF) | 32-bit architecture, one-bit serial datapath, Min profile, MLAB RF | Agilex 3 | 121.3 ALMs | 301.66 | [RISC-C measurement conditions](#measurement-conditions) |
-| RISC-C RC32 Cached (with RF) | 2 KiB I-cache + 2 KiB D-cache, 32-entry BTB, DSP multiply | Agilex 3 | 888.7 ALMs | 207.94 | [RISC-C measurement conditions](#measurement-conditions) |
+| RISC-C RC32 Cached (with RF) | 2 KiB I-cache + 2 KiB D-cache, 32-entry BTB, DSP multiply | Agilex 3 | 885.6 ALMs | 218.53 | [RISC-C measurement conditions](#measurement-conditions) |
 | RISC-V SERV minimal | Minimum-area bit-serial configuration, excluding RF | Artix-7 | 125 LUTs | — | [SERV datasheet, Area](https://serv.readthedocs.io/en/stable/datasheet.html#area) |
 | RISC-V VexRiscv full | RV32IM, 4 KiB I-cache + 4 KiB D-cache, static prediction | Cyclone V | 1,166 ALMs | 141 | [VexRiscv area and Fmax](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
 | RISC-V VexRiscv full | RV32IM, 4 KiB I-cache + 4 KiB D-cache, static prediction | Artix-7 | 1,840 LUTs | 199 | [VexRiscv area and Fmax](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
