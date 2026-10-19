@@ -227,3 +227,13 @@ __divsf3:
 #else
         .long   __riscc_pack_sf
 #endif
+
+#ifdef __OPTIMIZE_SIZE__
+/* Private, four-byte-aligned words referenced only by relocatable LDPCs. */
+        .reloc  .Ldiv_sign_mask, R_RISCC_RELAX_LITERAL, .Ldiv_sign_mask
+        .reloc  .Ldiv_fraction_mask, R_RISCC_RELAX_LITERAL, .Ldiv_fraction_mask
+        .reloc  .Ldiv_hidden, R_RISCC_RELAX_LITERAL, .Ldiv_hidden
+        .reloc  .Ldiv_quiet_bit, R_RISCC_RELAX_LITERAL, .Ldiv_quiet_bit
+        .reloc  .Ldiv_qnan, R_RISCC_RELAX_LITERAL, .Ldiv_qnan
+        .reloc  .Ldiv_infinity, R_RISCC_RELAX_LITERAL, .Ldiv_infinity
+#endif

@@ -119,3 +119,11 @@ __riscc_pack_sf:
         .long   __riscc_shlsi23
 #endif
 #endif
+
+#ifdef __OPTIMIZE_SIZE__
+/* Private, four-byte-aligned words referenced only by relocatable LDPCs. */
+        .reloc  .Lpack_overflow, R_RISCC_RELAX_LITERAL, .Lpack_overflow
+        .reloc  .Lpack_hidden, R_RISCC_RELAX_LITERAL, .Lpack_hidden
+        .reloc  .Lpack_fraction, R_RISCC_RELAX_LITERAL, .Lpack_fraction
+        .reloc  .Lpack_infinity, R_RISCC_RELAX_LITERAL, .Lpack_infinity
+#endif

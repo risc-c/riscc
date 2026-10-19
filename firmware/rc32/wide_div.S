@@ -1,7 +1,19 @@
 /* RC32 unsigned 64-bit divide, remainder, and combined helper. */
 
+#include "../builtins/div_tail.inc"
+
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+#define SIGNED_DIV_COMMON .Lsdivdi_unsigned
+#else
+#define SIGNED_DIV_COMMON .Ludivdi_common
+#endif
+
         .section .text.__udivmoddi4,"ax",@progbits
         .p2align 1
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        .pushsection .text.__divmoddi4,"ax",@progbits
+        .p2align 1
+#endif
         .global __divdi3
         .hidden __divdi3
         .type __divdi3,@function
@@ -35,12 +47,20 @@ __divmoddi4:
         MTS     s4, r0
 .Lsdivdi_numerator_positive:
         LD      r0, [r7 + 4]
-        BGEZ    .Ludivdi_common
+        BGEZ    SIGNED_DIV_COMMON
         MFS     r0, s4
         ORI     r0, 8
         MTS     s4, r0
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+.Lsdivdi_unsigned:
+        DIV_TAIL .Ludivdi_common
+#else
         JMP8    .Ludivdi_common
+#endif
         .size __divmoddi4, . - __divmoddi4
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        .popsection
+#endif
 
         .global __udivdi3
         .hidden __udivdi3

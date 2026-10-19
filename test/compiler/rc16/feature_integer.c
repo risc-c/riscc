@@ -1,5 +1,13 @@
 #include "riscc_compiler_features.h"
+#include "../argument_extensions.h"
+#include "../biased_pointer.h"
+#include "../bounded_shifts.h"
 #include "../comparison_ranges.h"
+#include "../narrow_arithmetic.h"
+#include "../optimization_cleanup.h"
+#include "../pointer_rotation.h"
+#include "../shared_selects.h"
+#include "../square_overflow.h"
 
 static volatile u16 integer_u16_a = 0xf123u;
 static volatile u16 integer_u16_b = 0x1357u;
@@ -136,8 +144,32 @@ static __attribute__((noinline)) u16 check_variable_shifts(u16 value)
 
 u16 feature_test_integer(void)
 {
+    unsigned argument_extensions_status = test_argument_extensions();
+    if (argument_extensions_status)
+        return (u16)(100u + argument_extensions_status);
+    unsigned bounded_shift_status = test_bounded_shifts();
+    if (bounded_shift_status)
+        return (u16)(79u + bounded_shift_status);
     if (test_comparison_ranges())
         return 30;
+    unsigned narrow_status = test_narrow_arithmetic();
+    if (narrow_status)
+        return (u16)(30u + narrow_status);
+    unsigned shared_select_status = test_shared_selects();
+    if (shared_select_status)
+        return (u16)(37u + shared_select_status);
+    unsigned optimization_cleanup_status = test_optimization_cleanup();
+    if (optimization_cleanup_status)
+        return (u16)(65u + optimization_cleanup_status);
+    unsigned biased_pointer_status = test_biased_pointer();
+    if (biased_pointer_status)
+        return (u16)(45u + biased_pointer_status);
+    unsigned pointer_rotation_status = test_pointer_rotation();
+    if (pointer_rotation_status)
+        return (u16)(55u + pointer_rotation_status);
+    unsigned square_overflow_status = test_square_overflow();
+    if (square_overflow_status)
+        return (u16)(75u + square_overflow_status);
     u16 a = integer_u16_a;
     u16 b = integer_u16_b;
     u16 shift = integer_shift;

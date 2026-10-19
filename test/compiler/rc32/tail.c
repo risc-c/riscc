@@ -1,4 +1,6 @@
 #include "test.h"
+#include "../private_calls.h"
+#include "../return_transfer.h"
 
 static __attribute__((noinline)) u32 tail_leaf(u32 value)
 {
@@ -61,5 +63,9 @@ u16 rc32_test_tail(void)
         return 4;
     if (nested_outer(10) != 39)
         return 5;
+    if (test_return_transfers())
+        return 6;
+    if (test_private_calls())
+        return 7;
     return 0;
 }

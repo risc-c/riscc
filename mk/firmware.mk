@@ -54,6 +54,9 @@ RISCC_CXXFLAGS ?= $(RISCC_CFLAGS) -std=c++17 -fno-exceptions -fno-rtti \
 # Prevent library calls from becoming recursive builtins. Library optimization
 # is explicit and independent of the application's optimization level.
 LIB_CFLAGS := $(filter-out -O%,$(RISCC_CFLAGS)) $(RISCC_LIB_OPT) -ffreestanding -fno-builtin
+# Expose the library optimization policy to preprocessed assembly as well.
+# Size-only relaxation annotations must not change speed-optimized layouts.
+LIB_ASFLAGS := $(filter-out -O%,$(RISCC_ASFLAGS)) $(RISCC_LIB_OPT)
 # Discard unused sections from extracted archive members.
 RISCC_LDFLAGS ?= -Wl,--gc-sections
 
@@ -162,9 +165,9 @@ $(FW_CRT0): firmware/$(RISCC_STARTUP_ARCH)/crt0.S $(RISCC_CLANG)
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
 
 $(IRQ_OBJS): $(RISCC_FIRMWARE_BUILD)/irq/%.o: \
-		$(IRQ_SOURCE_DIR)/%.S $(RISCC_CLANG)
+		$(IRQ_SOURCE_DIR)/%.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(INTEGER_C_OBJS): \
 		$(RISCC_FIRMWARE_BUILD)/builtins/%.o: \
@@ -174,9 +177,12 @@ $(INTEGER_C_OBJS): \
 
 $(INTEGER_ASM_OBJS): \
 		$(RISCC_FIRMWARE_BUILD)/builtins/%.o: \
-		$(INTEGER_SOURCE_DIR)/%.S $(RISCC_CLANG)
+		$(INTEGER_SOURCE_DIR)/%.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
+
+$(filter %/div.o %/integer.o %/wide_div.o,$(INTEGER_ASM_OBJS)): \
+		firmware/builtins/div_tail.inc
 
 SOFT_FLOAT_SOURCE_DIR := firmware/$(if $(filter nano,$(PROFILE)),nano,$(RISCC_ARCH))
 
@@ -186,12 +192,12 @@ $(addprefix $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/, \
 		$(SOFT_FLOAT_SOURCE_DIR)/%.S \
 		$(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(SOFT_FLOAT_PACK_OBJ): \
 		$(SOFT_FLOAT_SOURCE_DIR)/pack_sf.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 		$(COMPILER_RT_BUILTINS)/%.c \
@@ -202,9 +208,9 @@ $(RISCC_FIRMWARE_BUILD)/builtins/softfloat/%.o: \
 	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_CFLAGS) \
 	  -I$(COMPILER_RT_BUILTINS) -c $< -o $@
 
-$(SOFT_FLOAT_MUL24_OBJ): firmware/rc16/mul24.S $(RISCC_CLANG)
+$(SOFT_FLOAT_MUL24_OBJ): firmware/rc16/mul24.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/libc/%.o: firmware/libc/%.c \
 		$(LIBC_HEADERS) $(FIRMWARE_RULES) $(RISCC_CLANG)
@@ -227,14 +233,14 @@ $(LIBM_ARCH_ASM_OBJS): \
 		$(RISCC_FIRMWARE_BUILD)/libm/arch/%.o: \
 		firmware/$(RISCC_ARCH)/%.S $(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(addprefix $(RISCC_FIRMWARE_BUILD)/libc/,memory.o string.o): firmware/libc/word.h
 
 $(RISCC_FIRMWARE_BUILD)/libc/heap_limit.o: firmware/libc/heap.S \
 		$(FIRMWARE_RULES) $(RISCC_CLANG)
 	@mkdir -p $(@D)
-	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(RISCC_ASFLAGS) -c $< -o $@
+	$(RISCC_CLANG) $(RISCC_TARGET_FLAGS) $(LIB_ASFLAGS) -c $< -o $@
 
 $(RISCC_FIRMWARE_BUILD)/bsp/%.o: $(BSP_DIR)/%.c \
 		$(LIBC_HEADERS) $(FIRMWARE_RULES) $(RISCC_CLANG)

@@ -250,3 +250,14 @@ __mulsf3:
 #else
         .long   __riscc_pack_sf
 #endif
+
+#ifdef __OPTIMIZE_SIZE__
+/* Private, four-byte-aligned words referenced only by relocatable LDPCs. */
+        .reloc  .Lmul_sign_mask, R_RISCC_RELAX_LITERAL, .Lmul_sign_mask
+        .reloc  .Lmul_fraction_mask, R_RISCC_RELAX_LITERAL, .Lmul_fraction_mask
+        .reloc  .Lmul_hidden, R_RISCC_RELAX_LITERAL, .Lmul_hidden
+        .reloc  .Lmul_quiet_bit, R_RISCC_RELAX_LITERAL, .Lmul_quiet_bit
+        .reloc  .Lmul_qnan, R_RISCC_RELAX_LITERAL, .Lmul_qnan
+        .reloc  .Lmul_infinity, R_RISCC_RELAX_LITERAL, .Lmul_infinity
+        .reloc  .Lmul_bit47, R_RISCC_RELAX_LITERAL, .Lmul_bit47
+#endif

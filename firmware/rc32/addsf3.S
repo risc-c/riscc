@@ -268,3 +268,14 @@ __addsf3:
 #else
         .long   __riscc_pack_sf
 #endif
+
+#ifdef __OPTIMIZE_SIZE__
+/* Private, four-byte-aligned words referenced only by relocatable LDPCs. */
+        .reloc  .Ladd_sign_mask, R_RISCC_RELAX_LITERAL, .Ladd_sign_mask
+        .reloc  .Ladd_fraction_mask, R_RISCC_RELAX_LITERAL, .Ladd_fraction_mask
+        .reloc  .Ladd_hidden, R_RISCC_RELAX_LITERAL, .Ladd_hidden
+        .reloc  .Ladd_quiet_bit, R_RISCC_RELAX_LITERAL, .Ladd_quiet_bit
+        .reloc  .Ladd_qnan, R_RISCC_RELAX_LITERAL, .Ladd_qnan
+        .reloc  .Ladd_extended_hidden, R_RISCC_RELAX_LITERAL, .Ladd_extended_hidden
+        .reloc  .Ladd_extended_overflow, R_RISCC_RELAX_LITERAL, .Ladd_extended_overflow
+#endif

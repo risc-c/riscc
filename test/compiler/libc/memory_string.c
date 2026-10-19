@@ -21,9 +21,9 @@ int main(void)
     unsigned char destination[64];
     unsigned char move_storage[128];
     unsigned char move_expected[128];
-    unsigned char left_bytes[64];
-    unsigned char right_bytes[64];
-    const unsigned char fill_values[] = {0u, 0x80u, 0xffu, 'x'};
+    _Alignas(unsigned int) unsigned char left_bytes[64];
+    _Alignas(unsigned int) unsigned char right_bytes[64];
+    const int fill_values[] = {0, 0x80, 0xff, 'x', -1, 256, 0x1234, -0x1234};
     char *token;
     unsigned int destination_offset;
     unsigned int source_offset;
@@ -33,12 +33,28 @@ int main(void)
     unsigned int string_length_index;
     unsigned int fill_index;
     unsigned int nul_lane;
+    unsigned int event_case_index;
     int character;
     const unsigned int move_lengths[] =
         {0u, 1u, 2u, 3u, 4u, 5u, 7u, 8u, 9u, 15u, 16u, 17u,
          31u, 32u, 33u, 64u};
     const unsigned int string_lengths[] =
         {0u, 1u, 2u, 3u, 4u, 5u, 7u, 8u, 9u, 15u, 16u, 17u, 31u, 32u, 40u};
+    static volatile const unsigned char word_event_cases[][2][5] = {
+        {{0x80u, 0x01u, 0x02u, 0x03u, 0x00u},
+         {0x7fu, 0x01u, 0x02u, 0x03u, 0x00u}},
+        {{0x11u, 0xffu, 0x34u, 0x12u, 0x00u},
+         {0x11u, 0x00u, 0x34u, 0x12u, 0x00u}},
+        {{0x7fu, 0x7fu, 0x7fu, 0x7fu, 0x00u},
+         {0xffu, 0xffu, 0xffu, 0xffu, 0x00u}},
+        {{0x41u, 0x00u, 0x80u, 0xffu, 0x00u},
+         {0x41u, 0x00u, 0x7fu, 0x00u, 0x00u}},
+        {{0x41u, 0x01u, 0x80u, 0xffu, 0x00u},
+         {0x41u, 0x01u, 0x7fu, 0x00u, 0x00u}},
+        {{0x41u, 0x01u, 0x01u, 0x80u, 0x00u},
+         {0x41u, 0x01u, 0x01u, 0x7fu, 0x00u}}
+    };
+    const int word_event_signs[] = {1, 1, -1, 0, 1, 1};
 
     CHECK(memchr(bytes, 'c', 4) == bytes + 2, 1);
     CHECK(memchr(bytes, 'x', 4) == 0, 2);
@@ -53,6 +69,32 @@ int main(void)
     CHECK(memmove(reverse, reverse + 1, 3) == reverse &&
         !memcmp(reverse, "bcdd", 4),
         10);
+
+    /* Carries may pass later bytes after the first difference, while the
+     * first zero byte must still terminate strcmp/strncmp.  Copy volatile
+     * table data into the buffers so the library calls remain runtime calls. */
+    for (event_case_index = 0;
+         event_case_index < sizeof(word_event_cases) / sizeof(word_event_cases[0]);
+         ++event_case_index)
+    {
+        for (index = 0; index < 5u; ++index)
+        {
+            left_bytes[index] = word_event_cases[event_case_index][0][index];
+            right_bytes[index] = word_event_cases[event_case_index][1][index];
+        }
+        if (word_event_signs[event_case_index] > 0)
+            CHECK(strcmp((const char *)left_bytes, (const char *)right_bytes) > 0 &&
+                strncmp((const char *)left_bytes, (const char *)right_bytes, 4) > 0 &&
+                memcmp(left_bytes, right_bytes, 4) > 0, 72);
+        else if (word_event_signs[event_case_index] < 0)
+            CHECK(strcmp((const char *)left_bytes, (const char *)right_bytes) < 0 &&
+                strncmp((const char *)left_bytes, (const char *)right_bytes, 4) < 0 &&
+                memcmp(left_bytes, right_bytes, 4) < 0, 73);
+        else
+            CHECK(strcmp((const char *)left_bytes, (const char *)right_bytes) == 0 &&
+                strncmp((const char *)left_bytes, (const char *)right_bytes, 4) == 0 &&
+                memcmp(left_bytes, right_bytes, 4) > 0, 74);
+    }
 
     for (destination_offset = 0; destination_offset < 4; ++destination_offset)
     {
@@ -201,7 +243,9 @@ int main(void)
 
     for (destination_offset = 0; destination_offset < 4; ++destination_offset)
     {
-        for (fill_index = 0; fill_index < sizeof(fill_values); ++fill_index)
+        for (fill_index = 0;
+            fill_index < sizeof(fill_values) / sizeof(fill_values[0]);
+            ++fill_index)
         {
             for (length = 0; length <= 40; ++length)
             {
@@ -214,7 +258,7 @@ int main(void)
                     CHECK(destination[index] == 0x5au, 55);
                 for (index = 0; index < length; ++index)
                     CHECK(destination[destination_offset + index] ==
-                        fill_values[fill_index], 56);
+                        (unsigned char)fill_values[fill_index], 56);
                 for (index = destination_offset + length; index < 56; ++index)
                     CHECK(destination[index] == 0x5au, 57);
             }

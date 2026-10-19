@@ -133,6 +133,7 @@ include mk/boards.mk
 include mk/vblank-test.mk
 include mk/measure.mk
 include mk/compiler-tests.mk
+include mk/coremark.mk
 
 .PHONY: help clean distclean
 
@@ -216,6 +217,8 @@ help:
 	  '  compiler-features-rtl       feature tests on Nano RTL' \
 	  '  compiler-benchmarks         C benchmarks in ISS (RISCC_XLEN=16/32)' \
 	  '  compiler-benchmarks-rtl     C benchmark cycles on Full/Fast/Cached' \
+	  '  coremark                   RC32 CoreMark CRC checks and RTL cycle measurements' \
+	  '  coremark-iss               CoreMark correctness in the instruction simulator' \
 	  '  compiler-float              floating-point compiler tests' \
 	  '  compiler-profiles           feature tests for every profile' \
 	  '  compiler-libc               libc tests' \

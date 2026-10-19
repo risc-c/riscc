@@ -106,6 +106,10 @@ RC32 is selected with `RISCC_XLEN=32` or Clang's `-mrc32` option.
 Nano exists only for RC16. Min, Sys, and Full are implemented for both RC16
 and RC32.
 
+Both widths use the same LLVM backend and optimization passes. Common
+instruction definitions are shared; native types and ISA/ABI differences
+are selected by the target configuration.
+
 For example, build the RC32 Sys runtime, compile the repository's mixed C/C++
 test application, and run its self-check in the RC32 ISS:
 
@@ -127,22 +131,20 @@ extension on both RC16 and RC32 with `PROFILE=2, MDU=2`; see the
 [hardware options](HARDWARE.md#parameterized-full-width-core).
 RC32X remains unsupported and `-mrc32x` is intentionally rejected.
 
-Min, Sys, and Full enable branch scheduling for the pipeline by default.
-Nano does not use this scheduling option.
+### Pipeline scheduling
 
-The default applies when compiling both applications and libraries; rebuild
-libraries to use it. Hand-written assembly is not rescheduled. To disable this
-branch preference, use `llc -mattr=-early-branches` or Clang
-`-Xclang -target-feature -Xclang -early-branches`.
+Min, Sys, and Full share a scheduling model tuned for Cached with local SRAM
+or cache hits. ALU results can feed the next instruction, including a branch;
+loads need one independent instruction between the load and its consumer to
+avoid a bubble. Hardware multiply occupies Execute for three clocks. The IR
+optimizer uses the same multiply cost and aligned integer-load latency, keeping
+code-size costs separate. Nano has no pipeline scheduling model; other core
+implementations can execute the same ISA with different timings.
 
-RC32 direct calls are address-range independent. The compiler places a
-full-width target literal, and the linker automatically replaces each Sys or
-Full call whose final target is at or below `0x1ffffe` with `JALL` or `JMPL`.
-Far calls retain `LDPC` plus `JALR`; no code-model option is required. Nearby RC16
-and RC32 direct jumps that do not write a link register can become `JMP8`.
-This rewrite retains the unused second halfword to preserve code and literal
-alignment; it reduces execution cost, not binary size. `--no-relax` disables
-linker relaxation.
+Scheduling applies to compiled applications and libraries, not hand-written
+assembly. Rebuild libraries when changing compiler scheduling. Cache misses,
+branch-predictor behavior, and memory backpressure depend on the workload and
+are not represented as exact static instruction costs.
 
 ## 3. Compile, link, and inspect programs
 
@@ -172,9 +174,101 @@ The supplied flags use one section per function or data item and link with
 Nano and Min default to `-Oz`; Sys and Full default to `-Os`. Append `-O2`
 for speed-oriented application builds. Runtime C libraries default to `-Oz`.
 RC16 and RC32 variable shifts use compact loops at `-Os`/`-Oz`; speed builds
-share unrolled helpers, linked only for the shift directions used.
+share unrolled helpers, linked only for the shift directions used. Counts
+proven to be at most three use short inline loops on both widths.
+The optimizer costs helper-backed native shifts, multiplication and division
+as calls, with a separate estimate of call-site bytes for size decisions.
+Conditional operations can consequently remain conditional instead of becoming
+unconditional helper calls. Hardware instructions and constant-operand
+arithmetic retain their separate cost models.
 Applications allow standard-library optimizations, including inlining short
 copies; the library implementations themselves disable builtins.
+
+### Optimization and code size
+
+#### Registers and calls
+
+RC16 and RC32 share optimizations for register allocation, frame addresses,
+and narrow arithmetic. Known argument extensions and loop ranges eliminate
+redundant masks; proven branch conditions eliminate unreachable paths.
+Size builds (`-Os`/`-Oz`) also remove extensions whose upper bits are unused
+and shorten sign-mask calculations. These transformations preserve required
+extensions at memory, comparison, call and return boundaries.
+
+Local copy cleanup in size builds tracks values and liveness across short
+instruction regions, rather than requiring adjacent instruction patterns.
+It preserves memory-operation order, fixed-register constraints and live-out
+assignments, and does not introduce new callee-saved clobbers. Narrow loop
+recurrences use overflow and known-bit proofs as well as explicit no-wrap
+flags to decide when repeated width normalization is unnecessary.
+
+Small frame addresses and RC16 long immediates can be reconstructed after a
+call instead of spilled. Large frame offsets use the destination register
+directly where possible, avoiding a scratch-register spill. Speed builds can
+keep an invariant spill in a GPR throughout a single-block loop, temporarily
+preserving an outer value that the loop does not use.
+
+Shrink wrapping places frame setup on paths that need it, so early returns
+can avoid saves and stack adjustment. Nano, interrupt/unwind functions and
+functions requiring stack realignment retain entry-based setup. Non-returning,
+non-unwinding functions without unwind tables can omit callee-saved register
+preservation; interrupt handlers cannot.
+
+In size builds, private direct calls can use additional argument registers or
+omit unused argument extensions when every caller agrees. Sibling calls can
+reuse unchanged native-width stack arguments in their original incoming slots.
+Changed values, reordered slots and mismatched extensions require ordinary
+calls. These policies do not change the [public ABI](RISC-C-ABI.md).
+
+#### Code layout and literal pools
+
+Size builds refine basic-block order when this reduces instruction and
+alignment bytes without increasing out-of-range branches. Equal-size choices
+retain the original fall-through layout; speed builds keep normal placement.
+Redundant jump-only blocks can also be removed when branch ranges and labels
+remain valid.
+
+RC32 size builds pack and share reachable literal pools, accounting for
+padding and skip branches. Pools may be split between gaps, and independent
+literal loads may move within their basic block to improve placement. The
+linker can share private literal words across nearby function sections and
+reuse pool slots freed by call relaxation. Function sections remain
+independently discardable. Sharing preserves load and branch ranges and
+respects linker-script boundaries, alignment and address metadata. RC32
+floating-point assembly helpers provide sharing annotations at `-Os`/`-Oz`.
+These decisions estimate bytes, not cache or branch-predictor effects.
+
+Constant selection and late literal synthesis share a native-width sequence
+builder. It checks legal immediate operations and profile-specific shifts;
+RC32 size builds synthesize unshared literals when one or two compact
+instructions use fewer bytes. Shared literals retain their pool loads.
+
+RC32 direct calls are address-range independent. The compiler emits a
+full-width target literal; the linker replaces Sys and Full transfers to
+addresses at or below `0x1ffffe` with `JALL` or `JMPL`. This also applies to
+local far jumps with an unshared target literal. Unused literals are removed
+unless debug or unwind metadata requires preserving their address range.
+Addresses outside that range retain `LDPC` plus `JALR`; no code-model option
+is required.
+
+Nearby RC16 and RC32 direct jumps without a link can become `JMP8`. This
+rewrite retains the unused second halfword to preserve alignment, so it does
+not shrink the instruction pair. `--no-relax` disables linker relaxation.
+
+#### Optional backend tuning
+
+Two additional transformations are available but disabled by default because
+local savings can be offset by calls, register pressure or code layout:
+
+- `-mllvm -riscc-multiblock-spill-hoist` extends loop register borrowing to
+  multiple blocks. Shared exits, calls and cross-block reload uses still
+  require conservative allocation.
+- `-mllvm -enable-machine-outliner=always` shares repeated instruction
+  sequences in size builds, outside loops, using the private S3 link. It
+  excludes Nano, IPRA, unwind functions and sequences needing R0 or S3.
+
+For LTO code generation, also pass backend options to LLD using
+`-Wl,--mllvm=<option>` at link time.
 
 ### Direct tool invocation
 
@@ -330,7 +424,7 @@ recovery.
 These are static archives. Only referenced objects and sections enter the
 application image.
 
-C libraries default to `RISCC_LIB_OPT=-Oz`. Select `RISCC_LIB_OPT=-O2` for
+Libraries default to `RISCC_LIB_OPT=-Oz`. Select `RISCC_LIB_OPT=-O2` for
 speed, including unrolled string loops; the application optimization level
 does not change a prebuilt library. Runtime archives and compiler-test results
 use separate directories, such as `build/firmware/rc32/full-O2` and
@@ -342,10 +436,102 @@ make RISCC_XLEN=32 PROFILE=full RISCC_LIB_OPT=-O2 compiler-benchmarks-rtl
 ```
 
 For an application using `firmware/riscc.mk`, set the same `RISCC_LIB_OPT`
-before including it to select those archives. Native assembly helpers are
-unchanged; computed-shift selection still follows the calling function's
-speed or size optimization setting.
+before including it to select those archives. Size builds allow sharing
+marked private literals. On Sys/Full, selected division wrappers use separate
+sections, allowing unused entries to be discarded without duplicating the
+division loops. Transfers between these sections support the full address
+range. Speed builds and Min/Nano retain the grouped division layout to avoid
+extra entry-transfer overhead. Computed-shift selection follows the calling
+function's speed or size optimization setting.
 Board demo targets retain their separate compact runtime.
+
+### CoreMark
+
+The RC32 Full bare-metal port uses unchanged upstream CoreMark sources pinned
+in `external/coremark/UPSTREAM.json`. It uses a single context, a static
+2,000-byte dataset, hardware multiplication and software division. Both the
+performance and validation seed sets are checked.
+
+The targets below fetch that exact revision on first use, verifying the archive
+and individual file SHA-256 checksums. Only the manifest and RISC-C port are
+tracked in Git; downloaded sources remain in `external/coremark/` and the archive
+is cached in `build/downloads/`. Run `make coremark-fetch` to prepare an offline
+build. Existing modified sources are rejected, never overwritten.
+
+```sh
+make -j16 coremark-iss
+make -j16 coremark
+make -j16 COREMARK_OPT=-O3 coremark
+make -j16 COREMARK_OPT=-Os coremark
+```
+
+`coremark-iss` checks correctness only. `coremark` measures cycles in Verilator
+with one-clock native-width SRAM, with and without the instruction/data caches.
+No FPGA programming is performed. Application and runtime use the same
+optimization level. Binaries, per-run logs and JSON results are under
+`build/coremark/rc32/O2/`, `build/coremark/rc32/O3/` or
+`build/coremark/rc32/Os/`.
+
+The default `COREMARK_ITERATIONS=100` is a short bring-up run, not a compliant
+CoreMark score. The runner preserves the upstream duration warning and reports
+cycles per iteration, rejecting incorrect CRCs independently. A compliant
+duration requires at least ten seconds at `COREMARK_CLOCK_HZ` (100 MHz by
+default). Increase `COREMARK_ITERATIONS`, `COREMARK_MAX_CYCLES` and
+`COREMARK_TIMEOUT` for longer runs. The JSON includes CoreMark/MHz only when
+the performance run meets the duration requirement and validation checks.
+
+For a 4,000-iteration run at the default 100 MHz:
+
+```sh
+make -j16 COREMARK_OPT=-O3 COREMARK_ITERATIONS=4000 \
+  COREMARK_MAX_CYCLES=2000000000 \
+  COREMARK_MAX_INSNS=2000000000 COREMARK_TIMEOUT=900 coremark
+```
+
+Plain `-O3` needs no extra tuning options. For higher throughput with a larger
+image, the optional recipe below increases inlining, enables loop flattening,
+and adjusts register allocation, copy coalescing and tail duplication.
+Use separate application and runtime build directories when
+changing flags, since Make does not track command-line changes:
+
+```sh
+make -j16 COREMARK_OPT=-O3 COREMARK_ITERATIONS=4000 \
+  COREMARK_BUILD=build/coremark/rc32/fast \
+  RISCC_FIRMWARE_BUILD=build/firmware/rc32/full-fast \
+  RISCC_CFLAGS="-O3 -fno-pic -fno-pie -fno-unwind-tables \
+    -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections \
+    -mllvm -inline-threshold=500 -mllvm -enable-loop-flatten \
+    -mllvm -greedy-reverse-local-assignment -mllvm -tail-dup-size=8 \
+    -mllvm -join-globalcopies=false" \
+  COREMARK_MAX_CYCLES=2000000000 COREMARK_MAX_INSNS=2000000000 \
+  COREMARK_TIMEOUT=900 coremark
+```
+
+These five extra LLVM options apply to the application and runtime; the
+benchmark prints its complete compiler flags. They are workload tuning, not
+compiler defaults, and do not change the ordinary `-O2`, `-O3` or size-focused
+`-Os` policies.
+
+For a smaller image, apply LTO to the application while keeping the runtime
+at ordinary `-Os`:
+
+```sh
+make -j16 COREMARK_OPT=-Os COREMARK_EXTRA_CFLAGS=-flto \
+  COREMARK_BUILD=build/coremark/rc32/Os-app-lto \
+  RISCC_FIRMWARE_BUILD=build/firmware/rc32/full-Os-no-lto \
+  RISCC_LDFLAGS='-Wl,--gc-sections -Wl,--threads=1 -flto -Wl,--mllvm=-mattr=+rc32' coremark
+```
+
+The explicit linker target feature keeps LTO code generation in RC32 mode.
+This recipe leaves runtime libraries outside LTO. Including the C runtime in
+LTO also passes CoreMark validation and reduces the measured `-Os` image
+further; see the [binary-size comparison](HARDWARE.md#comparison-with-other-cores).
+
+The simulation port reads a 64-bit cycle counter through uncached MMIO:
+reading `0xffffffe0` snapshots the counter and returns its low half;
+`0xffffffe4` returns the same snapshot's high half. These fixture registers
+are not ISA extensions or board peripherals. See the
+[CoreMark measurements](HARDWARE.md#coremark).
 
 ### C library headers
 

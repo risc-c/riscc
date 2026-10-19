@@ -1,5 +1,13 @@
 // RC32 multiply and signed/unsigned divide/remainder helpers.
 
+#include "../builtins/div_tail.inc"
+
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+#define SIGNED_DIV_COMMON .Lsdiv_unsigned
+#else
+#define SIGNED_DIV_COMMON .Ludiv_common
+#endif
+
         .macro RC32_FUNCTION name
         .section .text.\name,"ax",@progbits
         .p2align 1
@@ -31,13 +39,24 @@
         // and the original operand signs in bits 2..3. S2..S4 are caller-saved.
         .section .text.__udivmodsi4,"ax",@progbits
         .p2align 1
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        // Unsigned-only programs need neither signed entries nor sign setup.
+        .pushsection .text.__divmodsi4,"ax",@progbits
+        .p2align 1
+#endif
         .global __divsi3
         .hidden __divsi3
         .type __divsi3,@function
 __divsi3:
         OR      r0, r1, r2
         BLTZ    .Lsdiv_quotient
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        DIV_TAIL __udivsi3
+#endif
         .size __divsi3, . - __divsi3
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        .popsection
+#endif
 
         // Nonnegative signed operands share the unsigned fast path.
         .global __udivsi3
@@ -65,6 +84,9 @@ __udivsi3:
         RET     s7
         .size __udivsi3, . - __udivsi3
 
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        .pushsection .text.__divmodsi4,"ax",@progbits
+#endif
 .Lsdiv_quotient:
         LDI     r0, 0
         MTS     s4, r0
@@ -88,7 +110,7 @@ __divmodsi4:
 
 .Lsdiv_flags:
         OR      r0, r1, r2
-        BGEZ    .Ludiv_common         // both operands are nonnegative
+        BGEZ    SIGNED_DIV_COMMON    // both operands are nonnegative
         MOV     r0, r1
         BGEZ    .Lsdiv_numerator_positive
         LDI     r0, 0
@@ -98,14 +120,22 @@ __divmodsi4:
         MTS     s4, r0
 .Lsdiv_numerator_positive:
         MOV     r0, r2
-        BGEZ    .Ludiv_common
+        BGEZ    SIGNED_DIV_COMMON
         LDI     r0, 0
         SUB     r2, r0, r2
         MFS     r0, s4
         ORI     r0, 8
         MTS     s4, r0
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+.Lsdiv_unsigned:
+        DIV_TAIL .Ludiv_common
+#else
         JMP8    .Ludiv_common
+#endif
         .size __divmodsi4, . - __divmodsi4
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        .popsection
+#endif
 
         .global __umodsi3
         .hidden __umodsi3

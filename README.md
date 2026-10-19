@@ -13,7 +13,7 @@ with interrupts and preemptive RTOS support uses only 172 LUT4 sites.
 
 The pipelined 32-bit core uses a single-issue, in-order design and runs at
 200 MHz on Agilex 3. With local SRAM and speed-optimized libraries, RTL
-benchmarks measure [1.366–1.409 DMIPS/MHz](doc/HARDWARE.md#rc32-benchmark-throughput),
+benchmarks measure [1.391–1.407 DMIPS/MHz](doc/HARDWARE.md#rc32-benchmark-throughput),
 depending on the branch predictor configuration.
 
 This repository contains the ISA and C application binary interface (ABI)
@@ -31,32 +31,39 @@ board.
 
 ## Comparison with other cores
 
-### Dhrystone binary size
+### Benchmark binary size
 
-Dhrystone 2.1 built with the same LLVM/Clang 23.1.0 compiler, benchmark and
-C library sources, using hardware multiplication and software division.
-Sizes include startup and runtime, excluding `.bss`.
+Dhrystone 2.1 and CoreMark are built for each architecture with the same
+LLVM/Clang 23.1.0 compiler and C library sources, using hardware multiplication
+and software division. CoreMark uses application LTO on every target; Dhrystone
+uses separate compilation. Bytes include startup, reporting and runtime,
+excluding `.bss`.
 
-| Architecture / ISA | `-O2` bytes | `-Os` bytes |
-|---|---:|---:|
-| RISC-C, RC32 | 2,053 | 1,868 |
-| RISC-V, RV32IC + multiply | 2,272 | 2,204 |
-| Arm Thumb-2, Cortex-M3/M4 | 2,447 | 1,955 |
+| ISA | Dhrystone `-O2` | Dhrystone `-Os` | CoreMark `-O2 -flto` | CoreMark `-Os -flto` |
+|---|---:|---:|---:|---:|
+| RISC-C, RC32 | 2,009 | 1,764 | 10,576 | 7,508 |
+| RISC-V, RV32IC + multiply | 2,260 | 2,196 | 11,072 | 8,124 |
+| Arm Thumb-2 | 2,435 | 1,943 | 24,592–24,640 | 7,460–7,476 |
 
-### Dhrystone performance
+### Benchmark performance
 
-Reported Dhrystone scores use each core's own compiler, runtime and hardware
+Reported scores use each core's own compiler, runtime and hardware
 settings, not the common builds above. The RISC-V scores use hardware division;
 RC32 uses software division.
 
-| Architecture | Core | DMIPS/MHz |
-|---|---|---:|
-| RISC-C | [RC32 Cached](doc/HARDWARE.md#rc32-benchmark-throughput) | 1.409 |
-| RISC-V | [VexRiscv](https://github.com/SpinalHDL/VexRiscv#description) | 1.44 |
-| RISC-V | [PicoRV32](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) | 0.305 / 0.516 |
-| Arm Thumb-2 | [Cortex-M3/M4](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) | 1.25 |
+| Architecture | Core | DMIPS/MHz | CoreMark/MHz |
+|---|---|---:|---:|
+| RISC-C | [RC32 pipeline, direct SRAM](doc/HARDWARE.md#coremark) | 1.407 | 2.7865 / 2.9882† |
+| RISC-V | [VexRiscv full max perf, dynamic prediction](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | 1.38 | 2.57 |
+| RISC-V | [VexRiscv full, no caches](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) | 1.21 | 2.30 |
+| RISC-V | [PicoRV32](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) | 0.305 / 0.516 | — |
+| Arm Thumb-2 | Cortex-M3 | [1.25](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) | [3.45](https://documentation-service.arm.com/static/655e085f2c8b3557fee7048f) |
+| Arm Thumb-2 | Cortex-M4 | [1.25](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) | [3.54](https://documentation-service.arm.com/static/655e085f2c8b3557fee7048f) |
 
-PicoRV32 values use normal / look-ahead memory. See the
+† RC32 CoreMark: ordinary `-O3` / `-O3` with five optional LLVM tuning flags,
+measured in RTL simulation.
+`—` means no score is quoted for that configuration. PicoRV32 values use
+normal / look-ahead memory. See the
 [configurations and measurement details](doc/HARDWARE.md#comparison-with-other-cores).
 
 ### FPGA size and clock comparison
@@ -228,6 +235,7 @@ make -j16 test-all
 | `make -j16 sim-all` | C++ ISS runs for the mainline images and benchmark. |
 | `make -j16 test-compiler` | Builds LLVM/Clang when needed, then tests the compiler, C library, thread-local storage (TLS), interrupt requests (IRQs), ISS, and board RTL. |
 | `make -j16 all` | Runs `test-all`, then the architecture benchmarks; it does not require Quartus. |
+| `make -j16 coremark` | Runs RC32 CoreMark CRC checks and RTL cycle measurements with direct SRAM and caches. |
 | `make -j16 fuzz-all` | Longer randomized ISS-versus-RTL differential fuzzing. |
 | `make -j16 tables-lattice` | Tunes and regenerates ECP5 area/Fmax tables and benchmarks without Quartus. |
 | `make -j16 QUARTUS_SH=/path/to/quartus_sh tables` | Regenerates area, maximum clock frequency (Fmax), and benchmark measurement tables for all FPGA families; substantially slower and requires Quartus Pro for Agilex 3. |

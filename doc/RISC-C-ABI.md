@@ -127,19 +127,24 @@ compiler may move it to another register or spill it to the stack.
 ## 4. Calls, arguments, and results
 
 The public mainline call forms are `JALL S7, target` where the selected profile
-provides it, `JALR S7, register` for an indirect call, and `RET S7` for return.
+provides it and `JALR S7, register` for an indirect call. A normal return uses
+`RET S7`, or the saved incoming address directly: `RET Sa` if it is in an
+S register, or `JMP ra` (`JALR S0, ra`) if it is in a general register.
+Returning does not require restoring call-clobbered `S7`; a tail call must
+still supply the incoming return address in the callee's link register.
 RC16 Min materializes a direct target with `LUI`/`ORI`; RC32 Min uses `LDPC`.
 Both then call through `JALR`. An RC32X caller whose indirect target is in an
-`x` register may use `JALR S7,
-[xN+0]`. Link values and function pointers are ordinary byte addresses.
+`x` register may use `JALR S7, [xN+0]`. Link values and function pointers are
+ordinary byte addresses.
 
-For RC16, a compiler may give a direct-only local function an object-private
-S-register link convention (the current compiler selects `S3`); all direct
-callers and the callee then use that same register. RC32 currently uses `S7`
-for every function. Architecturally, no S register other than `S0` has a
-private-link-only function. Externally visible, address-taken, and indirectly
-called functions always use the public `S7` convention. A private convention
-is internal to one object and does not change its ABI.
+For RC16 and RC32, a compiler may give a direct-only local function an
+object-private S-register link convention; callers and callee must agree.
+The current compiler selects `S3` for ordinary private calls. Tail-only local
+chains inherit `S7` when all their entry paths use the public convention,
+avoiding link copies; chains also reached from an `S3` entry retain `S3`.
+Externally visible, address-taken, indirectly called, and naked functions
+use public `S7`. These private choices do not change the object ABI or reserve
+an architectural register exclusively for private links.
 
 Nano calls use `JALR r6, register`; direct calls materialize the instruction
 address in `r0`. A Nano return uses `JMP register`.
@@ -161,6 +166,19 @@ RC32. A larger aggregate result uses a hidden pointer in `r1`; explicit
 arguments then begin in `r2` and `r3`. The result pointer is
 caller-owned and need not be returned separately. Nano uses this same slot
 order.
+
+Direct-only local calls may use a private extension convention for narrow
+integer arguments and results when the compiler controls both ends. For
+size-optimized calls, it may use the extension required by the consumers or
+leave unused upper bits unspecified. Public and indirect calls retain the
+extension rules above.
+
+When the callee and all its callers are size-optimized, such private calls may
+also pass integer and pointer arguments in up to six native slots, `r1`–`r6`.
+Any additional argument registers become caller-saved for that private call;
+the no-split rule and result registers are unchanged. Nano permits five slots,
+`r1`–`r5`, retaining `r6` for the link. Variadic and mandatory-tail-call
+interfaces retain the public argument convention.
 
 There are no floating-point argument or result registers. A scalar `float`
 occupies two RC16 slots or one RC32 slot. A scalar `double` or `long double`
@@ -327,20 +345,46 @@ shared or PIC link.
 | `R_RISCC_JALL21` | 17 | RC32: split 21-bit absolute byte address in `JALL` |
 | `R_RISCC_PCREL13_WORD` | 18 | RC32X: signed long-branch displacement in halfwords from `pc_next` |
 | `R_RISCC_TPOFF32` | 19 | RC32: 32-bit `TPOFF(symbol)` literal |
-| `R_RISCC_CALL_TARGET` | 20 | RC32: aligned 32-bit direct-call target literal |
+| `R_RISCC_CALL_TARGET` | 20 | RC32: aligned 32-bit direct-transfer target literal |
 | `R_RISCC_RELAX_CALL` | 21 | RC32 Sys/Full: call-site relaxation marker naming its target literal |
-| `R_RISCC_RELAX_TAIL` | 22 | RC32 Sys/Full: sibling-call relaxation marker naming its target literal |
+| `R_RISCC_RELAX_TAIL` | 22 | RC32 Sys/Full: link-free jump relaxation marker naming its target literal |
+| `R_RISCC_RELAX_LITERAL` | 23 | RC32: private four-byte literal that may be relocated or shared with a reachable equal word |
 
-Each relaxation marker is located at the first halfword of an `LDPC r0`
-followed by `JALR S7,r0` for a call or `JALR S0,r0` for a sibling call. Its
-symbol identifies exactly one four-byte `R_RISCC_CALL_TARGET` literal. A
+Each call relaxation marker is located at the first halfword of `LDPC r0`
+followed by `JALR Sa,r0` (`Sa` is `S1..S7`). A link-free jump marker identifies
+`LDPC Rn` followed by `JALR S0,Rn`, where `Rn` is `R0..R6`; the loaded scratch
+value must not be needed at the destination. Its symbol identifies a four-byte
+`R_RISCC_CALL_TARGET` literal. Several marked transfers may share that word,
+but it must have no other references, including references into its interior. A
 linker may replace those four instruction bytes with the corresponding
-`JALL`/`JMPL` only when the final target fits `R_RISCC_JALL21`. It normally
-removes the target literal and adjusts subsequent symbols and relocations. If
+`JALL`/`JMPL` only when the final target fits `R_RISCC_JALL21`, preserving the
+encoded link register. Once every transfer owning a literal has been rewritten,
+it normally removes the word and adjusts subsequent symbols and relocations. If
 debug or unwind address metadata is present, a literal inside a function is
 instead converted to unreachable four-byte padding to preserve address-based
 metadata. A relocatable link or a link with relaxation disabled preserves both
 markers and literals.
+
+`R_RISCC_RELAX_LITERAL` is located at the start of a non-executed,
+four-byte-aligned word; its symbol plus addend must identify that same location.
+It permits sharing equal values, including across input sections, and
+reassigning existing marked word slots within an input section, provided every
+`LDPC` remains aligned and in range. Equality includes the value relocation,
+not just the unrelocated bytes. The word must have no escaping address:
+before relaxation, all uses must be relocatable, same-section `LDPC`
+references to its start. Exported symbols, interior references, and using a
+word's label as the base of another address prevent sharing of that word.
+Call-target literals use the separate transfer markers above.
+
+The producer must preserve relocations for address relationships affected by
+word deletion and must not mark sections with internal alignment requirements
+greater than four bytes. The current linker also leaves ordinary literals
+unchanged when debug/unwind address metadata, stronger section alignment, or
+pre-existing cross-section compact PC-relative references prevent safe layout
+changes. Sharing between input sections is restricted to contiguous layout
+regions without intervening script commands, synthetic sections, or alignment
+greater than four bytes; it does not combine the sections or retain dead code.
+Relocatable links and `--no-relax` preserve these markers and words.
 
 For `R_RISCC_PCREL8_WORD`, let `P` be the byte address of the compact
 instruction and let `D = (S + A - P - 2) / 2`. `D` must fit signed eight

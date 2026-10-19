@@ -29,7 +29,9 @@ static __attribute__((always_inline)) inline int riscc_word_compare(riscc_word_t
 {
     const riscc_word_t low_bits = (riscc_word_t)~RISCC_WORD_HIGHS;
     const riscc_word_t diff = a ^ b;
-    riscc_word_t events = ((diff & low_bits) + low_bits) | diff;
+    /* Carries may alter later bytes, but cannot cross a zero byte before
+     * the first difference. Only the first event is used below. */
+    riscc_word_t events = (diff + low_bits) | diff;
     if (stop_at_zero)
         events |= (a - RISCC_WORD_ONES) & ~a;
     events &= RISCC_WORD_HIGHS;

@@ -5,6 +5,8 @@
  * Wider restoring loops use FSL1; Nano expands that operation locally.
  */
 
+#include "../builtins/div_tail.inc"
+
 #ifdef __RISCC_NANO__
 #define DIV_RETURN NANO_RETURN
 #define DIV_ARG0 8
@@ -286,14 +288,23 @@
  * Shared unsigned 32-bit quotient/remainder core.
  *
  * The three public entries select quotient, remainder, or quotient plus a
- * stored remainder.  They deliberately share one section and one restoring
- * loop: pulling any entry from the archive therefore costs only one divider.
+ * stored remainder. They share one restoring loop. Size builds put the
+ * quotient and remainder wrappers in independently discardable sections; their
+ * mode is saved before a full-range transfer that may overwrite R0.
  *
  * Mainline keeps the 64-bit combined quotient/remainder state in GPRs and
  * uses the S-register cache for saved state and loop control.  Nano stores
  * the divisor and loop state below the unchanged incoming r7, leaving its
  * link in r6 untouched.
  */
+
+        .macro SAVE_UDIV32_MODE
+#ifdef __RISCC_NANO__
+        ST      r0, [r7 - 4]
+#else
+        MTS     s2, r0
+#endif
+        .endm
 
         .section .text.__udivsi3,"ax",@progbits
         .p2align 1
@@ -308,7 +319,15 @@ __udivsi3:
 #endif
         LOAD_DIVISOR32
         LDI     r0, 0                   /* return quotient */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        SAVE_UDIV32_MODE
+        DIV_TAIL .Ludivsi_entry
+        .size __udivsi3, . - __udivsi3
+        .section .text.__umodsi3,"ax",@progbits
+        .p2align 1
+#else
         JMP8    .Ludivsi_entry
+#endif
 
         .global __umodsi3
         .hidden __umodsi3
@@ -321,7 +340,15 @@ __umodsi3:
 #endif
         LOAD_DIVISOR32
         LDI     r0, 1                   /* return remainder */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        SAVE_UDIV32_MODE
+        DIV_TAIL .Ludivsi_entry
+        .size __umodsi3, . - __umodsi3
+        .section .text.__udivmodsi4,"ax",@progbits
+        .p2align 1
+#else
         JMP8    .Ludivsi_entry
+#endif
 
         .global __udivmodsi4
         .hidden __udivmodsi4
@@ -341,15 +368,22 @@ __udivmodsi4:
         ST     r0, [r7 - 2]            /* remainder pointer */
 #endif
         LDI     r0, 2                   /* quotient and stored remainder */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        SAVE_UDIV32_MODE
+#endif
 
 .Ludivsi_entry:
 #ifdef __RISCC_NANO__
         ST     r5, [r7 - 2]
+#ifndef RISCC_SPLIT_DIV_SECTIONS
         ST     r0, [r7 - 4]            /* result selection */
+#endif
         ST     r3, [r7 - 8]            /* divisor low */
         ST     r4, [r7 - 10]           /* divisor high */
 #else
+#ifndef RISCC_SPLIT_DIV_SECTIONS
         MTS     s2, r0                  /* result selection */
+#endif
 #endif
 
         OR      r0, r3, r4
@@ -521,8 +555,10 @@ __udivmodsi4:
 .Ludivsi_return:
         ABI_RETURN
 #endif
+#ifndef RISCC_SPLIT_DIV_SECTIONS
         .size __udivsi3, . - __udivsi3
         .size __umodsi3, . - __umodsi3
+#endif
         .size __udivmodsi4, . - __udivmodsi4
 
 /*
@@ -706,7 +742,15 @@ __udivdi3:
 #endif
         LOAD_DIVIDEND64
         LDI     r0, 0                   /* return quotient */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        ST      r0, [r7 - 6]            /* result selection */
+        DIV_TAIL .Ludivdi_entry
+        .size __udivdi3, . - __udivdi3
+        .section .text.__umoddi3,"ax",@progbits
+        .p2align 1
+#else
         JMP8    .Ludivdi_entry
+#endif
 
         .global __umoddi3
         .hidden __umoddi3
@@ -719,7 +763,15 @@ __umoddi3:
 #endif
         LOAD_DIVIDEND64
         LDI     r0, 1                   /* return remainder */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        ST      r0, [r7 - 6]            /* result selection */
+        DIV_TAIL .Ludivdi_entry
+        .size __umoddi3, . - __umoddi3
+        .section .text.__udivmoddi4,"ax",@progbits
+        .p2align 1
+#else
         JMP8    .Ludivdi_entry
+#endif
 
         .global __udivmoddi4
         .hidden __udivmoddi4
@@ -734,11 +786,16 @@ __udivmoddi4:
         LD     r0, [r7 + DIV_ARG8]
         ST     r0, [r7 - 8]            /* remainder pointer */
         LDI     r0, 2                   /* quotient and stored remainder */
+#ifdef RISCC_SPLIT_DIV_SECTIONS
+        ST      r0, [r7 - 6]            /* result selection */
+#endif
 
 .Ludivdi_entry:
         ST     r5, [r7 - 2]
         ST     r6, [r7 - 4]
+#ifndef RISCC_SPLIT_DIV_SECTIONS
         ST     r0, [r7 - 6]            /* result selection */
+#endif
 
         LD     r0, [r7 + DIV_ARG0]
         LD     r6, [r7 + DIV_ARG2]
@@ -957,6 +1014,8 @@ __udivmoddi4:
 #else
         ABI_RETURN64
 #endif
+#ifndef RISCC_SPLIT_DIV_SECTIONS
         .size __udivdi3, . - __udivdi3
         .size __umoddi3, . - __umoddi3
+#endif
         .size __udivmoddi4, . - __udivmoddi4

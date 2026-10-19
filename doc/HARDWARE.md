@@ -213,8 +213,10 @@ Immediate shifts by 1–8 bits complete in one Execute clock.
 
 The pipeline has four stages: fetch reads an instruction, decode selects its
 register operands, execute computes a result or issues a memory request, and writeback
-updates the register file. Forwarding handles adjacent ALU dependencies. An
-immediate load consumer waits one clock before retrying in Execute. Independent
+updates the register file. Forwarding handles adjacent ALU dependencies.
+Conditional branches consume saved `R0` flags in Execute, so an adjacent ALU
+condition needs no extra branch-specific delay. An immediate load consumer,
+including a branch, waits one clock before retrying in Execute. Independent
 loads and stores can advance every clock on local SRAM or cache hits, provided
 the backing port accepts write-through traffic. A store followed by a load of
 the same cached word needs an extra RAM read clock. Accepted cache transactions
@@ -224,7 +226,8 @@ On a miss, the cache fetches a complete line and holds younger instructions.
 Stores update a cached copy if present and acknowledge once their payload is
 captured. The backing port completes accepted writes in order. A read miss or uncached read
 waits for preceding writes to drain. Mispredicted branches discard younger
-fetched instructions. DSP multiplication takes three Execute clocks.
+fetched instructions. DSP multiplication takes three Execute clocks and blocks
+younger instructions throughout; it cannot overlap an independent ALU operation.
 
 The data cache is write-through and does not allocate on a store miss.
 `DCACHE_UNCACHED_BIT` selects uncached data and MMIO; its default, `XLEN-1`,
@@ -532,39 +535,124 @@ instruction-count differences. Memory fixtures match those described above.
 Cached cycle pairs list ECP5 / Agilex.
 
 With direct SRAM and speed-optimized libraries, RC32 Cached measures
-1.409 DMIPS/MHz with 32 BTB entries and 1.366 with 16 entries. These are RTL
-simulation results; the measured Dhrystone loops take 404,034 and 416,520
+1.407 DMIPS/MHz with 32 BTB entries and 1.391 with 16 entries. These are RTL
+simulation results; the measured Dhrystone loops take 404,529 and 409,022
 cycles respectively.
+
+### Software floating point
+
+The RC32 Full compiler benchmarks below use `-Os` for both the application
+and runtime, without LTO. They run on the pipeline with direct, one-clock
+SRAM responses and no caches. Cycles cover the complete program through its
+result write; image sizes include startup, constants and required libraries,
+but exclude `.bss`.
+
+| Workload (`test/compiler/bench/`) | Image bytes | RTL cycles |
+|---|---:|---:|
+| `libm32.c`: math functions | 4,436 | 8,275 |
+| `softfloat.c`: arithmetic and math loop | 3,372 | 120,758 |
+
+Size-built floating-point helpers enable private-literal sharing; see
+[runtime optimization](PROGRAMMING.md#libraries).
+
+### CoreMark
+
+The RC32 Full port uses the unchanged CoreMark workload at revision
+`1f483d5b8316753a742cbf5590caf5bd0a4e4777`, a single context and the standard
+2,000-byte static dataset. Both seed sets pass the upstream CRC/type checks
+in RTL simulation at `-O2`, `-O3` and `-Os`. The application and runtime use
+the same optimization settings, hardware multiplication and software division.
+
+The table below uses short, non-LTO, 100-iteration performance-seed runs for
+compiler and memory-system comparisons. These runs do not meet CoreMark's
+ten-second target-duration requirement. Timing comes from a coherent 64-bit cycle counter
+in the RTL fixture, excluding initialization and reporting.
+
+| RC32 pipeline configuration | `-O2` cycles/iteration | `-O3` cycles/iteration | `-Os` cycles/iteration |
+|---|---:|---:|---:|
+| Direct SRAM, no caches | 363,543.50 | 358,875.60 | 481,143.59 |
+| 2 KiB I-cache + 2 KiB D-cache | 377,381.74 | 392,020.21 | 504,157.55 |
+
+Separate 4,000-iteration direct-SRAM runs measure ordinary `-O3` and the
+[tuned `-O3` recipe](PROGRAMMING.md#coremark). The application and runtime
+use the same flags in each build.
+
+| Build | Timed performance cycles | CoreMark/MHz | Performance image bytes |
+|---|---:|---:|---:|
+| Ordinary `-O3` | 1,435,481,305 | 2.7865 | 10,940 |
+| `-O3` with five optional LLVM tuning flags | 1,338,611,552 | 2.9882 | 11,836 |
+
+Both builds pass the upstream CRC checks with performance and validation
+seeds. All four runs exceed ten simulated seconds at 100 MHz; these are RTL
+simulation results, not measurements on a fitted FPGA. The optional tuning
+increases inlining, enables loop flattening, reverses local register assignment,
+removes global-copy priority during coalescing and raises the tail-duplication
+limit to eight instructions. It does not change compiler defaults.
+
+Both memory configurations use native-width, one-clock SRAM responses, a 16-entry
+BTB and the ECP5 synchronous register-file implementation. The direct fixture
+has separate instruction/data ports; the cached fixture uses the shared
+backing-memory port. These are simulation configurations, not fitted FPGA designs.
+
+The short performance-run ROM images are 10,620 bytes (`-O2`), 10,940 bytes
+(`-O3`) and 8,504 bytes (`-Os`), including startup, reporting, constants and
+required runtime helpers, excluding `.bss`. Reproduce with
+`make -j16 COREMARK_OPT=-O3 coremark` (or `-O2`/`-Os`); see
+[CoreMark usage and timing](PROGRAMMING.md#coremark).
+
+Application-only LTO with the ordinary `-Os` runtime reduces the performance
+image to 7,780 bytes and direct-SRAM time to 457,874.88 cycles/iteration.
+The same image takes 493,673.51 cycles/iteration through the caches.
+Both seed sets pass in SRAM and cached RTL simulation.
 
 ### Comparison with other cores
 
-#### Dhrystone binary size: common compiler and sources
+#### Benchmark binary size: common compiler and sources
 
-The size comparison uses the same project LLVM/Clang and LLD 23.1.0 build,
-revision `c45af928ef16`, with the RISC-C, ARM and RISC-V backends enabled.
-All builds use hardware multiplication and software division, the same
-Dhrystone 2.1 and C library sources, and separate benchmark translation units
-with procedure inlining disabled and no LTO. Applications and C libraries use
-the indicated optimization level; unused sections are discarded by the linker.
-Sizes include minimal startup, constants and required runtime helpers,
-excluding ELF metadata and zero-initialized RAM (`.bss`).
+Each benchmark uses the same project LLVM/Clang and LLD 23.1.0 source revision
+across the RISC-C, ARM and RISC-V backends: `495b2e6a08b6`.
+All builds use hardware multiplication, software
+division, and common benchmark and C library sources.
+CoreMark uses full LTO across its application translation units on every
+architecture; startup and runtime libraries remain separately compiled.
+Dhrystone uses separate compilation without LTO. Applications and C libraries
+use the indicated optimization level; unused sections are discarded by the linker. Sizes are
+flat binary image bytes, including startup, constants, reporting, required runtime helpers and
+alignment padding, excluding ELF metadata and zero-initialized RAM (`.bss`).
+RISC-C builds use the compiler and linker optimizations described in
+[Programming](PROGRAMMING.md).
 
-| Architecture / ISA | `-O2` bytes | `-Os` bytes |
-|---|---:|---:|
-| RISC-C, RC32 | 2,053 | 1,868 |
-| RISC-V, RV32IC+Zmmul | 2,272 | 2,204 |
-| Arm Thumb-2, Cortex-M3/M4 | 2,447 | 1,955 |
+| ISA | Dhrystone `-O2` | Dhrystone `-Os` | CoreMark `-O2 -flto` | CoreMark `-Os -flto` |
+|---|---:|---:|---:|---:|
+| RISC-C, RC32 | 2,009 | 1,764 | 10,576 | 7,508 |
+| RISC-V, RV32IC+Zmmul | 2,260 | 2,196 | 11,072 | 8,124 |
+| Arm Thumb-2 | 2,435 | 1,943 | 24,592–24,640 | 7,460–7,476 |
+
+Including the C runtime in RC32 `-Os` LTO produces 7,480 bytes, versus 7,508
+with application-only LTO. Validation-seed images are eight bytes larger in
+both cases. Both seed sets pass ISS and SRAM/cached RTL checks.
+The table uses application-only LTO consistently across architectures.
+
+Dhrystone uses separate translation units with procedure inlining disabled.
+CoreMark uses its unchanged upstream sources and the common project port,
+with normal inlining, the 2,000-byte dataset and 100 performance-seed iterations.
+Its compiler-flags description string is identical across targets; the normal
+RC32 build above embeds the full command line and is correspondingly larger.
+For RC32 `-Os -flto`, these are 7,508 and 7,780 bytes respectively; the
+272-byte difference is read-only reporting data, not additional instructions.
 
 RISC-V uses `-march=rv32ic_zmmul -mabi=ilp32`: compressed instructions and
 hardware multiplication, without hardware division. Its software division
 uses the generic compiler-rt C helpers. RC32 uses its assembly runtime.
 Arm uses `-mcpu=cortex-m3` or `-mcpu=cortex-m4`, with
 `-mthumb -mfloat-abi=soft -mhwdiv=none` and the same compiler-rt division helpers.
-Cortex-M3 and M4 produce identical images. All four software-division builds
-pass 1,000 iterations and final-state checks in Unicorn 2.1.4's Cortex-M3/M4
-instruction-set simulator. Each executes 1,000 software-division calls and
-contains no hardware divide instructions. Unicorn does not model clock cycles,
-so it validates execution, not throughput.
+The CoreMark size ranges cover these two compiler targets. Both targets
+produce identical Dhrystone images.
+Their four Dhrystone builds pass 1,000 iterations and final-state checks in Unicorn 2.1.4's
+instruction-set simulator, each executing 1,000 software-division calls.
+The CoreMark images pass upstream CRC checks in the RISC-C ISS or Unicorn
+(RISC-V and Arm); none contains hardware divide instructions. Unicorn does
+not model clock cycles, so it validates execution, not throughput.
 
 To enable the comparison backends in the existing compiler build:
 
@@ -575,26 +663,40 @@ CCACHE_DIR="$PWD/build/ccache" cmake --build build/llvm-riscc \
   --target clang lld --parallel 16
 ```
 
-#### Dhrystone performance: core-specific builds
+#### Benchmark performance: core-specific builds
 
-These are core-reported Dhrystone 2.1 scores, not measurements of the common
-size-comparison binaries. Compiler, runtime, memory system and division
-support differ between results.
+These are core-reported Dhrystone 2.1 and CoreMark scores, plus the project's
+RTL measurements, not timings of the common size-comparison binaries.
+Compiler, runtime, memory system and division support differ between results.
 
-| Architecture | Core | DMIPS/MHz | Source |
-|---|---|---:|---|
-| RISC-C | RC32 Cached, 32-entry BTB | 1.409 | [Project RTL measurements](#rc32-benchmark-throughput) |
-| RISC-V | VexRiscv | 1.44 | [VexRiscv documentation](https://github.com/SpinalHDL/VexRiscv#description) |
-| RISC-V | PicoRV32, normal / look-ahead memory | 0.305 / 0.516 | [PicoRV32 documentation](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) |
-| Arm Thumb-2 | Cortex-M3/M4 | 1.25 | [Arm, Cortex-M for Beginners, Table 7](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20) |
+| Architecture | Core | DMIPS/MHz | CoreMark/MHz | Source |
+|---|---|---:|---:|---|
+| RISC-C | RC32 pipeline, direct SRAM | 1.407 | 2.7865 / 2.9882† | [Dhrystone RTL](#rc32-benchmark-throughput), [CoreMark RTL](#coremark) |
+| RISC-V | VexRiscv full max perf, dynamic prediction, 8 KiB I-cache + 8 KiB D-cache | 1.38 | 2.57 | [VexRiscv configuration results](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
+| RISC-V | VexRiscv full, no caches, static prediction | 1.21 | 2.30 | [VexRiscv configuration results](https://github.com/SpinalHDL/VexRiscv#area-usage-and-maximal-frequency) |
+| RISC-V | PicoRV32, normal / look-ahead memory | 0.305 / 0.516 | — | [PicoRV32 documentation](https://github.com/YosysHQ/picorv32#cycles-per-instruction-performance) |
+| Arm Thumb-2 | Cortex-M3 | 1.25 | 3.45 | [Arm Dhrystone](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20), [Arm CoreMark](https://documentation-service.arm.com/static/655e085f2c8b3557fee7048f) |
+| Arm Thumb-2 | Cortex-M4 | 1.25 | 3.54 | [Arm Dhrystone](https://community.arm.com/cfs-file/__key/telligent-evolution-components-attachments/01-2057-00-00-00-01-28-35/Cortex_2D00_M-for-Beginners-_2D00_-2017_5F00_EN_5F00_v2.pdf#page=20), [Arm CoreMark](https://documentation-service.arm.com/static/655e085f2c8b3557fee7048f) |
 
-RC32 uses `-O2`, software division and direct SRAM. Timing covers 1,000
+† RC32 CoreMark: ordinary `-O3` / `-O3` with five optional LLVM tuning flags.
+Throughput is RTL-derived, calculated as `1000000 / cycles_per_iteration`;
+the duration and validation conditions are listed above.
+`—` means no score is quoted for that configuration. VexRiscv's
+2.57 score belongs to `full max perf` (1.38 DMIPS/MHz); 2.30 belongs to
+`full no cache` (1.21 DMIPS/MHz). Its separate 1.44 DMIPS/MHz headline does not
+have a corresponding CoreMark score listed. Arm's CoreMark figures are from
+its 2023 processor comparison table.
+
+RC32 uses software division and direct SRAM. Dhrystone uses `-O2` and a
+32-entry BTB; both CoreMark builds use the ECP5
+16-entry BTB. Dhrystone timing covers 1,000
 iterations between the benchmark's markers, excluding setup and final-state
-verification: 404,034 loop cycles. DMIPS/MHz is
+verification: 404,529 loop cycles. DMIPS/MHz is
 `iterations * 1000000 / (1757 * loop_cycles)`.
 
-VexRiscv's 1.44 configuration uses a five-stage pipeline, dynamic target
-prediction, single-cycle multiplication and a 33-cycle hardware divider.
+VexRiscv's `full max perf` configuration uses RV32IM with hardware division,
+8 KiB instruction and data caches, fetch-stage dynamic branch prediction,
+and execute-stage branch and shift operations.
 PicoRV32's published scores enable fast multiplication, hardware division and
 a barrel shifter. Its
 [look-ahead interface](https://github.com/YosysHQ/picorv32#look-ahead-interface)
@@ -644,8 +746,9 @@ SERV reports 125 LUTs and 164 flip-flops for its most minimal Artix-7
 synthesis, explicitly excluding the register file. Its datasheet gives no
 matching Fmax, so the table does not infer one from another configuration.
 
-The VexRiscv PPA rows use its published `full` configuration, not the different
-configuration behind the 1.44 DMIPS/MHz headline score. PicoRV32's LUT figure
+The VexRiscv PPA rows use its published `full` configuration with 4 KiB caches
+and static prediction, not the `full max perf` configuration scoring
+2.57 CoreMark/MHz. PicoRV32's LUT figure
 is its Vivado 2017.3 area-optimized `large` result, including 88 memory LUTs.
 Its published timing configuration is not comparable and is omitted here.
 RISC-C has no recorded Xilinx 7-series fit or routed Fmax, and PicoRV32's

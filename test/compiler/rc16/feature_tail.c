@@ -1,4 +1,6 @@
 #include "riscc_compiler_features.h"
+#include "../private_calls.h"
+#include "../return_transfer.h"
 
 typedef u16 (*tail_unary_fn)(u16);
 
@@ -100,5 +102,9 @@ u16 feature_test_tail(void)
         return 6;
     if (nested_outer(10) != 39)
         return 7;
+    if (test_return_transfers())
+        return 8;
+    if (test_private_calls())
+        return 9;
     return 0;
 }

@@ -2,7 +2,22 @@ COMPILER_RULES := Makefile mk/compiler-tests.mk mk/firmware.mk mk/boards.mk
 
 COMPILER_BUILD ?= build/compiler/$(RISCC_ARCH)/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RC16_COMPILER_SOURCE_DIR := test/compiler/rc16
+COMPILER_SHARED_HEADERS := \
+	test/compiler/argument_extensions.h \
+	test/compiler/biased_pointer.h \
+	test/compiler/bounded_shifts.h \
+	test/compiler/comparison_ranges.h \
+	test/compiler/narrow_arithmetic.h \
+	test/compiler/optimization_cleanup.h \
+	test/compiler/pointer_rotation.h \
+	test/compiler/private_calls.h \
+	test/compiler/return_transfer.h \
+	test/compiler/shared_selects.h \
+	test/compiler/square_overflow.h
 COMPILER_MAX_INSNS ?= 1000000
+# The feature suite exercises software-emulated arithmetic on bit-serial Nano.
+FEATURE_MAX_INSNS ?= 2000000
+FEATURE_RTL_MAX_CYCLES ?= 60000000
 FLOAT_MAX_INSNS ?= 5000000
 BENCHMARK_MAX_INSNS ?= 10000000
 TERMINATE_MAX_INSNS ?= 256
@@ -107,8 +122,9 @@ compiler-stdio: $(COMPILER_STDIO).bin $(RISCC_SIM)
 	@test "$$(cat $(COMPILER_STDIO)-uart.txt)" = 'Q'
 	@echo "Compiler stdio UART PASS"
 
-# Interrupts
+# RC16 interrupts. RC32 has its own wrapper ABI and rules below.
 
+ifeq ($(RISCC_XLEN),16)
 .PHONY: compiler-irqs
 
 $(COMPILER_IRQ).o: $(RC16_COMPILER_SOURCE_DIR)/irq_smoke.c \
@@ -165,6 +181,7 @@ compiler-irqs: $(COMPILER_SMOKE).elf $(COMPILER_IRQ).bin \
 	  --normal $(COMPILER_SMOKE).map \
 	  --c-wrapper $(COMPILER_IRQ).map \
 	  --custom $(COMPILER_IRQ_CUSTOM).map
+endif
 
 # Board-level compiler tests
 
@@ -268,7 +285,9 @@ feature_objects = $(addprefix $(COMPILER_BUILD)/features/$(1)/, \
 define FEATURE_RULES
 $$(call feature_objects,$(1)): \
 		$$(COMPILER_BUILD)/features/$(1)/%.o: $$(RC16_COMPILER_SOURCE_DIR)/%.c \
-		$$(RC16_COMPILER_SOURCE_DIR)/riscc_compiler_features.h $$(RISCC_CLANG)
+		$$(RC16_COMPILER_SOURCE_DIR)/riscc_compiler_features.h \
+		$$(COMPILER_SHARED_HEADERS) \
+		$$(RISCC_CLANG)
 	@mkdir -p $$(@D)
 	$$(RISCC_CLANG) $$(RISCC_TARGET_FLAGS) $$(CFLAGS_NO_OPT) \
 	  $$(OPT_FLAGS_$(1)) -std=c11 -I$$(RC16_COMPILER_SOURCE_DIR) \
@@ -302,7 +321,7 @@ define COMPILER_FEATURE_RUN_RULE
 compiler-features-run-$(1): \
 		$$(COMPILER_BUILD)/features/$(1)/features.bin $$(RISCC_SIM)
 	$$(RISCC_SIM) $$(COMPILER_BUILD)/features/$(1)/features.bin \
-	  $$(SIM_PROFILE_FLAGS) --max-insns $$(COMPILER_MAX_INSNS)
+	  $$(SIM_PROFILE_FLAGS) --max-insns $$(FEATURE_MAX_INSNS)
 endef
 
 $(foreach opt,$(OPT_LEVELS),$(eval $(call COMPILER_FEATURE_RUN_RULE,$(opt))))
@@ -363,7 +382,8 @@ RC32_COMPILER_BUILD = build/compiler/rc32/$(PROFILE)$(RISCC_RUNTIME_SUFFIX)
 RC32_COMPILER_TARGET_FLAGS = --target=riscc-none-elf -mcpu=$(PROFILE) -mrc32
 RC32_COMPILER_CFLAGS = $(CFLAGS_NO_OPT) -Itest/compiler/rc32 -Ifirmware/include
 RC32_COMPILER_MODULES := main helper builtins division codegen float tail
-RC32_COMPILER_MAX_INSNS ?= 1000000
+# Leave headroom for the expanding arithmetic and call/ABI regression suite.
+RC32_COMPILER_MAX_INSNS ?= 1500000
 RC32_COMPILER_MAX_CYCLES ?= 30000000
 RC32_COMPILER_TB = build/test/rc32/$(PROFILE)/16/tb
 RC32_SIM_FLAGS_min := --rc32
@@ -389,7 +409,8 @@ define RC32_COMPILER_RULES
 $$(addprefix $$(RC32_COMPILER_BUILD)/$(1)/, \
 	$$(addsuffix .o,$$(RC32_COMPILER_MODULES))): \
 		$$(RC32_COMPILER_BUILD)/$(1)/%.o: test/compiler/rc32/%.c \
-		test/compiler/rc32/test.h $$(RISCC_CLANG)
+		test/compiler/rc32/test.h $$(COMPILER_SHARED_HEADERS) \
+		$$(RISCC_CLANG)
 	@mkdir -p $$(@D)
 	$$(RISCC_CLANG) $$(RC32_COMPILER_TARGET_FLAGS) \
 	  $$(RC32_COMPILER_CFLAGS) $$(OPT_FLAGS_$(1)) \
@@ -857,7 +878,7 @@ compiler-float-run-$(1): \
 compiler-features-rtl-run-$(1): \
 		$$(COMPILER_BUILD)/features/$(1)/features.bin build/test/nano/tb
 	build/test/nano/tb $$(COMPILER_BUILD)/features/$(1)/features.bin \
-	  --max-cycles 30000000
+	  --max-cycles $$(FEATURE_RTL_MAX_CYCLES)
 endef
 
 $(foreach opt,$(OPT_LEVELS),$(eval $(call COMPILER_FLOAT_RUN_RULE,$(opt))))
@@ -999,7 +1020,11 @@ compiler-libc-size: $(COMPILER_BUILD)/libc/os/all.elf
 # Assembler encodings and full suite
 
 .PHONY: check-llvm-mc-encodings check-nano-mc-encodings \
-	check-rc32-mc-encodings test-isa test-compiler
+	check-rc32-mc-encodings check-runtime-sections test-isa test-compiler
+
+check-runtime-sections: test/compiler/check_runtime_sections.py \
+		$(RISCC_CLANG) $(RISCC_LLD)
+	$(PYTHON) $< --llvm-bin $(LLVM_BIN)
 
 check-llvm-mc-encodings: test/compiler/check_llvm_mc_encodings.py \
 		tools/riscc_asm.py $(RISCC_MC) $(RISCC_OBJCOPY)
@@ -1076,7 +1101,7 @@ TEST_COMPILER_PROFILE_RUNS := \
 # or compiler object.  LLVM and the ISS are completed once before any profile
 # job starts.
 test-compiler: check-llvm-mc-encodings check-nano-mc-encodings \
-	check-rc32-mc-encodings $(TEST_COMPILER_PROFILE_RUNS)
+	check-rc32-mc-encodings check-runtime-sections $(TEST_COMPILER_PROFILE_RUNS)
 
 test-compiler-rc16-nano: llvm-riscc $(RISCC_SIM)
 	+$(MAKE) --no-print-directory RISCC_TOOLCHAIN_READY=1 PROFILE=nano \

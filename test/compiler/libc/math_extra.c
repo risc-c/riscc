@@ -22,6 +22,15 @@ static volatile float float_five_and_half = 5.5f;
 static volatile double double_one = 1.0;
 static volatile double double_two = 2.0;
 static volatile double double_five_and_half = 5.5;
+/* Keep the exceptional logbf paths in the compiled library, not folded by
+ * the caller. They also exercise reuse of the sign-clearing mask on RC16. */
+static volatile float_shape logb_specials[] = {
+    {.bits = UINT32_C(0x00000000)},
+    {.bits = UINT32_C(0x80000000)},
+    {.bits = UINT32_C(0x7f800000)},
+    {.bits = UINT32_C(0xff800000)},
+    {.bits = UINT32_C(0xff800001)},
+};
 
 static uint32_t float_bits(float value)
 {
@@ -146,6 +155,17 @@ int main(void)
             lroundl(2.5L) == 3 && llroundf(-ffive) == -6 &&
             llround(dfive) == 6 && llroundl(-2.5L) == -3,
         8);
+
+    CHECK(float_bits(logbf(logb_specials[0].value)) ==
+                UINT32_C(0xff800000) &&
+            float_bits(logbf(logb_specials[1].value)) ==
+                UINT32_C(0xff800000) &&
+            float_bits(logbf(logb_specials[2].value)) ==
+                UINT32_C(0x7f800000) &&
+            float_bits(logbf(logb_specials[3].value)) ==
+                UINT32_C(0x7f800000) &&
+            isnan(logbf(logb_specials[4].value)),
+        9);
 
     pass();
 }

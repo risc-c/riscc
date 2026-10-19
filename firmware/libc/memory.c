@@ -166,16 +166,19 @@ void *memset(void *destination, int value, size_t count)
         *out++ = (unsigned char)value;
         --count;
     }
-    if (RISCC_WORD_ALIGNED(out))
+    /* A nonempty word-sized remainder means the byte loop reached alignment.
+     * Testing the remaining count avoids carrying an alignment flag out of
+     * that loop, and avoids constructing a word fill for a short remainder. */
+    if (count >= RISCC_WORD_SIZE)
     {
         riscc_word_t *out_words = (riscc_word_t *)out;
         riscc_word_t fill = (riscc_word_t)(unsigned char)value *
             RISCC_WORD_ONES;
-        while (count >= RISCC_WORD_SIZE)
+        do
         {
             *out_words++ = fill;
             count -= RISCC_WORD_SIZE;
-        }
+        } while (count >= RISCC_WORD_SIZE);
         out = (unsigned char *)out_words;
     }
 #endif
